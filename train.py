@@ -5,6 +5,8 @@ from tqdm import tqdm
 from torchinfo import summary
 import matplotlib.pyplot as plt
 from torchvision import transforms
+from efficientnet_pytorch import EfficientNet
+import torchvision.models as models
 from PIL import Image
 env = os.path.dirname(os.path.abspath(__file__))
 device = torch.device("cuda")
@@ -23,8 +25,6 @@ for col in breast_data.columns:
     if col + '_image_data' in data.columns:
         data.drop(col + '_image_data', axis=1, inplace=True)
         
-        
-data.to_csv(f'{env}/test.csv')
 
 class ResizeAndPad:
     def __init__(self, output_size, fill=0):
@@ -51,21 +51,6 @@ class ResizeAndPad:
         padding = (padding[0], 0, padding[1], 0) if h > w else (0, padding[0], 0, padding[1])
         img = transforms.functional.pad(img, padding, fill=self.fill)
         return img
-
-# Define transformations
-train_transform = transforms.Compose([
-    ResizeAndPad(256),  # Resize the shortest side to 256
-    transforms.Grayscale(num_output_channels=1),  # Convert the image to grayscale
-    transforms.RandomHorizontalFlip(),  # Randomly flip the image horizontally
-    transforms.RandomVerticalFlip(),  # Randomly flip the image vertically
-    transforms.ToTensor()  # Convert the image to a PyTorch tensor
-])
-
-val_transform = transforms.Compose([
-    ResizeAndPad(256),  # Resize the shortest side to 256
-    transforms.Grayscale(num_output_channels=1),  # Convert the image to grayscale
-    transforms.ToTensor()  # Convert the image to a PyTorch tensor
-])
 
 class CASBUSI_Dataset(Dataset):
     def __init__(self, data, root_dir, transform=None):
@@ -103,7 +88,21 @@ class CASBUSI_Dataset(Dataset):
         labels = torch.tensor(same_patient_data.loc[0, ['Has_Malignant', 'Has_Benign', 'Has_Unknown']].values.astype('float'))
 
         return bag, labels
-    
+
+model = torch.nn.Sequential(
+    torch.nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1),
+    torch.nn.ReLU(),
+    torch.nn.MaxPool2d(kernel_size=2, stride=2),
+    torch.nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
+    torch.nn.ReLU(),
+    torch.nn.MaxPool2d(kernel_size=2, stride=2),
+    torch.nn.AdaptiveAvgPool2d((1,1)),  # Global average pooling
+    torch.nn.Flatten(),
+    torch.nn.Linear(64, 128),
+    torch.nn.ReLU(),
+    torch.nn.Linear(128, 3),
+)
+
 def load_model(model, model_path):
     if os.path.isfile(model_path):
         model.load_state_dict(torch.load(model_path))
@@ -114,24 +113,6 @@ def load_model(model, model_path):
 
 def collate_fn(batch):
     return batch
-
-def pad_image(img):
-    return transforms.functional.pad(img, (0, 0, max(0, 256 - img.size[0]), max(0, 256 - img.size[1])), fill=0)
-  
-
-# Define model
-model = torch.nn.Sequential(
-    torch.nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1),
-    torch.nn.ReLU(),
-    torch.nn.MaxPool2d(kernel_size=2, stride=2),
-    torch.nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
-    torch.nn.ReLU(),
-    torch.nn.MaxPool2d(kernel_size=2, stride=2),
-    torch.nn.Flatten(),
-    torch.nn.Linear(64*64*64, 128),
-    torch.nn.ReLU(),
-    torch.nn.Linear(128, 3),
-)
 
 def train_model(model, model_name, epochs):
     
@@ -204,18 +185,41 @@ def train_model(model, model_name, epochs):
         train_loss = running_loss/len(train_loader)
         val_loss = val_running_loss/len(val_loader)
         
-        print(f"Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}")
-        
-    torch.save(model.state_dict(), f'{env}/{model_name}.pth')
+        print(f"Epoch {epoch+1} | Acc | Loss")
+        print(f"Train | {train_acc:.4f} | {train_loss:.4f}")
+        print(f"Val | {val_acc:.4f} | {val_loss:.4f}")
+                
+    torch.save(model.state_dict(), f'{env}/models/{model_name}.pth')
 
 
 
 if __name__ == "__main__":
     
     model_name = 'model_09_02_2023'
-    epochs = 10
-    image_size = 256
+    epochs = 3
+    image_size = 512
+    
+    # Model
+    #model = models.resnet34(pretrained=True)
+    #num_ftrs = model.fc.in_features
+    #model.conv1 = torch.nn.Conv2d(1, model.conv1.out_channels, kernel_size=7, stride=2, padding=3, bias=False)
+    #model.fc = torch.nn.Linear(num_ftrs, 3)
     model = model.to(device)
+    
+    # Define transformations
+    train_transform = transforms.Compose([
+        ResizeAndPad(image_size),  # Resize the shortest side to 256
+        transforms.Grayscale(num_output_channels=1),  # Convert the image to grayscale
+        transforms.RandomHorizontalFlip(),  # Randomly flip the image horizontally
+        transforms.RandomVerticalFlip(),  # Randomly flip the image vertically
+        transforms.ToTensor()  # Convert the image to a PyTorch tensor
+    ])
+
+    val_transform = transforms.Compose([
+        ResizeAndPad(image_size),  # Resize the shortest side to 256
+        transforms.Grayscale(num_output_channels=1),  # Convert the image to grayscale
+        transforms.ToTensor()  # Convert the image to a PyTorch tensor
+    ])
 
     # Split the data into training and validation sets
     train_patient_ids = case_study_data[case_study_data['valid'] == 0]['Patient_ID']
@@ -231,8 +235,9 @@ if __name__ == "__main__":
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=1, shuffle=True, collate_fn=collate_fn, num_workers = 8, persistent_workers=True)
     val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=1, shuffle=False, collate_fn=collate_fn, num_workers = 4, persistent_workers=True)
     
-    os.makedirs(f"{env}/model/", exist_ok=True)
-    model = load_model(model, f"{env}/model/{model_name}.pt")
-    summary(model, input_size=(1, 1, image_size, image_size))
+    os.makedirs(f"{env}/models/", exist_ok=True)
+    model = load_model(model, f"{env}/models/{model_name}.pt")
+    print(f'Total model parameters: {sum(p.numel() for p in model.parameters())}')
+    #summary(model, input_size=(1, 1, image_size, image_size))
 
     train_model(model, model_name, epochs)
