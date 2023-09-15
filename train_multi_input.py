@@ -3,21 +3,18 @@ import torch, os
 from torch.utils.data import Dataset
 from tqdm import tqdm
 from torchinfo import summary
-from tqdm import tqdm
 import matplotlib.pyplot as plt
 import torch.nn as nn
-import numpy as np
 import torch.nn.functional as F
 from torchvision import transforms
 from efficientnet_pytorch import EfficientNet
 import torchvision.models as models
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
 env = os.path.dirname(os.path.abspath(__file__))
 device = torch.device("cuda")
 
 # Load CSV data
-export_location = 'F:/Temp_SSD_Data/export_09_14_2023/'
+export_location = f'F:/Temp_SSD_Data/export_08_18_2023/'
 case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
 breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
 image_data = pd.read_csv(f'{export_location}/ImageData.csv')
@@ -29,43 +26,7 @@ data = pd.merge(breast_data, image_data, left_on=['Patient_ID', 'Breast'], right
 for col in breast_data.columns:
     if col + '_image_data' in data.columns:
         data.drop(col + '_image_data', axis=1, inplace=True)
-
-
-def process_single_image(row, root_dir, output_dir, resize_and_pad):
-    patient_id = row['Patient_ID']
-    img_name = row['ImageName']
-    input_path = os.path.join(f'{root_dir}images/', img_name)
-    output_path = os.path.join(output_dir, img_name)
-
-    if os.path.exists(output_path):  # Skip images that are already processed
-        return
-
-    image = Image.open(input_path)
-    image = resize_and_pad(image)
-    image.save(output_path)
-
-def preprocess_and_save_images(data, root_dir, output_dir, image_size, fill=0):
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
         
-    print("Preprocessing Data")
-
-    resize_and_pad = ResizeAndPad(image_size, fill)
-    data_rows = [row for _, row in data.iterrows()]  # Convert the DataFrame to a list of rows
-
-    with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
-        futures = {executor.submit(process_single_image, row, root_dir, output_dir, resize_and_pad): row for row in data_rows}
-
-        with tqdm(total=len(futures)) as pbar:
-            for future in as_completed(futures):
-                future.result()  # We don't actually use the result, but this will raise any exceptions
-                pbar.update()
-
-class GrayscaleToRGB:
-    def __call__(self, img):
-        if len(img.getbands()) == 1:  # If image is grayscale
-            img = transforms.functional.to_pil_image(np.stack([img] * 3, axis=-1))
-        return img
 
 class ResizeAndPad:
     def __init__(self, output_size, fill=0):
@@ -93,6 +54,16 @@ class ResizeAndPad:
         img = transforms.functional.pad(img, padding, fill=self.fill)
         return img
 
+def Get_Image_Labels(same_patient_data, i):
+    ori_case = {
+        'long': 0,
+        'trans': 1,
+    }
+    orientation = same_patient_data.iloc[i]['orientation']
+    orientation = ori_case.get(orientation, -1)
+    
+    return torch.tensor([orientation])
+
 class CASBUSI_Dataset(Dataset):
     def __init__(self, data, root_dir, transform=None):
         self.data = data
@@ -112,14 +83,18 @@ class CASBUSI_Dataset(Dataset):
             return None, None
         
         images = []
+        extra_data_list = []
         for i in range(bag_size):
             img_name = os.path.join(self.root_dir, same_patient_data.iloc[i]['ImageName'])
+            extra_data = Get_Image_Labels(same_patient_data, i)
             image = Image.open(img_name)
             if self.transform:
                 image = self.transform(image)
             images.append(image)
+            extra_data_list.append(extra_data)
 
         images = torch.stack(images)
+        extra_data_list = torch.stack(extra_data_list)
 
         has_unknown = same_patient_data.loc[0, 'Has_Unknown']
         if not has_unknown:
@@ -127,7 +102,7 @@ class CASBUSI_Dataset(Dataset):
         else:
             target = None
 
-        return images, target
+        return (images, extra_data_list), target
 
 
 def load_model(model, model_path):
@@ -159,16 +134,22 @@ def train_model(model, model_name, epochs):
         final_corrects = 0
         final_total = 0
         for i, data in enumerate(train_loader):
+            torch.cuda.empty_cache()
             bag, labels = data[0]  # Get the first item in the batch
             if labels is None:  # Skip bags with label None
                 continue
-            print(data)
-            labels = labels.squeeze().to(device, non_blocking=True)
+            labels = labels.squeeze().to(device)   # Remove extra dimension from labels
 
-            bag = bag.to(device, non_blocking=True)
-            
-            # Get the output for the entire bag in one forward pass
-            outputs = model(bag).mean(dim=0).squeeze(0)
+            bag_outputs = []
+            images, extra_data_list = bag  # Unpack bag into images and extra data
+            for image, extra_data in zip(images, extra_data_list):
+                image = image.unsqueeze(0).to(device)   # Add batch dimension
+                extra_data = extra_data.to(device)
+                output = model(image, extra_data)
+                bag_outputs.append(output)
+                
+            # Aggregate bag outputs
+            outputs = torch.stack(bag_outputs).mean(dim=0).squeeze(0)
 
             loss = criterion(outputs, labels)
 
@@ -200,21 +181,25 @@ def train_model(model, model_name, epochs):
 
         model.eval()
         val_running_loss = 0.0
+        correct = 0
+        total = 0
         with torch.no_grad():
-            val_running_loss = 0.0
-            correct = 0
-            total = 0
-
             for i, data in tqdm(enumerate(val_loader), total=len(val_loader)):
+                torch.cuda.empty_cache()
                 bag, labels = data[0]  # Get the first item in the batch
                 if labels is None:  # Skip bags with label None
                     continue
+                labels = labels.squeeze().to(device)   # Remove extra dimension from labels
 
-                labels = labels.squeeze().to(device, non_blocking=True)
-                bag = bag.to(device, non_blocking=True)
+                bag_outputs = []
+                for image in bag:
+                    image = image.unsqueeze(0).to(device)   # Add batch dimension
+                    output = model(image)
+                    bag_outputs.append(output)
+                    torch.cuda.empty_cache()
 
-                # Get the output for the entire bag in one forward pass
-                outputs = model(bag).mean(dim=0).squeeze(0)
+                # Aggregate bag outputs
+                outputs = torch.stack(bag_outputs).mean(dim=0).squeeze(0)
 
                 loss = criterion(outputs, labels)
                 val_running_loss += loss.item()
@@ -224,24 +209,26 @@ def train_model(model, model_name, epochs):
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
 
-            val_acc = correct / total if total > 0 else 0.0  # Prevent division by zero
-            val_loss = val_running_loss / total if total > 0 else 0.0  # Prevent division by zero
+        val_acc = correct / total
 
-            print(f"Epoch {epoch+1} | Acc | Loss")
-            print(f"Train | {train_acc:.4f} | {final_loss / len(train_loader):.4f}")
-            print(f"Val | {val_acc:.4f} | {val_loss:.4f}")
-            
+        train_loss = final_loss/len(train_loader)
+        val_loss = val_running_loss/len(val_loader)
+        
+        print(f"Epoch {epoch+1} | Acc | Loss")
+        print(f"Train | {train_acc:.4f} | {train_loss:.4f}")
+        print(f"Val | {val_acc:.4f} | {val_loss:.4f}")
+                
     torch.save(model.state_dict(), f'{env}/models/{model_name}.pth')
 
 
 
 class Model(nn.Module):
-    def __init__(self, num_classes=2):
+    def __init__(self, num_classes=2, linear_input_size=64):
         super(Model, self).__init__()
         
         # Define a convolutional feature extractor
         self.features = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=1, out_channels=64, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2),
             nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, padding=1),
@@ -263,19 +250,25 @@ class Model(nn.Module):
         )
 
         self.fc_combined = nn.Sequential(
-            nn.Linear(128, 128),
+            nn.Linear(128 + linear_input_size, 128),
             nn.ReLU(inplace=True),
             nn.Linear(128, 64),
             nn.ReLU(inplace=True),
             nn.Linear(64, num_classes)
         )
 
-    def forward(self, image):
+    def forward(self, image, linear_input):
         image_features = self.features(image)
         image_features = self.adaptive_pool(image_features)
         image_features = self.fc_image(image_features)
         
-        output = self.fc_combined(image_features)
+        # Add an extra dimension to linear_input
+        linear_input = linear_input.unsqueeze(1)
+        
+        # Concatenate the image features with the linear input
+        combined_features = torch.cat((image_features, linear_input), dim=1)
+        
+        output = self.fc_combined(combined_features)
         return output
     
     
@@ -285,33 +278,27 @@ if __name__ == "__main__":
     epochs = 3
     image_size = 512
     
-    
-    
     # RESNET Model
-    model = models.resnet34(pretrained=True)
+    """model = models.resnet34(pretrained=True)
     num_ftrs = model.fc.in_features
-    model.conv1 = torch.nn.Conv2d(3, model.conv1.out_channels, kernel_size=7, stride=2, padding=3, bias=False)
-    model.fc = torch.nn.Linear(num_ftrs, 2)
+    model.conv1 = torch.nn.Conv2d(1, model.conv1.out_channels, kernel_size=7, stride=2, padding=3, bias=False)
+    model.fc = torch.nn.Linear(num_ftrs, 2)"""
 
-    #model = Model(num_classes=2)
+    model = Model(num_classes=2, linear_input_size=1)
     model = model.to(device)
-    
-    #Preparing data
-    cropped_images = f"{export_location}/temp_cropped/"
-    preprocess_and_save_images(data, export_location, cropped_images, image_size)
-        
-    
     
     # Define transformations
     train_transform = transforms.Compose([
-        GrayscaleToRGB(),
+        ResizeAndPad(image_size),  # Resize
+        transforms.Grayscale(num_output_channels=1),  # Convert the image to grayscale
         transforms.RandomHorizontalFlip(),  # Randomly flip the image horizontally
         transforms.RandomVerticalFlip(),  # Randomly flip the image vertically
         transforms.ToTensor()  # Convert the image to a PyTorch tensor
     ])
 
     val_transform = transforms.Compose([
-        GrayscaleToRGB(), 
+        ResizeAndPad(image_size),  # Resize
+        transforms.Grayscale(num_output_channels=1),  # Convert the image to grayscale
         transforms.ToTensor()  # Convert the image to a PyTorch tensor
     ])
 
@@ -322,13 +309,12 @@ if __name__ == "__main__":
     val_data = data[data['Patient_ID'].isin(val_patient_ids)].reset_index(drop=True)
 
     # Create datasets
-    train_dataset = CASBUSI_Dataset(train_data, f'{cropped_images}/', transform=train_transform)
-    val_dataset = CASBUSI_Dataset(val_data, f'{cropped_images}/', transform=val_transform)
+    train_dataset = CASBUSI_Dataset(train_data, f'{export_location}/images/', transform=train_transform)
+    val_dataset = CASBUSI_Dataset(val_data, f'{export_location}/images/', transform=val_transform)
 
     # Create data loaders
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=1, shuffle=True, collate_fn=collate_fn, num_workers=8, persistent_workers=True, pin_memory=True)
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=1, shuffle=False, collate_fn=collate_fn, num_workers=4, persistent_workers=True, pin_memory=True)
-
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=1, shuffle=True, collate_fn=collate_fn, num_workers = 8, persistent_workers=True)
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=1, shuffle=False, collate_fn=collate_fn, num_workers = 4, persistent_workers=True)
     
     os.makedirs(f"{env}/models/", exist_ok=True)
     model = load_model(model, f"{env}/models/{model_name}.pt")
