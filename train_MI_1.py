@@ -306,7 +306,7 @@ if __name__ == "__main__":
     val_dataset = CASBUSI_Dataset(val_data, f'{cropped_images}/', transform=val_transform)
     
     # Create data loaders
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, sampler=sampler, shuffle=True, collate_fn=collate_fn, num_workers=8, persistent_workers=True, pin_memory=True)
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=8, persistent_workers=True, pin_memory=True)
     val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=4, persistent_workers=True, pin_memory=True)
 
     
