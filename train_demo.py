@@ -2,30 +2,12 @@ import timm, os
 from timm import create_model
 from fastai.vision.all import *
 from fastai.vision.learner import _update_first_layer
-from fastai.vision.core import PILImage, PILTransform
 import numpy as np
 import torchvision.transforms as T
 from torch import from_numpy
 from torch import nn
 import torch.utils.data as TUD
 
-
-# this is a long list, at last check there were 1242 pretrained models
-display_models = False
-if display_models:
-    avail_pretrained_models = timm.list_models(pretrained=True)
-    len(avail_pretrained_models), avail_pretrained_models
-    
-    
-# change to IMAGENETTE_320 for higher resolution images
-# leave it with 160 for faster training and testing
-path = untar_data(URLs.IMAGENETTE_160)
-path_train = path/'train'
-path_val = path/'val'
-
-# recursively search path for files and make list
-# each file appears as filename = (train|val)\\class\\fn.JPEG
-# complete file name would be path/filename
 
 def recur_list(path):
     fname = []
@@ -38,34 +20,10 @@ def recur_list(path):
                 fname.append(os.path.join(subdir, f))
     return fname
 
-files_train = np.array(recur_list(path_train))
-files_val = np.array(recur_list(path_val))
-
-print(f'There are {len(files_train)} files in the training data')
-print(f'There are {len(files_val)} files in the validation data')
-
-lbl_dict = dict(
-    n01440764='fish',
-    n02102040='dog',
-    n02979186='stereo',
-    n03000684='saw',
-    n03028079='church',
-    n03394916='horn',
-    n03417042='truck',
-    n03425413='pump',
-    n03445777='ball',
-    n03888257='chute'
-)
-
-labels_train = np.array([ lbl_dict[ fn.split('\\')[1] ] for fn in files_train ])
-labels_val = np.array([ lbl_dict[ fn.split('\\')[1] ] for fn in files_val ])
 
 
 def create_bags( files, labels, min_per_bag = 3, max_per_bag = 7, random_state = 42):
-    '''
-    input the list of (truncated) filenames and the label for each image
-    output a nested list where each sublist is a list of filenames for the bag and bag_labels is a list of all the classes in the bag
-    '''
+
     tot_instances = len(files)
     np.random.seed( seed = random_state )
     idx = np.random.permutation(tot_instances)
@@ -89,21 +47,6 @@ def create_bags( files, labels, min_per_bag = 3, max_per_bag = 7, random_state =
         rem_instances = tot_instances - bag_begin
         
     return bag_files, bag_labels, bag_ids
-
-bags_val, bags_val_labels_all, bags_val_ids = create_bags( files_val, labels_val )
-bags_train, bags_train_labels_all, bags_train_ids = create_bags( files_train, labels_train)
-
-# the code above returns nested lists, each list contains arrays with filenames, all labels, and bag id for each of the bags
-# we'll need to flatten the files list, id's list, and make a list with one label for each bag ('fish', 'no_fish')
-
-files_train = np.concatenate( bags_train )
-ids_train = np.concatenate( bags_train_ids )
-labels_train = np.array( [1 if 'fish' in x else 0 for x in bags_train_labels_all] )
-
-files_val = np.concatenate( bags_val )
-ids_val = np.concatenate( bags_val_ids )
-labels_val = np.array( [1 if 'fish' in x else 0 for x in bags_val_labels_all] )
-
 
 
 class BagOfImagesDataset(TUD.Dataset):
@@ -162,19 +105,7 @@ def collate_custom(batch):
   
     return (out_data, out_bagids), out_labels
 
-num_bags_train = 1882 # <= 1882
-num_bags_val = 782 # <= 782
 
-dataset_train = TUD.Subset(BagOfImagesDataset( files_train, path, ids_train, labels_train),list(range(0,num_bags_train)))
-dataset_val = TUD.Subset(BagOfImagesDataset( files_val, path, ids_val, labels_val),list(range(0,num_bags_val)))
-dataset_val_raw = TUD.Subset(BagOfImagesDataset( files_val, path, ids_val, labels_val, normalize = False),list(range(0,num_bags_val)))
-bs = 10
-
-train_dl =  TUD.DataLoader(dataset_train, batch_size=bs, collate_fn = collate_custom, drop_last=True, shuffle = True)
-val_dl =    TUD.DataLoader(dataset_val, batch_size=bs, collate_fn = collate_custom, drop_last=True)
-
-# wrap into fastai Dataloaders
-dls = DataLoaders(train_dl, val_dl)
 
 
 # this function is used to cut off the head of a pretrained timm model and return the body
@@ -189,11 +120,6 @@ def create_timm_body(arch:str, pretrained=True, cut=None, n_in=3):
     elif callable(cut): return cut(model)
     else: raise NameError("cut must be either integer or function")
 
-    
-    # note there are are two classes: no_fish and fish
-
-# arch should be a string that is one of the models available in timm
-# can see all the models in timm like this (uncomment):
 
 class IlseBagModel(nn.Module):
     
@@ -266,16 +192,68 @@ class L1RegCallback(Callback):
     def after_loss(self):
         self.learn.loss += self.reglambda * self.learn.model.saliency_map.mean()
 
+
+
+path = untar_data(URLs.IMAGENETTE_160)
+path_train = path/'train'
+path_val = path/'val'
+
+
+files_train = np.array(recur_list(path_train))
+files_val = np.array(recur_list(path_val))
+
+print(f'There are {len(files_train)} files in the training data')
+print(f'There are {len(files_val)} files in the validation data')
+
+lbl_dict = dict(
+    n01440764='fish',
+    n02102040='dog',
+    n02979186='stereo',
+    n03000684='saw',
+    n03028079='church',
+    n03394916='horn',
+    n03417042='truck',
+    n03425413='pump',
+    n03445777='ball',
+    n03888257='chute'
+)
+
+labels_train = np.array([ lbl_dict[ fn.split('\\')[1] ] for fn in files_train ])
+labels_val = np.array([ lbl_dict[ fn.split('\\')[1] ] for fn in files_val ])
+
+
+bags_val, bags_val_labels_all, bags_val_ids = create_bags( files_val, labels_val )
+bags_train, bags_train_labels_all, bags_train_ids = create_bags( files_train, labels_train)
+
+files_train = np.concatenate( bags_train )
+ids_train = np.concatenate( bags_train_ids )
+labels_train = np.array( [1 if 'fish' in x else 0 for x in bags_train_labels_all] )
+
+files_val = np.concatenate( bags_val )
+ids_val = np.concatenate( bags_val_ids )
+labels_val = np.array( [1 if 'fish' in x else 0 for x in bags_val_labels_all] )
+
+
+
+
+num_bags_train = 1882 # <= 1882
+num_bags_val = 782 # <= 782
+
+dataset_train = TUD.Subset(BagOfImagesDataset( files_train, path, ids_train, labels_train),list(range(0,num_bags_train)))
+dataset_val = TUD.Subset(BagOfImagesDataset( files_val, path, ids_val, labels_val),list(range(0,num_bags_val)))
+dataset_val_raw = TUD.Subset(BagOfImagesDataset( files_val, path, ids_val, labels_val, normalize = False),list(range(0,num_bags_val)))
+bs = 10
+
+train_dl =  TUD.DataLoader(dataset_train, batch_size=bs, collate_fn = collate_custom, drop_last=True, shuffle = True)
+val_dl =    TUD.DataLoader(dataset_val, batch_size=bs, collate_fn = collate_custom, drop_last=True)
+
+# wrap into fastai Dataloaders
+dls = DataLoaders(train_dl, val_dl)
+
 # set regularization parameter
 reg_lambda = 0.001
 
-
-# suggest you use resnet18 to get things working since it's smaller and faster
-
-#timm_arch = 'efficientnet_b1' # got about 95% and the saliency map likely needs to be retuned
-timm_arch = 'resnet18' # 96-97%
-#timm_arch = 'resnet34' # gets about 98% accuracy at the bag-level
-#timm_arch = 'resnet152' # about 98%
+timm_arch = 'resnet18'
 
 bagmodel = IlseBagModel(timm_arch,pretrained = True).cuda()
 
