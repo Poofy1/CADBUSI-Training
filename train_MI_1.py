@@ -278,7 +278,7 @@ if __name__ == "__main__":
     
     #Preparing data
     cropped_images = f"{export_location}/temp_cropped/"
-    preprocess_and_save_images(data, export_location, cropped_images, image_size)
+    #preprocess_and_save_images(data, export_location, cropped_images, image_size)
         
     
     
