@@ -1,78 +1,15 @@
-import random, os
+import os
 from timm import create_model
 from fastai.vision.all import *
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Subset
 from fastai.vision.learner import _update_first_layer
 from PIL import Image
-import numpy as np
 from torchvision import transforms
 from torch import nn
-from tqdm import tqdm
-os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
+from data_prep import *
 env = os.path.dirname(os.path.abspath(__file__))
 
 
-def process_single_image(row, root_dir, output_dir, resize_and_pad):
-    patient_id = row['Patient_ID']
-    img_name = row['ImageName']
-    input_path = os.path.join(f'{root_dir}images/', img_name)
-    output_path = os.path.join(output_dir, img_name)
-
-    if os.path.exists(output_path):  # Skip images that are already processed
-        return
-
-    image = Image.open(input_path)
-    image = resize_and_pad(image)
-    image.save(output_path)
-
-def preprocess_and_save_images(data, root_dir, output_dir, image_size, fill=0):
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-        
-    print("Preprocessing Data")
-
-    resize_and_pad = ResizeAndPad(image_size, fill)
-    data_rows = [row for _, row in data.iterrows()]  # Convert the DataFrame to a list of rows
-
-    with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
-        futures = {executor.submit(process_single_image, row, root_dir, output_dir, resize_and_pad): row for row in data_rows}
-
-        with tqdm(total=len(futures)) as pbar:
-            for future in as_completed(futures):
-                future.result()  # We don't actually use the result, but this will raise any exceptions
-                pbar.update()
-
-class GrayscaleToRGB:
-    def __call__(self, img):
-        if len(img.getbands()) == 1:  # If image is grayscale
-            img = transforms.functional.to_pil_image(np.stack([img] * 3, axis=-1))
-        return img
-
-class ResizeAndPad:
-    def __init__(self, output_size, fill=0):
-        assert isinstance(output_size, int)
-        self.output_size = output_size
-        self.fill = fill
-
-    def __call__(self, img):
-        w, h = img.size
-        if h > w:
-            new_h, new_w = self.output_size, int(self.output_size * (w / h))
-        else:
-            new_h, new_w = int(self.output_size * (h / w)), self.output_size
-        img = transforms.functional.resize(img, (new_h, new_w))
-
-        diff = self.output_size - new_w if h > w else self.output_size - new_h
-        padding = [diff // 2, diff // 2]
-
-        # If the difference is odd, add the extra padding to the end
-        if diff % 2 != 0:
-            padding[1] += 1
-
-        # Use the padding values for the left/right or top/bottom
-        padding = (padding[0], 0, padding[1], 0) if h > w else (0, padding[0], 0, padding[1])
-        img = transforms.functional.pad(img, padding, fill=self.fill)
-        return img
 
 
 class CASBUSI_Dataset(Dataset):
@@ -81,32 +18,53 @@ class CASBUSI_Dataset(Dataset):
         self.root_dir = root_dir
         self.transform = transform
         self.patient_ids = {idx: pid for idx, pid in enumerate(data['Patient_ID'].unique())}
-
+    
     def __len__(self):
         return len(self.patient_ids)
 
-    def __getitem__(self, idx):
-        patient_id = self.patient_ids[idx]
+    def __getitem__(self, index):
+        # Get the patient ID for this index
+        patient_id = self.patient_ids[index]
+        
+        # Filter the data to get the rows corresponding to this patient ID
         same_patient_data = self.data[self.data['Patient_ID'] == patient_id].reset_index(drop=True)
         
-        # Now that we've pre-filtered, we assume bag_size <= 40.
-        bag_size = len(same_patient_data)
-        
+        # Load and transform the images corresponding to this patient ID into a tensor
         images = []
-        for i in range(bag_size):
+        for i in range(len(same_patient_data)):
             img_name = os.path.join(self.root_dir, same_patient_data.iloc[i]['ImageName'])
-            image = Image.open(img_name)
+            image = Image.open(img_name).convert("RGB")
             if self.transform:
                 image = self.transform(image)
             images.append(image)
-
-        images = torch.stack(images)
-        target = torch.tensor(same_patient_data.loc[0, ['Has_Malignant']].values.astype('float'))
-
-        return (images, target), patient_id
+        
+        # Convert list of image tensors into a single 4D tensor
+        images = torch.stack(images).cuda()
+        
+        # Get the label for this patient ID
+        target = torch.tensor(same_patient_data.loc[0, ['Has_Malignant']].values.astype('float')).cuda()
+        
+        # Create a tensor for bag IDs, all having the same index value as the patient ID
+        bagids = torch.full((len(same_patient_data),), index, dtype=torch.long).cuda()
+        
+        return images, bagids, target
 
 def custom_collate(batch):
-    return batch
+    batch_data = []
+    batch_bagids = []
+    batch_labels = []
+  
+    for sample in batch:
+        batch_data.append(sample[0][0])
+        batch_labels.append(sample[0][1])
+        batch_bagids.append(sample[1])
+  
+    out_data = torch.cat(batch_data, dim = 0).cuda()
+    out_bagids = torch.cat(batch_bagids).cuda()
+    out_labels = torch.stack(batch_labels).cuda()
+  
+    return (out_data, out_bagids), out_labels
+
 
 # this function is used to cut off the head of a pretrained timm model and return the body
 def create_timm_body(arch:str, pretrained=True, cut=None, n_in=3):
@@ -154,7 +112,6 @@ class IlseBagModel(nn.Module):
         # input should be a tuple of the form (data,ids)
         ids = input[1]
         x = input[0]
-        x = x.view(-1, x.shape[-3], x.shape[-2], x.shape[-1])
         
         # compute the features using backbone network
         h = self.backbone(x)
@@ -195,16 +152,6 @@ class L1RegCallback(Callback):
        
     def after_loss(self):
         self.learn.loss += self.reglambda * self.learn.model.saliency_map.mean()
-
-def upsample_bag_to_min_count(group, min_count=10):
-    num_needed = min_count - len(group)
-    
-    if num_needed > 0:
-        # Duplicate random samples within the same group
-        random_rows = group.sample(num_needed, replace=True)
-        group = pd.concat([group, random_rows], axis=0).reset_index(drop=True)
-        
-    return group
 
 
 if __name__ == '__main__':
@@ -273,37 +220,28 @@ if __name__ == '__main__':
         GrayscaleToRGB(), 
         transforms.ToTensor()
     ])
-        
 
-    
 
     # Create datasets
     train_dataset = CASBUSI_Dataset(train_data, f'{cropped_images}/', transform=train_transform)
     val_dataset = CASBUSI_Dataset(val_data, f'{cropped_images}/', transform=val_transform)
         
     # Create data loaders
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=1, persistent_workers=True, pin_memory=True, collate_fn=custom_collate)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=1, persistent_workers=True, pin_memory=True, collate_fn=custom_collate)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=1, persistent_workers=True, pin_memory=False, collate_fn=custom_collate)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=1, persistent_workers=True, pin_memory=False, collate_fn=custom_collate)
 
     # wrap into fastai Dataloaders
     dls = DataLoaders(train_loader, val_loader)
 
 
-    timm_arch = 'resnet18' # 96-97%
-    #timm_arch = 'resnet34' # gets about 98% accuracy at the bag-level
-    #timm_arch = 'resnet152' # about 98%
-
-    bagmodel = IlseBagModel(timm_arch,pretrained = True).cuda()
-
+    timm_arch = 'resnet18'
+    bagmodel = IlseBagModel(timm_arch, pretrained = True).cuda()
     
-    learn = Learner(dls,bagmodel, loss_func=CrossEntropyLossFlat(), metrics = accuracy, cbs = L1RegCallback(reg_lambda) )
-
+    learn = Learner(dls, bagmodel, loss_func=CrossEntropyLossFlat(), metrics = accuracy, cbs = L1RegCallback(reg_lambda) )
 
     # find a good learning rate using mini-batches
     learn.lr_find()
-
     
     learn.fit_one_cycle(10,lr)
-    
     
     learn.save(f"{env}/models/test1")
