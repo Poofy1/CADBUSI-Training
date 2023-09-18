@@ -70,7 +70,7 @@ class ResizeAndPad:
     
     
 
-def upsample_bag_to_min_count(group, min_count=10):
+def upsample_bag_to_min_count(group, min_count):
     num_needed = min_count - len(group)
     
     if num_needed > 0:

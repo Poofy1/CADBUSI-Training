@@ -42,28 +42,34 @@ class CASBUSI_Dataset(Dataset):
         images = torch.stack(images).cuda()
         
         # Get the label for this patient ID
-        target = torch.tensor(same_patient_data.loc[0, ['Has_Malignant']].values.astype('float')).cuda()
+        target = torch.tensor(same_patient_data.loc[0, ['Has_Malignant']].values.astype('int')).long().cuda()
         
         # Create a tensor for bag IDs, all having the same index value as the patient ID
         bagids = torch.full((len(same_patient_data),), index, dtype=torch.long).cuda()
         
         return images, bagids, target
+    
+    def n_features(self):
+        return self.data.size(1)
 
-def custom_collate(batch):
+
+
+def collate_custom(batch):
     batch_data = []
     batch_bagids = []
     batch_labels = []
   
     for sample in batch:
-        batch_data.append(sample[0][0])
-        batch_labels.append(sample[0][1])
+        batch_data.append(sample[0])
         batch_bagids.append(sample[1])
+        batch_labels.append(sample[2])
   
     out_data = torch.cat(batch_data, dim = 0).cuda()
     out_bagids = torch.cat(batch_bagids).cuda()
     out_labels = torch.stack(batch_labels).cuda()
   
     return (out_data, out_bagids), out_labels
+
 
 
 # this function is used to cut off the head of a pretrained timm model and return the body
@@ -108,10 +114,8 @@ class IlseBagModel(nn.Module):
         self.attention_W = nn.Linear(self.L, self.num_classes)
     
                     
-    def forward(self, input):
-        # input should be a tuple of the form (data,ids)
-        ids = input[1]
-        x = input[0]
+    def forward(self, x, ids):
+        x = x.squeeze(0)
         
         # compute the features using backbone network
         h = self.backbone(x)
@@ -143,8 +147,6 @@ class IlseBagModel(nn.Module):
         self.attn_scores = A
         return yhat_bags
     
-    
-    
 # "The regularization term |A| is basically model.saliency_maps.mean()" -from github repo
 class L1RegCallback(Callback):
     def __init__(self, reglambda = 0.0001):
@@ -153,8 +155,9 @@ class L1RegCallback(Callback):
     def after_loss(self):
         self.learn.loss += self.reglambda * self.learn.model.saliency_map.mean()
 
-
 if __name__ == '__main__':
+    
+    torch.cuda.empty_cache()
 
     img_size = 256
     batch_size = 1
@@ -183,18 +186,19 @@ if __name__ == '__main__':
 
     # Filter out patients with more than x data points
     patient_counts = data['Patient_ID'].value_counts()
-    valid_patient_ids = patient_counts[patient_counts <= 10].index
+    valid_patient_ids = patient_counts[patient_counts <= 20].index
     data = data[data['Patient_ID'].isin(valid_patient_ids)]
     
     # Group by 'Patient_ID' and apply the function to each group
-    data = data.groupby('Patient_ID').apply(upsample_bag_to_min_count)
+    data = data.groupby('Patient_ID').apply(lambda group: upsample_bag_to_min_count(group, min_count=20))
+
 
     # Reset the index
     data.reset_index(drop=True, inplace=True)
 
     #Preparing data
     cropped_images = f"{export_location}/temp_cropped/"
-    #preprocess_and_save_images(data, export_location, cropped_images, img_size)
+    preprocess_and_save_images(data, export_location, cropped_images, img_size)
 
     # Split the data into training and validation sets
     train_patient_ids = case_study_data[case_study_data['valid'] == 0]['Patient_ID']
@@ -227,14 +231,14 @@ if __name__ == '__main__':
     val_dataset = CASBUSI_Dataset(val_data, f'{cropped_images}/', transform=val_transform)
         
     # Create data loaders
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=1, persistent_workers=True, pin_memory=False, collate_fn=custom_collate)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=1, persistent_workers=True, pin_memory=False, collate_fn=custom_collate)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_custom)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_custom)
 
     # wrap into fastai Dataloaders
     dls = DataLoaders(train_loader, val_loader)
 
 
-    timm_arch = 'resnet18'
+    timm_arch = 'resnet18' #resnet34
     bagmodel = IlseBagModel(timm_arch, pretrained = True).cuda()
     
     learn = Learner(dls, bagmodel, loss_func=CrossEntropyLossFlat(), metrics = accuracy, cbs = L1RegCallback(reg_lambda) )
