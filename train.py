@@ -115,7 +115,11 @@ class IlseBagModel(nn.Module):
     
                     
     def forward(self, x, ids):
-        x = x.squeeze(0)
+        
+        original_shape = x.shape  # Save the original shape [5, 20, 3, 256, 256]
+    
+        # Flatten the first two dimensions
+        x = x.view(-1, original_shape[2], original_shape[3], original_shape[4])  
         
         # compute the features using backbone network
         h = self.backbone(x)
@@ -156,11 +160,9 @@ class L1RegCallback(Callback):
         self.learn.loss += self.reglambda * self.learn.model.saliency_map.mean()
 
 if __name__ == '__main__':
-    
-    torch.cuda.empty_cache()
 
     img_size = 256
-    batch_size = 1
+    batch_size = 5
     reg_lambda = 0.001
     lr = 0.0008
     
@@ -198,7 +200,7 @@ if __name__ == '__main__':
 
     #Preparing data
     cropped_images = f"{export_location}/temp_cropped/"
-    preprocess_and_save_images(data, export_location, cropped_images, img_size)
+    #preprocess_and_save_images(data, export_location, cropped_images, img_size)
 
     # Split the data into training and validation sets
     train_patient_ids = case_study_data[case_study_data['valid'] == 0]['Patient_ID']
