@@ -2,15 +2,13 @@ import os
 from timm import create_model
 from fastai.vision.all import *
 from torch.utils.data import Dataset, Subset
-import matplotlib.pyplot as plt
 from fastai.vision.learner import _update_first_layer
 from tqdm import tqdm
 import torchvision.transforms as T
 from PIL import Image
-from torchvision import transforms
-from torch import from_numpy
 from torch import nn
 from training_eval import *
+from torch.optim import Adam
 from data_prep import *
 env = os.path.dirname(os.path.abspath(__file__))
 
@@ -50,10 +48,10 @@ class BagOfImagesDataset(Dataset):
         ]).cuda()
         
         # Use the first label from the bag labels (assuming all instances in the bag have the same label)
-        label = torch.tensor(labels[0], dtype=torch.long).cuda()
+        label = torch.tensor(labels[0], dtype=torch.float).cuda()
         
         # Convert bag ids to tensor and use the first id (assuming all instances have the same id)
-        bagid = torch.tensor(ids[0], dtype=torch.long).cuda()
+        bagid = torch.tensor(ids[0], dtype=torch.float).cuda()
 
         return data, bagid, label
 
@@ -92,7 +90,7 @@ def create_timm_body(arch:str, pretrained=True, cut=None, n_in=3):
 
 class IlseBagModel(nn.Module):
     
-    def __init__(self, arch, num_classes = 2, pool_patches = 3, pretrained = True):
+    def __init__(self, arch, num_classes = 1, pool_patches = 3, pretrained = True):
         super(IlseBagModel,self).__init__()
         self.pool_patches = pool_patches # how many patches to use in predicting instance label
         self.backbone = create_timm_body(arch, pretrained = pretrained)
@@ -122,67 +120,50 @@ class IlseBagModel(nn.Module):
         # Reshape input to merge the bag and image dimensions
         x_reshaped = x.view(-1, 3, 256, 256)
         h = self.backbone(x_reshaped)
-        
+
         # add attention head to compute instance saliency map and instance labels (as logits)
-    
-        self.saliency_map = self.saliency_layer(h) # compute activation maps
-        map_flatten = self.saliency_map.flatten(start_dim = -2, end_dim = -1)
+
+        self.saliency_map = self.saliency_layer(h)  # compute activation maps
+        map_flatten = self.saliency_map.flatten(start_dim=-2, end_dim=-1)
         selected_area = map_flatten.topk(self.pool_patches, dim=2)[0]
         self.yhat_instance = selected_area.mean(dim=2).squeeze()
-        
-        # max pool the feature maps to generate feature vector v of length self.nf (number of features)
-        v = torch.max( h, dim = 2).values
-        v = torch.max( v, dim = 2).values # maxpool complete
-        
-        # gated-attention
-        A_V = self.attention_V(v) 
-        A_U = self.attention_U(v) 
-        A  = self.attention_W(A_V * A_U)
-        
-        unique = torch.unique_consecutive(ids)
-        yhat_bags = torch.empty(len(unique),self.num_classes).cuda()
-        for i,bag in enumerate(unique):
-            mask = torch.where(ids == bag)[0]
-            A[mask] = nn.functional.softmax( A[mask] , dim = 0 )
-            yhat = self.yhat_instance[mask]
-            yhat_bags[i] = ( A[mask] * yhat ).sum(dim=0)
-        
-        self.attn_scores = A
-        return yhat_bags
-    
-# "The regularization term |A| is basically model.saliency_maps.mean()" -from github repo
-class L1RegCallback(Callback):
-    def __init__(self, reglambda = 0.0001):
-        self.reglambda = reglambda
-       
-    def after_loss(self):
-        self.learn.loss += self.reglambda * self.learn.model.saliency_map.mean()
 
-def count_malignant_bags(bags):
-    malignant_count = 0
-    non_malignant_count = 0
-    
-    for bag in bags:
-        bag_labels = bag[1]  # Extracting labels from the bag
-        if sum(bag_labels) > 0:  # If there's even one malignant instance
-            malignant_count += 1
-        else:
-            non_malignant_count += 1
-    
-    return malignant_count, non_malignant_count
+        # max pool the feature maps to generate feature vector v of length self.nf (number of features)
+        v = torch.max(h, dim=2).values
+        v = torch.max(v, dim=2).values  # maxpool complete
+
+        # gated-attention
+        A_V = self.attention_V(v)
+        A_U = self.attention_U(v)
+        A = torch.sigmoid(self.attention_W(A_V * A_U))
+
+        unique = torch.unique_consecutive(ids)
+        yhat_bags = torch.empty(len(unique), self.num_classes).cuda()
+
+        for i, bag in enumerate(unique):
+            mask = torch.where(ids == bag)[0]
+            A_mask_softmax = nn.functional.softmax(A[mask], dim=0)  # out-of-place softmax operation
+            yhat = self.yhat_instance[mask]
+            yhat_bags[i] = (A_mask_softmax * yhat).sum(dim=0)  # use the new tensor instead of modifying A
+
+        self.attn_scores = A  # if needed, create a new tensor for attn_scores instead of modifying A
+        return yhat_bags.squeeze(-1)
+
 
 
 
 if __name__ == '__main__':
 
     model_name = 'test1'
-    img_size = 256
-    batch_size = 10
-    bag_size = 20
-    epochs = 2
+    img_size = 512
+    batch_size = 2
+    bag_size = 8
+    epochs = 20   
     reg_lambda = 0 #0.001
-    lr = 0.0008
+    lr = 0.001
 
+    print("Preprocessing Data...")
+    
     # Load CSV data
     export_location = 'F:/Temp_SSD_Data/export_09_14_2023/'
     case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
@@ -190,9 +171,9 @@ if __name__ == '__main__':
     image_data = pd.read_csv(f'{export_location}/ImageData.csv')
     data = filter_raw_data(breast_data, image_data)
 
-    #Preparing data
+    #Cropping images
     cropped_images = f"{export_location}/temp_cropped/"
-    #preprocess_and_save_images(data, export_location, cropped_images, img_size)
+    preprocess_and_save_images(data, export_location, cropped_images, img_size)
 
     # Split the data into training and validation sets
     train_patient_ids = case_study_data[case_study_data['valid'] == 0]['Patient_ID']
@@ -208,42 +189,102 @@ if __name__ == '__main__':
     malignant_count, non_malignant_count = count_malignant_bags(train_bags)
     print(f"Number of Malignant Bags: {malignant_count}")
     print(f"Number of Non-Malignant Bags: {non_malignant_count}")
+    
+    
+    
+    print("Training Data...")
 
-
-    # Choose the indices you want to use for the subset
-    train_indices = list(range(0, 500))  # Adjust the range to your needs
-    val_indices = list(range(0, 100))  # Adjust the range to your needs
-
+    train_amount = list(range(0,10))
+    val_amount = list(range(0,10))
+    
     # Create datasets
-    dataset_train = BagOfImagesDataset( train_bags,img_size)
-    dataset_val = BagOfImagesDataset( val_bags,img_size)
+    #dataset_train = Subset(BagOfImagesDataset(train_bags, img_size), train_amount)
+    #dataset_val = Subset(BagOfImagesDataset(val_bags, img_size), val_amount)
+    dataset_train = BagOfImagesDataset(train_bags, img_size)
+    dataset_val = BagOfImagesDataset(val_bags, img_size)
         
     # Create data loaders
     train_dl =  DataLoader(dataset_train, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
     val_dl =    DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
 
-    # wrap into fastai Dataloaders
-    dls = DataLoaders(train_dl, val_dl)
-
-
-    timm_arch = 'resnet18' #resnet34
-    bagmodel = IlseBagModel(timm_arch, pretrained = True).cuda()
+    bagmodel = IlseBagModel('resnet50', pretrained = True).cuda()
+    optimizer = Adam(bagmodel.parameters(), lr=lr)
+    loss_func = nn.BCELoss()
     
-    learn = Learner(dls, bagmodel, loss_func=CrossEntropyLossFlat(), metrics = accuracy, cbs = L1RegCallback(reg_lambda) )
-
-    # find a good learning rate using mini-batches
-    #learn.lr_find()
-
-    learn.fit_one_cycle(epochs,lr)
+    train_losses_over_epochs = []
+    valid_losses_over_epochs = []
+    all_targs = []
+    all_preds = []
     
-    learn.save(f"{env}/models/{model_name}")
+    # Training loop
+    for epoch in range(epochs):
+        # Training phase
+        bagmodel.train()
+        total_loss = 0.0
+        total = 0
+        correct = 0
+        for (xb, ids, yb) in tqdm(train_dl, total=len(train_dl)):  
+            xb, ids, yb = xb.cuda(), ids.cuda(), yb.cuda()
+            optimizer.zero_grad()
+            outputs = bagmodel(xb, ids)
+            loss = loss_func(outputs, yb)
+            
+            print(f'loss: {loss}\n pred: {outputs}\n true: {yb}')
+            
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item() * len(xb)
+            predicted = torch.round(outputs).squeeze() 
+            
+            all_targs.extend(yb.cpu().numpy())
+            if len(predicted.size()) == 0:
+                predicted = predicted.view(1)
+            all_preds.extend(predicted.cpu().detach().numpy())
+
+            
+            total += yb.size(0)
+            correct += predicted.eq(yb.squeeze()).sum().item()
+
+        train_loss = total_loss / total
+        train_acc = correct / total
+
+
+        # Evaluation phase
+        bagmodel.eval()
+        total_val_loss = 0.0
+        total = 0
+        correct = 0
+        with torch.no_grad():
+            for (xb, ids, yb) in tqdm(val_dl, total=len(val_dl)):   
+                xb, ids, yb = xb.cuda(), ids.cuda(), yb.cuda()
+                outputs = bagmodel(xb, ids)
+                loss = loss_func(outputs, yb)
+                
+                total_val_loss += loss.item() * len(xb)
+                predicted = torch.round(outputs).squeeze() 
+                total += yb.size(0)
+                correct += predicted.eq(yb.squeeze()).sum().item()
+
+        val_loss = total_val_loss / total
+        val_acc = correct / total
+        
+        train_losses_over_epochs.append(train_loss)
+        valid_losses_over_epochs.append(val_loss)
+        
+        print(f"Epoch {epoch+1} | Acc   | Loss")
+        print(f"Train   | {train_acc:.4f} | {train_loss:.4f}")
+        print(f"Val     | {val_acc:.4f} | {val_loss:.4f}")
     
+    # Save the model
+    torch.save(bagmodel.state_dict(), f"{env}/models/{model_name}.pth")
+
     # Save the loss graph
-    plot_and_save_training_validation_loss(learn, f"{env}/models/{model_name}_loss.png")
+    plot_loss(train_losses_over_epochs, valid_losses_over_epochs, f"{env}/models/{model_name}_loss.png")
     
     # Save the confusion matrix
     vocab = ['not malignant', 'malignant']  # Replace with your actual vocab
-    plot_and_save_confusion_matrix(learn, vocab, f"{env}/models/{model_name}_confusion.png")
+    plot_Confusion(all_targs, all_preds, vocab, f"{env}/models/{model_name}_confusion.png")
 
         
     
