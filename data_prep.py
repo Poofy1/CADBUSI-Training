@@ -108,8 +108,6 @@ def process_single_image(row, root_dir, output_dir, resize_and_pad):
 def preprocess_and_save_images(data, root_dir, output_dir, image_size, fill=0):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-        
-    print("Preprocessing Data")
 
     resize_and_pad = ResizeAndPad(image_size, fill)
     data_rows = [row for _, row in data.iterrows()]  # Convert the DataFrame to a list of rows
