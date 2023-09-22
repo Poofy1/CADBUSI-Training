@@ -89,6 +89,8 @@ class BagOfImagesDataset(TUD.Dataset):
   def n_features(self):
     return self.data.size(1)
 
+
+
 def collate_custom(batch):
     batch_data = []
     batch_bagids = []
@@ -104,8 +106,6 @@ def collate_custom(batch):
     out_labels = torch.stack(batch_labels).cuda()
   
     return (out_data, out_bagids), out_labels
-
-
 
 
 # this function is used to cut off the head of a pretrained timm model and return the body
@@ -201,6 +201,7 @@ path_val = path/'val'
 
 files_train = np.array(recur_list(path_train))
 files_val = np.array(recur_list(path_val))
+
 
 print(f'There are {len(files_train)} files in the training data')
 print(f'There are {len(files_val)} files in the validation data')

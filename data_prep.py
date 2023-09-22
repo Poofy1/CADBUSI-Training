@@ -4,7 +4,93 @@ from torchvision import transforms
 from tqdm import tqdm
 import numpy as np
 import pandas as pd
+import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+
+def filter_raw_data(breast_data, image_data):
+
+    # Join dataframes on PatientID
+    data = pd.merge(breast_data, image_data, left_on=['Patient_ID', 'Breast'], right_on=['Patient_ID', 'laterality'], suffixes=('', '_image_data'))
+
+    # Remove columns from image_data that also exist in breast_data
+    for col in breast_data.columns:
+        if col + '_image_data' in data.columns:
+            data.drop(col + '_image_data', axis=1, inplace=True)
+    
+    
+    data = data[data['Has_Unknown'] == False]
+
+    # Reset the index
+    data.reset_index(drop=True, inplace=True)
+    
+    return data
+
+
+def create_bags(data, bag_size, root_dir):
+    unique_patient_ids = data['Patient_ID'].unique()
+
+    bags = []
+    for patient_id in tqdm(unique_patient_ids):
+        bag_files = []
+        bag_labels = []
+
+        patient_data = data[data['Patient_ID'] == patient_id]
+        
+        # Exclude bags that exceed the bag_size
+        if len(patient_data) > bag_size:
+            continue
+
+        # If less than bag_size, randomly choose rows for upsampling until we reach bag_size
+        while len(bag_files) < bag_size:
+            row = patient_data.sample(n=1).iloc[0]
+            filename = os.path.join(root_dir, row['ImageName'])
+            label = int(row['Has_Malignant'])
+            bag_files.append(filename)
+            bag_labels.append(label)
+
+        bag_id = [patient_id] * bag_size
+
+        bags.append([bag_files, bag_labels, bag_id])
+
+    # Identify minority and majority class bags
+    malignant_bags = [bag for bag in bags if sum(bag[1]) > 0]
+    benign_bags = [bag for bag in bags if sum(bag[1]) == 0]
+
+    if len(malignant_bags) < len(benign_bags):
+        minority_bags = malignant_bags
+        label_value = 1
+    else:
+        minority_bags = benign_bags
+        label_value = 0
+
+    # Create new bags for the minority class
+    diff = len(bags) - 2 * len(minority_bags) 
+    new_patient_id = max(unique_patient_ids) + 1
+
+    for _ in range(diff):
+        chosen_bag = random.choice(minority_bags)
+        new_bag_files = random.sample(chosen_bag[0], bag_size)
+        new_bag_labels = [label_value] * bag_size
+        new_bag_id = [new_patient_id] * bag_size
+
+        bags.append([new_bag_files, new_bag_labels, new_bag_id])
+        new_patient_id += 1
+
+    return bags
+
+def count_malignant_bags(bags):
+    malignant_count = 0
+    non_malignant_count = 0
+    
+    for bag in bags:
+        bag_labels = bag[1]  # Extracting labels from the bag
+        if sum(bag_labels) > 0:  # If there's even one malignant instance
+            malignant_count += 1
+        else:
+            non_malignant_count += 1
+    
+    return malignant_count, non_malignant_count
 
 def process_single_image(row, root_dir, output_dir, resize_and_pad):
     patient_id = row['Patient_ID']
