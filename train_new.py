@@ -2,15 +2,14 @@ import os
 from timm import create_model
 from fastai.vision.all import *
 from torch.utils.data import Dataset, Subset
-import matplotlib.pyplot as plt
 from fastai.vision.learner import _update_first_layer
 from tqdm import tqdm
 import torchvision.transforms as T
 from PIL import Image
-from torchvision import transforms
-from torch import from_numpy
 from torch import nn
 from training_eval import *
+from torch.optim import Adam
+from torch.nn.functional import cross_entropy
 from data_prep import *
 env = os.path.dirname(os.path.abspath(__file__))
 
@@ -149,27 +148,7 @@ class IlseBagModel(nn.Module):
         
         self.attn_scores = A
         return yhat_bags
-    
-# "The regularization term |A| is basically model.saliency_maps.mean()" -from github repo
-class L1RegCallback(Callback):
-    def __init__(self, reglambda = 0.0001):
-        self.reglambda = reglambda
-       
-    def after_loss(self):
-        self.learn.loss += self.reglambda * self.learn.model.saliency_map.mean()
 
-def count_malignant_bags(bags):
-    malignant_count = 0
-    non_malignant_count = 0
-    
-    for bag in bags:
-        bag_labels = bag[1]  # Extracting labels from the bag
-        if sum(bag_labels) > 0:  # If there's even one malignant instance
-            malignant_count += 1
-        else:
-            non_malignant_count += 1
-    
-    return malignant_count, non_malignant_count
 
 
 
@@ -209,41 +188,86 @@ if __name__ == '__main__':
     print(f"Number of Malignant Bags: {malignant_count}")
     print(f"Number of Non-Malignant Bags: {non_malignant_count}")
 
-
-    # Choose the indices you want to use for the subset
-    train_indices = list(range(0, 500))  # Adjust the range to your needs
-    val_indices = list(range(0, 100))  # Adjust the range to your needs
-
     # Create datasets
-    dataset_train = BagOfImagesDataset( train_bags,img_size)
-    dataset_val = BagOfImagesDataset( val_bags,img_size)
+    dataset_train = BagOfImagesDataset(train_bags, img_size)
+    dataset_val = BagOfImagesDataset(val_bags, img_size)
         
     # Create data loaders
     train_dl =  DataLoader(dataset_train, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
     val_dl =    DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
 
-    # wrap into fastai Dataloaders
-    dls = DataLoaders(train_dl, val_dl)
-
-
-    timm_arch = 'resnet18' #resnet34
-    bagmodel = IlseBagModel(timm_arch, pretrained = True).cuda()
+    bagmodel = IlseBagModel('resnet18', pretrained = True).cuda()
+    optimizer = Adam(bagmodel.parameters(), lr=lr)
+    loss_func = cross_entropy
     
-    learn = Learner(dls, bagmodel, loss_func=CrossEntropyLossFlat(), metrics = accuracy, cbs = L1RegCallback(reg_lambda) )
-
-    # find a good learning rate using mini-batches
-    #learn.lr_find()
-
-    learn.fit_one_cycle(epochs,lr)
+    train_losses_over_epochs = []
+    valid_losses_over_epochs = []
+    all_targs = []
+    all_preds = []
     
-    learn.save(f"{env}/models/{model_name}")
+    # Training loop
+    for epoch in range(epochs):
+        # Training phase
+        bagmodel.train()
+        total_loss = 0.0
+        total = 0
+        correct = 0
+        for (xb, ids, yb) in tqdm(train_dl, total=len(train_dl)):  
+            xb, ids, yb = xb.cuda(), ids.cuda(), yb.cuda()
+            optimizer.zero_grad()
+            outputs = bagmodel(xb, ids)
+            loss = loss_func(outputs, yb)
+            
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item() * len(xb)
+            _, predicted = outputs.max(1)
+            
+            all_targs.extend(yb.cpu().numpy())
+            all_preds.extend(predicted.cpu().numpy())
+            
+            total += yb.size(0)
+            correct += predicted.eq(yb).sum().item()
+
+        train_loss = total_loss / total
+        train_acc = correct / total
+
+        # Evaluation phase (you can also add this)
+        bagmodel.eval()
+        total_val_loss = 0.0
+        total = 0
+        correct = 0
+        with torch.no_grad():
+            for (xb, ids, yb) in tqdm(val_dl, total=len(val_dl)):   
+                xb, ids, yb = xb.cuda(), ids.cuda(), yb.cuda()
+                outputs = bagmodel(xb, ids)
+                loss = loss_func(outputs, yb)
+                
+                total_val_loss += loss.item() * len(xb)
+                _, predicted = outputs.max(1)
+                total += yb.size(0)
+                correct += predicted.eq(yb).sum().item()
+
+        val_loss = total_val_loss / total
+        val_acc = correct / total
+        
+        train_losses_over_epochs.append(train_loss)
+        valid_losses_over_epochs.append(val_loss)
+        
+        print(f"Epoch {epoch+1} | Acc   | Loss")
+        print(f"Train   | {train_acc:.4f} | {train_loss:.4f}")
+        print(f"Val     | {val_acc:.4f} | {val_loss:.4f}")
     
+    # Save the model
+    torch.save(bagmodel.state_dict(), f"{env}/models/{model_name}.pth")
+
     # Save the loss graph
-    plot_and_save_training_validation_loss(learn, f"{env}/models/{model_name}_loss.png")
+    plot_loss_PYTORCH(train_losses_over_epochs, valid_losses_over_epochs, f"{env}/models/{model_name}_loss.png")
     
     # Save the confusion matrix
     vocab = ['not malignant', 'malignant']  # Replace with your actual vocab
-    plot_and_save_confusion_matrix(learn, vocab, f"{env}/models/{model_name}_confusion.png")
+    plot_Confusion_PYTORCH(all_targs, all_preds, vocab, f"{env}/models/{model_name}_confusion.png")
 
         
     
