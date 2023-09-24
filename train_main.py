@@ -157,15 +157,6 @@ class IlseBagModel(nn.Module):
 
 
 
-# BCE loss doesn't encode the predictions, so 
-# we include it in the accuracy
-def accuracy_thresh(inp, targ, thresh=0.5):
-    "Compute accuracy when `inp` and `targ` are the same size."
-    inp,targ = flatten_check(inp,targ)
-    return ((inp>thresh)==targ.bool()).float().mean()
-
-
-
 if __name__ == '__main__':
 
     model_name = 'test1'
@@ -237,6 +228,7 @@ if __name__ == '__main__':
         total_loss = 0.0
         total_acc = 0
         total = 0
+        correct = 0
         for (xb, ids, yb) in tqdm(train_dl, total=len(train_dl)): 
             xb, ids, yb = xb.cuda(), ids.cuda(), yb.cuda()
             optimizer.zero_grad()
@@ -251,19 +243,18 @@ if __name__ == '__main__':
             optimizer.step()
 
             total_loss += loss.item() * len(xb)
-            predicted = torch.round(outputs).squeeze() 
+            predicted = torch.round(outputs).squeeze()
+            total += yb.size(0)
+            correct += predicted.eq(yb.squeeze()).sum().item() 
             
             all_targs.extend(yb.cpu().numpy())
             if len(predicted.size()) == 0:
                 predicted = predicted.view(1)
             all_preds.extend(predicted.cpu().detach().numpy())
             
-            total += yb.size(0)
-            acc = accuracy_thresh(outputs, yb).item()
-            total_acc += acc * len(xb)
 
         train_loss = total_loss / total
-        train_acc = total_acc / total
+        train_acc = correct / total
 
 
         # Evaluation phase
@@ -271,21 +262,22 @@ if __name__ == '__main__':
         total_val_loss = 0.0
         total_val_acc = 0.0
         total = 0
+        correct = 0
         with torch.no_grad():
             for (xb, ids, yb) in tqdm(val_dl, total=len(val_dl)):   
                 xb, ids, yb = xb.cuda(), ids.cuda(), yb.cuda()
-                outputs = bagmodel((xb, ids))
+                
+                xb = xb.view(-1, 3, img_size, img_size)
+                outputs = bagmodel((xb, ids)).squeeze(dim=1)
                 loss = loss_func(outputs, yb)
                 
                 total_val_loss += loss.item() * len(xb)
                 predicted = torch.round(outputs).squeeze() 
-                
                 total += yb.size(0)
-                val_acc = accuracy_thresh(outputs, yb).item()  # Calculate validation accuracy
-                total_val_acc += val_acc * len(xb)
+                correct += predicted.eq(yb.squeeze()).sum().item()
 
         val_loss = total_val_loss / total
-        val_acc = total_val_acc / total
+        val_acc = correct / total
         
         train_losses_over_epochs.append(train_loss)
         valid_losses_over_epochs.append(val_loss)
