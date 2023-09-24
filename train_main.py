@@ -170,7 +170,7 @@ if __name__ == '__main__':
 
     model_name = 'test1'
     img_size = 512
-    batch_size = 2
+    batch_size = 3
     bag_size = 8
     epochs = 20   
     reg_lambda = 0.001
@@ -195,8 +195,8 @@ if __name__ == '__main__':
     train_data = data[data['Patient_ID'].isin(train_patient_ids)].reset_index(drop=True)
     val_data = data[data['Patient_ID'].isin(val_patient_ids)].reset_index(drop=True)
 
-    train_bags = create_bags(train_data, bag_size, cropped_images, inside_bag_upsampling=False)
-    val_bags = create_bags(val_data, bag_size, cropped_images, inside_bag_upsampling=False) 
+    train_bags = create_bags(train_data, bag_size, cropped_images, inside_bag_upsampling=True)
+    val_bags = create_bags(val_data, bag_size, cropped_images, inside_bag_upsampling=True) 
     
     print(f'There are {len(train_data)} files in the training data')
     print(f'There are {len(val_data)} files in the validation data')
