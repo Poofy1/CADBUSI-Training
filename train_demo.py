@@ -23,7 +23,10 @@ def recur_list(path):
 
 
 def create_bags( files, labels, min_per_bag = 3, max_per_bag = 7, random_state = 42):
-
+    '''
+    input the list of (truncated) filenames and the label for each image
+    output a nested list where each sublist is a list of filenames for the bag and bag_labels is a list of all the classes in the bag
+    '''
     tot_instances = len(files)
     np.random.seed( seed = random_state )
     idx = np.random.permutation(tot_instances)
@@ -89,8 +92,6 @@ class BagOfImagesDataset(TUD.Dataset):
   def n_features(self):
     return self.data.size(1)
 
-
-
 def collate_custom(batch):
     batch_data = []
     batch_bagids = []
@@ -104,8 +105,10 @@ def collate_custom(batch):
     out_data = torch.cat(batch_data, dim = 0).cuda()
     out_bagids = torch.cat(batch_bagids).cuda()
     out_labels = torch.stack(batch_labels).cuda()
-  
+    
+
     return (out_data, out_bagids), out_labels
+
 
 
 # this function is used to cut off the head of a pretrained timm model and return the body
@@ -123,7 +126,7 @@ def create_timm_body(arch:str, pretrained=True, cut=None, n_in=3):
 
 class IlseBagModel(nn.Module):
     
-    def __init__(self, arch, num_classes = 2, pool_patches = 3, pretrained = True):
+    def __init__(self, arch, num_classes = 1, pool_patches = 3, pretrained = True):
         super(IlseBagModel,self).__init__()
         self.pool_patches = pool_patches # how many patches to use in predicting instance label
         self.backbone = create_timm_body(arch, pretrained = pretrained)
@@ -154,6 +157,8 @@ class IlseBagModel(nn.Module):
         ids = input[1]
         x = input[0]
         
+        print(x.shape)
+        
         # compute the features using backbone network
         h = self.backbone(x)
         
@@ -171,17 +176,20 @@ class IlseBagModel(nn.Module):
         # gated-attention
         A_V = self.attention_V(v) 
         A_U = self.attention_U(v) 
-        A  = self.attention_W(A_V * A_U)
+        A  = self.attention_W(A_V * A_U).squeeze()
         
         unique = torch.unique_consecutive(ids)
-        yhat_bags = torch.empty(len(unique),self.num_classes).cuda()
+        num_bags = len(unique)
+        yhat_bags = torch.empty(num_bags,self.num_classes).cuda()
         for i,bag in enumerate(unique):
             mask = torch.where(ids == bag)[0]
             A[mask] = nn.functional.softmax( A[mask] , dim = 0 )
             yhat = self.yhat_instance[mask]
+
             yhat_bags[i] = ( A[mask] * yhat ).sum(dim=0)
         
         self.attn_scores = A
+       
         return yhat_bags
     
 # "The regularization term |A| is basically model.saliency_maps.mean()" -from github repo
@@ -192,7 +200,19 @@ class L1RegCallback(Callback):
     def after_loss(self):
         self.learn.loss += self.reglambda * self.learn.model.saliency_map.mean()
 
+def ilse_splitter(model):
+    # split the model so that freeze works on the backbone
+    p = params(model)
+    num_body = len( params(model.backbone) )
+    num_total = len(p)
+    return [p[0:num_body], p[(num_body+1):num_total]]
 
+# BCE loss doesn't encode the predictions, so 
+# we include it in the accuracy
+def accuracy_thresh(inp, targ, thresh=0.5):
+    "Compute accuracy when `inp` and `targ` are the same size."
+    inp,targ = flatten_check(inp,targ)
+    return ((inp>thresh)==targ.bool()).float().mean()
 
 path = untar_data(URLs.IMAGENETTE_160)
 path_train = path/'train'
@@ -254,12 +274,26 @@ dls = DataLoaders(train_dl, val_dl)
 # set regularization parameter
 reg_lambda = 0.001
 
-timm_arch = 'resnet18'
+timm_arch = 'resnet152' # about 99+% accuracy at bag-level
 
-bagmodel = IlseBagModel(timm_arch,pretrained = True).cuda()
+num_classes = 1
+callbacks = [L1RegCallback(reg_lambda)]
 
-learn = Learner(dls,bagmodel, loss_func=CrossEntropyLossFlat(),metrics = accuracy, cbs = L1RegCallback(reg_lambda) )
+bagmodel = IlseBagModel(timm_arch, num_classes = num_classes,pretrained = True).cuda()
 
+
+if num_classes == 1:
+    learn = Learner(dls,bagmodel, loss_func=BCELossFlat(),splitter=ilse_splitter,metrics = accuracy_thresh, cbs = callbacks )
+else:
+    learn = Learner(dls,bagmodel, loss_func=CrossEntropyLossFlat(),splitter=ilse_splitter,metrics = accuracy_thresh, cbs = callbacks )
+learn.freeze()
+
+# how many frozen / unfrozen parameters
+frozen_parameters = filter(lambda p: not p.requires_grad, learn.model.parameters())
+frozen = sum([np.prod(p.size()) for p in frozen_parameters])
+unfrozen_parameters = filter(lambda p: p.requires_grad, learn.model.parameters())
+unfrozen = sum([np.prod(p.size()) for p in unfrozen_parameters])
+print(f'There are {frozen} frozen paraemters and {unfrozen} unfrozen parameters')
 
 # find a good learning rate using mini-batches
 learn.lr_find()

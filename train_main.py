@@ -25,13 +25,13 @@ class BagOfImagesDataset(Dataset):
         if normalize:
             self.tsfms = T.Compose([
                 T.ToTensor(),
-                T.Resize((self.imsize, self.imsize)),
+                #T.Resize((self.imsize, self.imsize)),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
         else:
             self.tsfms = T.Compose([
                 T.ToTensor(),
-                T.Resize((self.imsize, self.imsize))
+                #T.Resize((self.imsize, self.imsize))
             ])
 
     def __len__(self):
@@ -47,12 +47,13 @@ class BagOfImagesDataset(Dataset):
             self.tsfms(Image.open(fn).convert("RGB")) for fn in filenames
         ]).cuda()
         
-        # Use the first label from the bag labels (assuming all instances in the bag have the same label)
+        # Convert the first label from the bag labels to a scalar tensor
         label = torch.tensor(labels[0], dtype=torch.float).cuda()
         
-        # Convert bag ids to tensor and use the first id (assuming all instances have the same id)
-        bagid = torch.tensor(ids[0], dtype=torch.float).cuda()
-
+        # Convert bag ids to tensor with the same shape as the old data loader
+        bagid = torch.full((len(filenames),), ids[0], dtype=torch.float).cuda()
+        
+        
         return data, bagid, label
 
 
@@ -116,39 +117,52 @@ class IlseBagModel(nn.Module):
         self.attention_W = nn.Linear(self.L, self.num_classes)
     
                     
-    def forward(self, x, ids):
-        # Reshape input to merge the bag and image dimensions
-        x_reshaped = x.view(-1, 3, 256, 256)
-        h = self.backbone(x_reshaped)
-
+    def forward(self, input):
+        # input should be a tuple of the form (data,ids)
+        ids = input[1]
+        x = input[0]
+        
+        # compute the features using backbone network
+        h = self.backbone(x)
+        
         # add attention head to compute instance saliency map and instance labels (as logits)
-
-        self.saliency_map = self.saliency_layer(h)  # compute activation maps
-        map_flatten = self.saliency_map.flatten(start_dim=-2, end_dim=-1)
+    
+        self.saliency_map = self.saliency_layer(h) # compute activation maps
+        map_flatten = self.saliency_map.flatten(start_dim = -2, end_dim = -1)
         selected_area = map_flatten.topk(self.pool_patches, dim=2)[0]
         self.yhat_instance = selected_area.mean(dim=2).squeeze()
-
+        
         # max pool the feature maps to generate feature vector v of length self.nf (number of features)
-        v = torch.max(h, dim=2).values
-        v = torch.max(v, dim=2).values  # maxpool complete
-
+        v = torch.max( h, dim = 2).values
+        v = torch.max( v, dim = 2).values # maxpool complete
+        
         # gated-attention
-        A_V = self.attention_V(v)
-        A_U = self.attention_U(v)
-        A = torch.sigmoid(self.attention_W(A_V * A_U))
-
+        A_V = self.attention_V(v) 
+        A_U = self.attention_U(v) 
+        A  = self.attention_W(A_V * A_U).squeeze()
+        
         unique = torch.unique_consecutive(ids)
-        yhat_bags = torch.empty(len(unique), self.num_classes).cuda()
-
-        for i, bag in enumerate(unique):
+        num_bags = len(unique)
+        yhat_bags = torch.empty(num_bags,self.num_classes).cuda()
+        for i,bag in enumerate(unique):
             mask = torch.where(ids == bag)[0]
-            A_mask_softmax = nn.functional.softmax(A[mask], dim=0)  # out-of-place softmax operation
+            A[mask] = nn.functional.softmax( A[mask] , dim = 0 )
             yhat = self.yhat_instance[mask]
-            yhat_bags[i] = (A_mask_softmax * yhat).sum(dim=0)  # use the new tensor instead of modifying A
 
-        self.attn_scores = A  # if needed, create a new tensor for attn_scores instead of modifying A
-        return yhat_bags.squeeze(-1)
+            yhat_bags[i] = ( A[mask] * yhat ).sum(dim=0)
+        
+        self.attn_scores = A
+       
+        return yhat_bags
 
+
+
+# BCE loss doesn't encode the predictions, so 
+# we include it in the accuracy
+def accuracy_thresh(inp, targ, thresh=0.5):
+    "Compute accuracy when `inp` and `targ` are the same size."
+    inp,targ = flatten_check(inp,targ)
+    return ((inp>thresh)==targ.bool()).float().mean()
 
 
 
@@ -159,7 +173,7 @@ if __name__ == '__main__':
     batch_size = 2
     bag_size = 8
     epochs = 20   
-    reg_lambda = 0 #0.001
+    reg_lambda = 0.001
     lr = 0.001
 
     print("Preprocessing Data...")
@@ -181,8 +195,8 @@ if __name__ == '__main__':
     train_data = data[data['Patient_ID'].isin(train_patient_ids)].reset_index(drop=True)
     val_data = data[data['Patient_ID'].isin(val_patient_ids)].reset_index(drop=True)
 
-    train_bags = create_bags(train_data, bag_size, cropped_images)
-    val_bags = create_bags(val_data, bag_size, cropped_images) 
+    train_bags = create_bags(train_data, bag_size, cropped_images, inside_bag_upsampling=False)
+    val_bags = create_bags(val_data, bag_size, cropped_images, inside_bag_upsampling=False) 
     
     print(f'There are {len(train_data)} files in the training data')
     print(f'There are {len(val_data)} files in the validation data')
@@ -221,15 +235,17 @@ if __name__ == '__main__':
         # Training phase
         bagmodel.train()
         total_loss = 0.0
+        total_acc = 0
         total = 0
-        correct = 0
-        for (xb, ids, yb) in tqdm(train_dl, total=len(train_dl)):  
+        for (xb, ids, yb) in tqdm(train_dl, total=len(train_dl)): 
             xb, ids, yb = xb.cuda(), ids.cuda(), yb.cuda()
             optimizer.zero_grad()
-            outputs = bagmodel(xb, ids)
+            
+            xb = xb.view(-1, 3, img_size, img_size)
+            outputs = bagmodel((xb, ids)).squeeze(dim=1)
             loss = loss_func(outputs, yb)
             
-            print(f'loss: {loss}\n pred: {outputs}\n true: {yb}')
+            #print(f'loss: {loss}\n pred: {outputs}\n true: {yb}')
             
             loss.backward()
             optimizer.step()
@@ -241,33 +257,35 @@ if __name__ == '__main__':
             if len(predicted.size()) == 0:
                 predicted = predicted.view(1)
             all_preds.extend(predicted.cpu().detach().numpy())
-
             
             total += yb.size(0)
-            correct += predicted.eq(yb.squeeze()).sum().item()
+            acc = accuracy_thresh(outputs, yb).item()
+            total_acc += acc * len(xb)
 
         train_loss = total_loss / total
-        train_acc = correct / total
+        train_acc = total_acc / total
 
 
         # Evaluation phase
         bagmodel.eval()
         total_val_loss = 0.0
+        total_val_acc = 0.0
         total = 0
-        correct = 0
         with torch.no_grad():
             for (xb, ids, yb) in tqdm(val_dl, total=len(val_dl)):   
                 xb, ids, yb = xb.cuda(), ids.cuda(), yb.cuda()
-                outputs = bagmodel(xb, ids)
+                outputs = bagmodel((xb, ids))
                 loss = loss_func(outputs, yb)
                 
                 total_val_loss += loss.item() * len(xb)
                 predicted = torch.round(outputs).squeeze() 
+                
                 total += yb.size(0)
-                correct += predicted.eq(yb.squeeze()).sum().item()
+                val_acc = accuracy_thresh(outputs, yb).item()  # Calculate validation accuracy
+                total_val_acc += val_acc * len(xb)
 
         val_loss = total_val_loss / total
-        val_acc = correct / total
+        val_acc = total_val_acc / total
         
         train_losses_over_epochs.append(train_loss)
         valid_losses_over_epochs.append(val_loss)
