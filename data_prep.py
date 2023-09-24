@@ -27,7 +27,7 @@ def filter_raw_data(breast_data, image_data):
     return data
 
 
-def create_bags(data, bag_size, root_dir):
+def create_bags(data, bag_size, root_dir, inside_bag_upsampling=True):
     unique_patient_ids = data['Patient_ID'].unique()
 
     bags = []
@@ -42,12 +42,19 @@ def create_bags(data, bag_size, root_dir):
             continue
 
         # If less than bag_size, randomly choose rows for upsampling until we reach bag_size
-        while len(bag_files) < bag_size:
-            row = patient_data.sample(n=1).iloc[0]
-            filename = os.path.join(root_dir, row['ImageName'])
-            label = int(row['Has_Malignant'])
-            bag_files.append(filename)
-            bag_labels.append(label)
+        if inside_bag_upsampling:
+            while len(bag_files) < bag_size:
+                row = patient_data.sample(n=1).iloc[0]
+                filename = os.path.join(root_dir, row['ImageName'])
+                label = int(row['Has_Malignant'])
+                bag_files.append(filename)
+                bag_labels.append(label)
+        else:
+            for _, row in patient_data.iterrows():
+                filename = os.path.join(root_dir, row['ImageName'])
+                label = int(row['Has_Malignant'])
+                bag_files.append(filename)
+                bag_labels.append(label)
 
         bag_id = [patient_id] * bag_size
 
@@ -70,14 +77,16 @@ def create_bags(data, bag_size, root_dir):
 
     for _ in range(diff):
         chosen_bag = random.choice(minority_bags)
-        new_bag_files = random.sample(chosen_bag[0], bag_size)
-        new_bag_labels = [label_value] * bag_size
-        new_bag_id = [new_patient_id] * bag_size
+        sample_size = min(bag_size, len(chosen_bag[0])) 
+        new_bag_files = random.sample(chosen_bag[0], sample_size) 
+        new_bag_labels = [label_value] * sample_size 
+        new_bag_id = [new_patient_id] * sample_size 
 
         bags.append([new_bag_files, new_bag_labels, new_bag_id])
         new_patient_id += 1
 
     return bags
+
 
 def count_malignant_bags(bags):
     malignant_count = 0
