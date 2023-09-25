@@ -16,22 +16,22 @@ env = os.path.dirname(os.path.abspath(__file__))
 
 class BagOfImagesDataset(Dataset):
 
-    def __init__(self, data, imsize, normalize=True):
+    def __init__(self, data, imsize, transform=True):
         self.bags = data
-        self.normalize = normalize
+        self.transform = transform
         self.imsize = imsize
 
         # Normalize
-        if normalize:
+        if transform:
             self.tsfms = T.Compose([
+                T.RandomVerticalFlip(),
+                T.RandomHorizontalFlip(),
                 T.ToTensor(),
-                #T.Resize((self.imsize, self.imsize)),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
         else:
             self.tsfms = T.Compose([
                 T.ToTensor(),
-                #T.Resize((self.imsize, self.imsize))
             ])
 
     def __len__(self):
@@ -164,8 +164,8 @@ if __name__ == '__main__':
     batch_size = 3
     bag_size = 8
     epochs = 20   
-    reg_lambda = 0.001
-    lr = 0.001
+    reg_lambda = 0 #0.001
+    lr = 0.0008
 
     print("Preprocessing Data...")
     
@@ -198,15 +198,9 @@ if __name__ == '__main__':
     
     
     print("Training Data...")
-
-    train_amount = list(range(0,10))
-    val_amount = list(range(0,10))
-    
     # Create datasets
-    #dataset_train = Subset(BagOfImagesDataset(train_bags, img_size), train_amount)
-    #dataset_val = Subset(BagOfImagesDataset(val_bags, img_size), val_amount)
-    dataset_train = BagOfImagesDataset(train_bags, img_size)
-    dataset_val = BagOfImagesDataset(val_bags, img_size)
+    dataset_train = BagOfImagesDataset(train_bags, img_size, transform=True)
+    dataset_val = BagOfImagesDataset(val_bags, img_size, transform=False)
         
     # Create data loaders
     train_dl =  DataLoader(dataset_train, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
