@@ -105,7 +105,6 @@ def collate_custom(batch):
     out_data = torch.cat(batch_data, dim = 0).cuda()
     out_bagids = torch.cat(batch_bagids).cuda()
     out_labels = torch.stack(batch_labels).cuda()
-    
 
     return (out_data, out_bagids), out_labels
 
@@ -253,8 +252,6 @@ labels_train = np.array( [1 if 'fish' in x else 0 for x in bags_train_labels_all
 files_val = np.concatenate( bags_val )
 ids_val = np.concatenate( bags_val_ids )
 labels_val = np.array( [1 if 'fish' in x else 0 for x in bags_val_labels_all] )
-
-
 
 
 num_bags_train = 1882 # <= 1882

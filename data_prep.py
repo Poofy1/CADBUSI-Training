@@ -4,14 +4,15 @@ from torchvision import transforms
 from tqdm import tqdm
 import numpy as np
 import pandas as pd
-import random
+from sklearn.utils import resample
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from itertools import cycle
 
 
 def filter_raw_data(breast_data, image_data):
 
     # Join dataframes on PatientID
-    data = pd.merge(breast_data, image_data, left_on=['Patient_ID', 'Breast'], right_on=['Patient_ID', 'laterality'], suffixes=('', '_image_data'))
+    data = pd.merge(breast_data, image_data, left_on=['Accession_Number', 'Breast'], right_on=['Accession_Number', 'laterality'], suffixes=('', '_image_data'))
 
     # Remove columns from image_data that also exist in breast_data
     for col in breast_data.columns:
@@ -24,82 +25,98 @@ def filter_raw_data(breast_data, image_data):
     # Reset the index
     data.reset_index(drop=True, inplace=True)
     
+    data = upsample_minority(data)
+    
     return data
 
+def upsample_minority(data):
+    # Group data by ['Accession_Number', 'Breast'] and get the first entry for 'Has_Malignant' to determine the class
+    grouped_data = data.groupby(['Accession_Number', 'Breast']).agg({'Has_Malignant': 'first'})
+    
+    # Determine the minority class (1 for malignant, 0 for benign)
+    minority_class = 1 if grouped_data['Has_Malignant'].mean() < 0.5 else 0
+    
+    # Filter the groups belonging to the minority and majority classes
+    minority_groups = grouped_data[grouped_data['Has_Malignant'] == minority_class].index.tolist()
+    majority_groups = grouped_data[grouped_data['Has_Malignant'] != minority_class].index.tolist()
+    
+    # Determine the difference in count between majority and minority classes
+    count_diff = len(majority_groups) - len(minority_groups)
+    
+    # If the classes are already balanced, return the original data
+    if count_diff == 0:
+        return data
+    
+    # Select groups from the minority class to duplicate
+    minority_data = data[data.set_index(['Accession_Number', 'Breast']).index.isin(minority_groups)]
+    
+    # Create an iterator to cycle through the minority_data groups
+    group_cycle = cycle(minority_data.groupby(['Accession_Number', 'Breast']))
+    
+    # Duplicate the necessary number of groups from the minority class to achieve balance
+    duplicated_data = pd.concat([next(group_cycle)[1] for _ in range(count_diff)], ignore_index=True)
+    
+    # Find the maximum Accession_Number to generate new Accession_Numbers for duplicated rows
+    max_acc_number = data['Accession_Number'].max()
+    
+    # Generate new Accession_Numbers for the duplicated rows
+    new_acc_numbers = range(max_acc_number + 1, max_acc_number + 1 + count_diff)
+    acc_number_mapping = dict(zip(duplicated_data['Accession_Number'].unique(), new_acc_numbers))
+    duplicated_data['Accession_Number'] = duplicated_data['Accession_Number'].map(acc_number_mapping)
+    
+    # Concatenate the original data with the duplicated data
+    upsampled_data = pd.concat([data, duplicated_data], ignore_index=True)
+    
+    return upsampled_data
 
-def create_bags(data, bag_size, root_dir, inside_bag_upsampling=True):
-    unique_patient_ids = data['Patient_ID'].unique()
 
-    bags = []
+
+def create_bags(data, min_size, max_size, root_dir):
+    unique_patient_ids = data['Accession_Number'].unique()
+
+    bag_files = []
+    bag_labels = []
+    bag_ids = []
+    id = 0  # initialize bag id
+
     for patient_id in tqdm(unique_patient_ids):
-        bag_files = []
-        bag_labels = []
+        patient_data = data[data['Accession_Number'] == patient_id]
 
-        patient_data = data[data['Patient_ID'] == patient_id]
-        
-        # Exclude bags that exceed the bag_size
-        if len(patient_data) > bag_size:
+        # Exclude bags that are outside the size range
+        if not (min_size <= len(patient_data) <= max_size):
             continue
 
-        # If less than bag_size, randomly choose rows for upsampling until we reach bag_size
-        if inside_bag_upsampling:
-            while len(bag_files) < bag_size:
-                row = patient_data.sample(n=1).iloc[0]
-                filename = os.path.join(root_dir, row['ImageName'])
-                label = int(row['Has_Malignant'])
-                bag_files.append(filename)
-                bag_labels.append(label)
+        bag_file = []  # temporary lists to hold file names and labels for this bag
+        bag_label = []
+
+        for _, row in patient_data.iterrows():
+            filename = os.path.join(root_dir, row['ImageName'])
+            label = int(row['Has_Malignant'])
+            bag_file.append(filename)
+            bag_label.append(label)
+
+        bag_files.append(np.array(bag_file))  # convert to numpy array and append to bag_files
+        bag_labels.append(np.array(bag_label))  # convert to numpy array and append to bag_labels
+        bag_ids.append(id * np.ones(len(bag_file), dtype=int))  # create id array and append to bag_ids
+
+        id += 1  # increment bag id for the next bag
+
+    return bag_files, bag_labels, bag_ids
+
+
+
+def count_bag_labels(bag_labels):
+    positive_bag_count = 0
+    negative_bag_count = 0
+
+    for labels in bag_labels:
+        # Assuming a bag is positive if it contains at least one positive instance
+        if np.any(labels == 1):
+            positive_bag_count += 1
         else:
-            for _, row in patient_data.iterrows():
-                filename = os.path.join(root_dir, row['ImageName'])
-                label = int(row['Has_Malignant'])
-                bag_files.append(filename)
-                bag_labels.append(label)
+            negative_bag_count += 1
 
-        bag_id = [patient_id] * bag_size
-
-        bags.append([bag_files, bag_labels, bag_id])
-
-    # Identify minority and majority class bags
-    malignant_bags = [bag for bag in bags if sum(bag[1]) > 0]
-    benign_bags = [bag for bag in bags if sum(bag[1]) == 0]
-
-    if len(malignant_bags) < len(benign_bags):
-        minority_bags = malignant_bags
-        label_value = 1
-    else:
-        minority_bags = benign_bags
-        label_value = 0
-
-    # Create new bags for the minority class
-    diff = len(bags) - 2 * len(minority_bags) 
-    new_patient_id = max(unique_patient_ids) + 1
-
-    for _ in range(diff):
-        chosen_bag = random.choice(minority_bags)
-        sample_size = min(bag_size, len(chosen_bag[0])) 
-        new_bag_files = random.sample(chosen_bag[0], sample_size) 
-        new_bag_labels = [label_value] * sample_size 
-        new_bag_id = [new_patient_id] * sample_size 
-
-        bags.append([new_bag_files, new_bag_labels, new_bag_id])
-        new_patient_id += 1
-
-    return bags
-
-
-def count_malignant_bags(bags):
-    malignant_count = 0
-    non_malignant_count = 0
-    
-    for bag in bags:
-        bag_labels = bag[1]  # Extracting labels from the bag
-        if sum(bag_labels) > 0:  # If there's even one malignant instance
-            malignant_count += 1
-        else:
-            non_malignant_count += 1
-    
-    return malignant_count, non_malignant_count
+    return positive_bag_count, negative_bag_count
 
 def process_single_image(row, root_dir, output_dir, resize_and_pad):
     patient_id = row['Patient_ID']
