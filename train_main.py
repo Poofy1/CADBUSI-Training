@@ -1,60 +1,59 @@
 import os
 from timm import create_model
 from fastai.vision.all import *
-from torch.utils.data import Dataset, Subset
+import torch.utils.data as TUD
 from fastai.vision.learner import _update_first_layer
 from tqdm import tqdm
 import torchvision.transforms as T
 from PIL import Image
+from torch import from_numpy
 from torch import nn
 from training_eval import *
 from torch.optim import Adam
 from data_prep import *
 env = os.path.dirname(os.path.abspath(__file__))
+torch.backends.cudnn.benchmark = True
 
 
+class BagOfImagesDataset(TUD.Dataset):
 
-class BagOfImagesDataset(Dataset):
+  def __init__(self, filenames, ids, labels, imsize, normalize=True):
+    self.filenames = filenames
+    self.labels = from_numpy(labels)
+    self.ids = from_numpy(ids)
+    self.normalize = normalize
+    self.imsize = imsize
+  
+    # Normalize
+    if normalize:
+        self.tsfms = T.Compose([
+        T.ToTensor(),
+        T.Resize( (self.imsize, self.imsize) ),
+        T.Normalize(mean=[0.485, 0.456, 0.406],std= [0.229, 0.224, 0.225])
+        ])
+    else:
+        self.tsfms = T.Compose([
+        T.ToTensor(),
+        T.Resize( (self.imsize, self.imsize) )
+        ])
 
-    def __init__(self, data, imsize, transform=True):
-        self.bags = data
-        self.transform = transform
-        self.imsize = imsize
+  def __len__(self):
+    return len(torch.unique(self.ids))
+  
+  def __getitem__(self, index):
+    where_id = self.ids == index
+    files_this_bag = self.filenames[ where_id ]
+    data = torch.stack( [ 
+        self.tsfms( Image.open(fn).convert("RGB") ) for fn in files_this_bag 
+    ] ).cuda()
+    bagids = self.ids[where_id]
+    labels = self.labels[index]
 
-        # Normalize
-        if transform:
-            self.tsfms = T.Compose([
-                T.RandomVerticalFlip(),
-                T.RandomHorizontalFlip(),
-                T.ToTensor(),
-                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
-        else:
-            self.tsfms = T.Compose([
-                T.ToTensor(),
-            ])
+    return data, bagids, labels
+  
+  def n_features(self):
+    return self.data.size(1)
 
-    def __len__(self):
-        return len(self.bags)
-
-    def __getitem__(self, index):
-        bag = self.bags[index]
-        filenames = bag[0]
-        labels = bag[1]
-        ids = bag[2]
-        
-        data = torch.stack([
-            self.tsfms(Image.open(fn).convert("RGB")) for fn in filenames
-        ]).cuda()
-        
-        # Convert the first label from the bag labels to a scalar tensor
-        label = torch.tensor(labels[0], dtype=torch.float).cuda()
-        
-        # Convert bag ids to tensor with the same shape as the old data loader
-        bagid = torch.full((len(filenames),), ids[0], dtype=torch.float).cuda()
-        
-        
-        return data, bagid, label
 
 
 def collate_custom(batch):
@@ -70,7 +69,8 @@ def collate_custom(batch):
     out_data = torch.cat(batch_data, dim = 0).cuda()
     out_bagids = torch.cat(batch_bagids).cuda()
     out_labels = torch.stack(batch_labels).cuda()
-  
+    
+
     return (out_data, out_bagids), out_labels
 
 
@@ -115,7 +115,7 @@ class IlseBagModel(nn.Module):
         )
 
         self.attention_W = nn.Linear(self.L, self.num_classes)
-    
+
                     
     def forward(self, input):
         # input should be a tuple of the form (data,ids)
@@ -157,13 +157,15 @@ class IlseBagModel(nn.Module):
 
 
 
+
 if __name__ == '__main__':
 
     model_name = 'test1'
-    img_size = 512
+    img_size = 400
     batch_size = 3
-    bag_size = 8
-    epochs = 20   
+    min_bag_size = 3
+    max_bag_size = 8
+    epochs = 1
     reg_lambda = 0 #0.001
     lr = 0.0008
 
@@ -186,12 +188,22 @@ if __name__ == '__main__':
     train_data = data[data['Patient_ID'].isin(train_patient_ids)].reset_index(drop=True)
     val_data = data[data['Patient_ID'].isin(val_patient_ids)].reset_index(drop=True)
 
-    train_bags = create_bags(train_data, bag_size, cropped_images, inside_bag_upsampling=True)
-    val_bags = create_bags(val_data, bag_size, cropped_images, inside_bag_upsampling=True) 
+    #data.to_csv(f'{env}/testData.csv')
+
+    bags_train, bags_train_labels_all, bags_train_ids = create_bags(train_data, min_bag_size, max_bag_size, cropped_images)
+    bags_val, bags_val_labels_all, bags_val_ids = create_bags(val_data, min_bag_size, max_bag_size, cropped_images)
     
-    print(f'There are {len(train_data)} files in the training data')
-    print(f'There are {len(val_data)} files in the validation data')
-    malignant_count, non_malignant_count = count_malignant_bags(train_bags)
+    files_train = np.concatenate( bags_train )
+    ids_train = np.concatenate( bags_train_ids )
+    labels_train = np.array([1 if np.any(x == 1) else 0 for x in bags_train_labels_all], dtype=np.float32)
+
+    files_val = np.concatenate( bags_val )
+    ids_val = np.concatenate( bags_val_ids )
+    labels_val = np.array([1 if np.any(x == 1) else 0 for x in bags_val_labels_all], dtype=np.float32)
+    
+    print(f'There are {len(files_train)} files in the training data')
+    print(f'There are {len(files_val)} files in the validation data')
+    malignant_count, non_malignant_count = count_bag_labels(labels_train)
     print(f"Number of Malignant Bags: {malignant_count}")
     print(f"Number of Non-Malignant Bags: {non_malignant_count}")
     
@@ -199,14 +211,15 @@ if __name__ == '__main__':
     
     print("Training Data...")
     # Create datasets
-    dataset_train = BagOfImagesDataset(train_bags, img_size, transform=True)
-    dataset_val = BagOfImagesDataset(val_bags, img_size, transform=False)
+    dataset_train = BagOfImagesDataset(files_train, ids_train, labels_train, img_size)
+    dataset_val = BagOfImagesDataset(files_val, ids_val, labels_val, img_size)
         
     # Create data loaders
-    train_dl =  DataLoader(dataset_train, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
-    val_dl =    DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
+    train_dl =  TUD.DataLoader(dataset_train, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
+    val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
 
-    bagmodel = IlseBagModel('resnet50', pretrained = True).cuda()
+    
+    bagmodel = IlseBagModel('resnet18', pretrained = False).cuda()
     optimizer = Adam(bagmodel.parameters(), lr=lr)
     loss_func = nn.BCELoss()
     
@@ -223,14 +236,15 @@ if __name__ == '__main__':
         total_acc = 0
         total = 0
         correct = 0
-        for (xb, ids, yb) in tqdm(train_dl, total=len(train_dl)): 
+        for (data, yb) in tqdm(train_dl, total=len(train_dl)): 
+            xb, ids = data
             xb, ids, yb = xb.cuda(), ids.cuda(), yb.cuda()
             optimizer.zero_grad()
             
-            xb = xb.view(-1, 3, img_size, img_size)
             outputs = bagmodel((xb, ids)).squeeze(dim=1)
             loss = loss_func(outputs, yb)
             
+
             #print(f'loss: {loss}\n pred: {outputs}\n true: {yb}')
             
             loss.backward()
@@ -258,10 +272,10 @@ if __name__ == '__main__':
         total = 0
         correct = 0
         with torch.no_grad():
-            for (xb, ids, yb) in tqdm(val_dl, total=len(val_dl)):   
+            for (data, yb) in tqdm(val_dl, total=len(val_dl)): 
+                xb, ids = data  
                 xb, ids, yb = xb.cuda(), ids.cuda(), yb.cuda()
                 
-                xb = xb.view(-1, 3, img_size, img_size)
                 outputs = bagmodel((xb, ids)).squeeze(dim=1)
                 loss = loss_func(outputs, yb)
                 
