@@ -27,14 +27,16 @@ class BagOfImagesDataset(TUD.Dataset):
     # Normalize
     if normalize:
         self.tsfms = T.Compose([
-        T.ToTensor(),
-        T.Resize( (self.imsize, self.imsize) ),
-        T.Normalize(mean=[0.485, 0.456, 0.406],std= [0.229, 0.224, 0.225])
+            T.RandomVerticalFlip(),
+            T.RandomHorizontalFlip(),
+            T.ToTensor(),
+            T.Resize((self.imsize, self.imsize)),
+            T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
     else:
         self.tsfms = T.Compose([
-        T.ToTensor(),
-        T.Resize( (self.imsize, self.imsize) )
+            T.ToTensor(),
+            T.Resize( (self.imsize, self.imsize) )
         ])
 
   def __len__(self):
@@ -162,10 +164,10 @@ if __name__ == '__main__':
 
     model_name = 'test1'
     img_size = 400
-    batch_size = 3
+    batch_size = 5
     min_bag_size = 3
     max_bag_size = 8
-    epochs = 1
+    epochs = 10
     reg_lambda = 0 #0.001
     lr = 0.0008
 
@@ -219,7 +221,7 @@ if __name__ == '__main__':
     val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
 
     
-    bagmodel = IlseBagModel('resnet18', pretrained = False).cuda()
+    bagmodel = IlseBagModel('resnet50', pretrained = True).cuda()
     optimizer = Adam(bagmodel.parameters(), lr=lr)
     loss_func = nn.BCELoss()
     
