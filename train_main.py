@@ -11,69 +11,86 @@ from torch import nn
 from training_eval import *
 from torch.optim import Adam
 from data_prep import *
+import torchvision.transforms.functional as TF
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 
 
 class BagOfImagesDataset(TUD.Dataset):
 
-  def __init__(self, filenames, ids, labels, imsize, normalize=True):
-    self.filenames = filenames
-    self.labels = from_numpy(labels)
-    self.ids = from_numpy(ids)
-    self.normalize = normalize
-    self.imsize = imsize
-  
-    # Normalize
-    if normalize:
-        self.tsfms = T.Compose([
-            T.RandomVerticalFlip(),
-            T.RandomHorizontalFlip(),
-            T.ToTensor(),
-            T.Resize((self.imsize, self.imsize)),
-            T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
-    else:
-        self.tsfms = T.Compose([
-            T.ToTensor(),
-            T.Resize( (self.imsize, self.imsize) )
-        ])
+    def __init__(self, filenames, ids, labels, normalize=True):
+        self.filenames = filenames
+        self.labels = from_numpy(labels)
+        self.ids = from_numpy(ids)
+        self.normalize = normalize
+    
+        # Normalize
+        if normalize:
+            self.tsfms = T.Compose([
+                T.RandomVerticalFlip(),
+                T.RandomHorizontalFlip(),
+                T.RandomAffine(
+                    degrees=(-20, 20),  # Random rotation between -10 and 10 degrees
+                    translate=(0.05, 0.05),  # Slight translation
+                    scale=(0.95, 1.05),  # Slight scaling
+                ),
+                T.ToTensor(),
+                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
+        else:
+            self.tsfms = T.Compose([
+                T.ToTensor(),
+            ])
 
-  def __len__(self):
-    return len(torch.unique(self.ids))
-  
-  def __getitem__(self, index):
-    where_id = self.ids == index
-    files_this_bag = self.filenames[ where_id ]
-    data = torch.stack( [ 
-        self.tsfms( Image.open(fn).convert("RGB") ) for fn in files_this_bag 
-    ] ).cuda()
-    bagids = self.ids[where_id]
-    labels = self.labels[index]
+    def __len__(self):
+        return len(torch.unique(self.ids))
+    
+    def __getitem__(self, index):
+        where_id = self.ids == index
+        files_this_bag = self.filenames[where_id]
+        data = torch.stack([
+            self.tsfms(Image.open(fn).convert("RGB")) for fn in files_this_bag
+        ]).cuda()
 
-    return data, bagids, labels
-  
-  def n_features(self):
-    return self.data.size(1)
+        labels = self.labels[index]
 
+        return data, labels
 
+    def show_image(self, index, img_index=0):
+        # Get the transformed image tensor and label
+        data, labels = self.__getitem__(index)
+
+        # Select the specified image from the bag
+        img_tensor = data[img_index]
+
+        # Convert the image tensor to a PIL Image
+        img = TF.to_pil_image(img_tensor.cpu())
+
+        # Display the image and label
+        plt.imshow(img)
+        plt.title(f'Label: {labels}')
+        plt.axis('off')  # Hide the axis
+        plt.show()
+            
+    def n_features(self):
+        return self.data.size(1)
 
 def collate_custom(batch):
     batch_data = []
-    batch_bagids = []
+    batch_bag_sizes = [0] 
     batch_labels = []
   
     for sample in batch:
         batch_data.append(sample[0])
-        batch_bagids.append(sample[1])
-        batch_labels.append(sample[2])
+        batch_bag_sizes.append(sample[0].shape[0])
+        batch_labels.append(sample[1])
   
     out_data = torch.cat(batch_data, dim = 0).cuda()
-    out_bagids = torch.cat(batch_bagids).cuda()
+    bagsizes = torch.IntTensor(batch_bag_sizes).cuda()
+    out_bag_starts = torch.cumsum(bagsizes,dim=0).cuda()
     out_labels = torch.stack(batch_labels).cuda()
     
-
-    return (out_data, out_bagids), out_labels
+    return (out_data, out_bag_starts), out_labels
 
 
 
@@ -91,84 +108,119 @@ def create_timm_body(arch:str, pretrained=True, cut=None, n_in=3):
 
 
 
-class IlseBagModel(nn.Module):
+class ABMIL_aggregate(nn.Module):
     
-    def __init__(self, arch, num_classes = 1, pool_patches = 3, pretrained = True):
-        super(IlseBagModel,self).__init__()
-        self.pool_patches = pool_patches # how many patches to use in predicting instance label
-        self.backbone = create_timm_body(arch, pretrained = pretrained)
-        self.nf = num_features_model( nn.Sequential(*self.backbone.children()))
+    def __init__(self, nf = 512, num_classes = 1, pool_patches = 3, L = 128):
+        super(ABMIL_aggregate,self).__init__()
+        self.nf = nf
         self.num_classes = num_classes # two for binary classification
-        self.M = self.nf # is 512 for resnet34
-        self.L = 128 # number of latent features in gated attention     
+        self.pool_patches = pool_patches # how many patches to use in predicting instance label
+        self.L = L # number of latent attention features   
         
         self.saliency_layer = nn.Sequential(        
             nn.Conv2d( self.nf, self.num_classes, (1,1), bias = False),
             nn.Sigmoid() )
         
         self.attention_V = nn.Sequential(
-            nn.Linear(self.M, self.L),
+            nn.Linear(self.nf, self.L),
             nn.Tanh()
         )
 
         self.attention_U = nn.Sequential(
-            nn.Linear(self.M, self.L),
+            nn.Linear(self.nf, self.L),
             nn.Sigmoid()
         )
 
-        self.attention_W = nn.Linear(self.L, self.num_classes)
-
+        self.attention_W = nn.Sequential(
+            nn.Linear(self.L, self.num_classes),
+        )
                     
-    def forward(self, input):
-        # input should be a tuple of the form (data,ids)
-        ids = input[1]
-        x = input[0]
-        
-        # compute the features using backbone network
-        h = self.backbone(x)
-        
-        # add attention head to compute instance saliency map and instance labels (as logits)
+    def forward(self, h):
+        # input is a tensor with a bag of features, dim = bag_size x nf x h x w
     
-        self.saliency_map = self.saliency_layer(h) # compute activation maps
-        map_flatten = self.saliency_map.flatten(start_dim = -2, end_dim = -1)
+        saliency_maps = self.saliency_layer(h)
+        map_flatten = saliency_maps.flatten(start_dim = -2, end_dim = -1)
         selected_area = map_flatten.topk(self.pool_patches, dim=2)[0]
-        self.yhat_instance = selected_area.mean(dim=2).squeeze()
-        
-        # max pool the feature maps to generate feature vector v of length self.nf (number of features)
-        v = torch.max( h, dim = 2).values
-        v = torch.max( v, dim = 2).values # maxpool complete
+        yhat_instance = selected_area.mean(dim=2).squeeze()
         
         # gated-attention
+        v = torch.max( h, dim = 2).values # begin maxpool
+        v = torch.max( v, dim = 2).values # maxpool complete
         A_V = self.attention_V(v) 
         A_U = self.attention_U(v) 
-        A  = self.attention_W(A_V * A_U).squeeze()
+        attention_scores = nn.functional.softmax(
+            self.attention_W(A_V * A_U).squeeze(), dim = 0 )
         
-        unique = torch.unique_consecutive(ids)
-        num_bags = len(unique)
-        yhat_bags = torch.empty(num_bags,self.num_classes).cuda()
-        for i,bag in enumerate(unique):
-            mask = torch.where(ids == bag)[0]
-            A[mask] = nn.functional.softmax( A[mask] , dim = 0 )
-            yhat = self.yhat_instance[mask]
+        # aggreate individual predictions to get bag prediciton
+        yhat_bag = (attention_scores * yhat_instance).sum(dim=0)
+       
+        return yhat_bag, saliency_maps, yhat_instance, attention_scores
 
-            yhat_bags[i] = ( A[mask] * yhat ).sum(dim=0)
+
+class EmbeddingBagModel(nn.Module):
+    
+    def __init__(self, encoder, aggregator, num_classes = 1):
+        super(EmbeddingBagModel,self).__init__()
+        self.encoder = encoder
+        self.aggregator = aggregator
+        self.num_classes = num_classes
+                    
+    def forward(self, input):
+        # input should be a tuple of the form (data,bag_starts)
+        x = input[0]
+        bag_sizes = input[1]
         
-        self.attn_scores = A
+        # compute the features using encoder network
+        h = self.encoder(x)
+        
+        # loop over the bags and compute yhat_bag, etc. for each
+        num_bags = bag_sizes.shape[0]-1
+        saliency_maps, yhat_instances, attention_scores = [],[],[]
+        
+        yhat_bags = torch.empty(num_bags,self.num_classes).cuda()
+
+        for j in range(num_bags):
+            start, end = bag_sizes[j], bag_sizes[j+1]
+            
+            yhat_tmp, sm, yhat_ins, att_sc = self.aggregator(h[start:end])
+            
+            yhat_bags[j] = yhat_tmp
+            saliency_maps.append(sm)
+            yhat_instances.append(yhat_ins)
+            attention_scores.append(att_sc)
+            
+        # converts lists to tensors (this seems optional)
+        self.saliency_maps = torch.cat(saliency_maps,dim=0).cuda()
+        self.yhat_instances = torch.cat(yhat_instances,dim=0).cuda()
+        self.attention_scores = torch.cat(attention_scores,dim=0).cuda()
+        
+        # print(f'yhat_bags: {yhat_bags}')
+        # print(f'Number of bags: {yhat_bags.shape}')
+        # print(f'Saliency Maps: {self.saliency_maps.shape}')
+        # print(f'yhat_instances: {self.yhat_instances}')
+        # print(f'attention_scores: {self.attention_scores}')
        
         return yhat_bags
 
 
+
+def ilse_splitter(model):
+    # split the model so that freeze works on the backbone
+    p = params(model)
+    num_body = len( params(model.encoder) )
+    num_total = len(p)
+    return [p[0:num_body], p[(num_body+1):num_total]]
 
 
 if __name__ == '__main__':
 
     model_name = 'test1'
     img_size = 400
-    batch_size = 5
+    batch_size = 4
     min_bag_size = 3
-    max_bag_size = 8
-    epochs = 10
-    reg_lambda = 0 #0.001
+    max_bag_size = 10
+    epochs = 20
+    l1_lambda = 0 #0.001
     lr = 0.0008
 
     print("Preprocessing Data...")
@@ -215,13 +267,23 @@ if __name__ == '__main__':
     # Create datasets
     dataset_train = BagOfImagesDataset(files_train, ids_train, labels_train, img_size)
     dataset_val = BagOfImagesDataset(files_val, ids_val, labels_val, img_size)
+
         
     # Create data loaders
     train_dl =  TUD.DataLoader(dataset_train, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
     val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
 
+
+    encoder = create_timm_body('resnet50')
+    nf = num_features_model( nn.Sequential(*encoder.children()))
     
-    bagmodel = IlseBagModel('resnet50', pretrained = True).cuda()
+    # bag aggregator
+    aggregator = ABMIL_aggregate( nf = nf, num_classes = 1, pool_patches = 3, L = 128)
+
+    # total model
+    bagmodel = EmbeddingBagModel(encoder, aggregator).cuda()
+        
+        
     optimizer = Adam(bagmodel.parameters(), lr=lr)
     loss_func = nn.BCELoss()
     
@@ -246,7 +308,10 @@ if __name__ == '__main__':
             outputs = bagmodel((xb, ids)).squeeze(dim=1)
             loss = loss_func(outputs, yb)
             
-
+            # L1 regularization
+            l1_reg = sum(param.abs().sum() for param in bagmodel.parameters())
+            loss = loss + l1_lambda * l1_reg
+            
             #print(f'loss: {loss}\n pred: {outputs}\n true: {yb}')
             
             loss.backward()
