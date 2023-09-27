@@ -1,299 +1,188 @@
-import pandas as pd
-import torch, os
-from torch.utils.data import Dataset
+import os
+from timm import create_model
+from fastai.vision.all import *
+import torch.utils.data as TUD
+from fastai.vision.learner import _update_first_layer
 from tqdm import tqdm
-from torchinfo import summary
-from tqdm import tqdm
-import matplotlib.pyplot as plt
-import torch.nn as nn
-import numpy as np
-import torch.nn.functional as F
-from torchvision import transforms
-from efficientnet_pytorch import EfficientNet
-import seaborn as sns
-from sklearn.metrics import confusion_matrix
-import torchvision.models as models
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import torchvision.transforms as T
 from PIL import Image
+from torch import from_numpy
+from torch import nn
+from training_eval import *
+from torch.optim import Adam
+from data_prep import *
 env = os.path.dirname(os.path.abspath(__file__))
-device = torch.device("cuda")
-
-# Load CSV data
-export_location = 'F:/Temp_SSD_Data/export_09_14_2023/'
-case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
-breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
-image_data = pd.read_csv(f'{export_location}/ImageData.csv')
-
-# Join dataframes on PatientID
-data = pd.merge(breast_data, image_data, left_on=['Patient_ID', 'Breast'], right_on=['Patient_ID', 'laterality'], suffixes=('', '_image_data'))
-
-# Remove columns from image_data that also exist in breast_data
-for col in breast_data.columns:
-    if col + '_image_data' in data.columns:
-        data.drop(col + '_image_data', axis=1, inplace=True)
+torch.backends.cudnn.benchmark = True
 
 
-def process_single_image(row, root_dir, output_dir, resize_and_pad):
-    patient_id = row['Patient_ID']
-    img_name = row['ImageName']
-    input_path = os.path.join(f'{root_dir}images/', img_name)
-    output_path = os.path.join(output_dir, img_name)
+class BagOfImagesDataset(TUD.Dataset):
 
-    if os.path.exists(output_path):  # Skip images that are already processed
-        return
-
-    image = Image.open(input_path)
-    image = resize_and_pad(image)
-    image.save(output_path)
-
-def preprocess_and_save_images(data, root_dir, output_dir, image_size, fill=0):
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-        
-    print("Preprocessing Data")
-
-    resize_and_pad = ResizeAndPad(image_size, fill)
-    data_rows = [row for _, row in data.iterrows()]  # Convert the DataFrame to a list of rows
-
-    with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
-        futures = {executor.submit(process_single_image, row, root_dir, output_dir, resize_and_pad): row for row in data_rows}
-
-        with tqdm(total=len(futures)) as pbar:
-            for future in as_completed(futures):
-                future.result()  # We don't actually use the result, but this will raise any exceptions
-                pbar.update()
-
-class GrayscaleToRGB:
-    def __call__(self, img):
-        if len(img.getbands()) == 1:  # If image is grayscale
-            img = transforms.functional.to_pil_image(np.stack([img] * 3, axis=-1))
-        return img
-
-class ResizeAndPad:
-    def __init__(self, output_size, fill=0):
-        assert isinstance(output_size, int)
-        self.output_size = output_size
-        self.fill = fill
-
-    def __call__(self, img):
-        w, h = img.size
-        if h > w:
-            new_h, new_w = self.output_size, int(self.output_size * (w / h))
-        else:
-            new_h, new_w = int(self.output_size * (h / w)), self.output_size
-        img = transforms.functional.resize(img, (new_h, new_w))
-
-        diff = self.output_size - new_w if h > w else self.output_size - new_h
-        padding = [diff // 2, diff // 2]
-
-        # If the difference is odd, add the extra padding to the end
-        if diff % 2 != 0:
-            padding[1] += 1
-
-        # Use the padding values for the left/right or top/bottom
-        padding = (padding[0], 0, padding[1], 0) if h > w else (0, padding[0], 0, padding[1])
-        img = transforms.functional.pad(img, padding, fill=self.fill)
-        return img
-
-class CASBUSI_Dataset(Dataset):
-    def __init__(self, data, root_dir, transform=None):
-        self.data = data
-        self.root_dir = root_dir
-        self.transform = transform
-        self.patient_ids = {idx: pid for idx, pid in enumerate(data['Patient_ID'].unique())}
-
-    def __len__(self):
-        return len(self.patient_ids)  # Return number of unique patients (bags)
-
-    def __getitem__(self, idx):
-        patient_id = self.patient_ids[idx]
-        same_patient_data = self.data[self.data['Patient_ID'] == patient_id].reset_index(drop=True)
-        bag_size = len(same_patient_data)
-        
-        if bag_size > 50:
-            return None, None
-        
-        images = []
-        for i in range(bag_size):
-            img_name = os.path.join(self.root_dir, same_patient_data.iloc[i]['ImageName'])
-            image = Image.open(img_name)
-            if self.transform:
-                image = self.transform(image)
-            images.append(image)
-
-        images = torch.stack(images)
-
-        has_unknown = same_patient_data.loc[0, 'Has_Unknown']
-        if not has_unknown:
-            #target = torch.tensor(same_patient_data.loc[0, ['Has_Malignant', 'Has_Benign']].values.astype('float'))
-            target = torch.tensor(same_patient_data.loc[0, ['Has_Malignant']].values.astype('float'))
-        else:
-            target = None
-
-        return images, target
-
-
-def load_model(model, model_path):
-    if os.path.isfile(model_path):
-        model.load_state_dict(torch.load(model_path))
-        print(f"Model loaded from {model_path}")
+  def __init__(self, filenames, ids, labels, imsize, normalize=True):
+    self.filenames = filenames
+    self.labels = from_numpy(labels)
+    self.ids = from_numpy(ids)
+    self.normalize = normalize
+    self.imsize = imsize
+  
+    # Normalize
+    if normalize:
+        self.tsfms = T.Compose([
+            T.RandomVerticalFlip(),
+            T.RandomHorizontalFlip(),
+            T.ToTensor(),
+            T.Resize((self.imsize, self.imsize)),
+            T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
     else:
-        print("No previous model found, starting training from scratch.")
-    return model
+        self.tsfms = T.Compose([
+            T.ToTensor(),
+            T.Resize( (self.imsize, self.imsize) )
+        ])
 
-def collate_fn(batch):
-    return batch
+  def __len__(self):
+    return len(torch.unique(self.ids))
+  
+  def __getitem__(self, index):
+    where_id = self.ids == index
+    files_this_bag = self.filenames[ where_id ]
+    data = torch.stack( [ 
+        self.tsfms( Image.open(fn).convert("RGB") ) for fn in files_this_bag 
+    ] ).cuda()
+    bagids = self.ids[where_id]
+    labels = self.labels[index]
+
+    return data, bagids, labels
+  
+  def n_features(self):
+    return self.data.size(1)
 
 
-def train_model(model, model_name, epochs):
+
+def collate_custom(batch):
+    batch_data = []
+    batch_bagids = []
+    batch_labels = []
+  
+    for sample in batch:
+        batch_data.append(sample[0])
+        batch_bagids.append(sample[1])
+        batch_labels.append(sample[2])
+  
+    out_data = torch.cat(batch_data, dim = 0).cuda()
+    out_bagids = torch.cat(batch_bagids).cuda()
+    out_labels = torch.stack(batch_labels).cuda()
     
-    criterion = torch.nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=.0001)
 
-    for epoch in range(epochs):
-        model.train()
-        
-        train_true_labels = []
-        train_pred_labels = []
-        
-        val_true_labels = []
-        val_pred_labels = []
-        
-        running_loss = 0.0
-        running_corrects = 0
-        running_total = 0
-        
-        final_loss = 0.0
-        final_corrects = 0
-        final_total = 0
+    return (out_data, out_bagids), out_labels
 
-        # Training loop
-        for i, data in tqdm(enumerate(train_loader), total=len(train_loader)):
-            bag, labels = data[0]
-            if labels is None:
-                continue
-            labels = labels.squeeze().to(device, non_blocking=True)
-            
-            train_true_labels.append(np.atleast_1d(labels.cpu().numpy()))  # Append true labels
 
-            bag = bag.to(device, non_blocking=True)
-            outputs = model(bag).mean(dim=0).squeeze(0)
-            loss = criterion(outputs, labels)
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+# this function is used to cut off the head of a pretrained timm model and return the body
+def create_timm_body(arch:str, pretrained=True, cut=None, n_in=3):
+    "Creates a body from any model in the `timm` library."
+    model = create_model(arch, pretrained=pretrained, num_classes=0, global_pool='')
+    _update_first_layer(model, n_in, pretrained)
+    if cut is None:
+        ll = list(enumerate(model.children()))
+        cut = next(i for i,o in reversed(ll) if has_pool_type(o))
+    if isinstance(cut, int): return nn.Sequential(*list(model.children())[:cut])
+    elif callable(cut): return cut(model)
+    else: raise NameError("cut must be either integer or function")
 
-            predicted = torch.round(torch.sigmoid(outputs))
-            train_pred_labels.append(np.atleast_1d(predicted.detach().cpu().numpy()))  # Append predicted labels
-            
-            # Get Stats
-            running_loss += loss.item()
-            final_loss += loss.item()
-            predicted = torch.round(torch.sigmoid(outputs))  # Convert to 0/1
-            final_total += 1 #labels.size(0)
-            final_corrects += (predicted == labels).sum().item()
-        train_acc = final_corrects / final_total
-        
-        
-        # Validation loop
-        model.eval()
-        with torch.no_grad():
-            val_running_loss = 0.0
-            correct = 0
-            total = 0
-            for i, data in tqdm(enumerate(val_loader), total=len(val_loader)):
-                bag, labels = data[0]
-                if labels is None:
-                    continue
-                labels = labels.squeeze().to(device, non_blocking=True)
-                bag = bag.to(device, non_blocking=True)
-                outputs = model(bag).mean(dim=0).squeeze(0)
-                loss = criterion(outputs, labels)
-                
-                predicted = torch.round(torch.sigmoid(outputs))
 
-                val_true_labels.append(np.atleast_1d(labels.cpu().numpy()))
-                val_pred_labels.append(np.atleast_1d(predicted.cpu().numpy()))
-                
-                # Get Stats
-                val_running_loss += loss.item()
-                predicted = torch.round(torch.sigmoid(outputs))  # Convert to 0/1
-                total += 1 #labels.size(0)
-                correct += (predicted == labels).sum().item()
-                
-            val_acc = correct / total if total > 0 else 0.0  # Prevent division by zero
-            val_loss = val_running_loss / total if total > 0 else 0.0  # Prevent division by zero
 
-        print(f"Epoch {epoch+1} | Acc   | Loss")
-        print(f"Train   | {train_acc:.4f} | {final_loss / len(train_loader):.4f}")
-        print(f"Val     | {val_acc:.4f} | {val_loss:.4f}")
-        
-        # Converting lists to numpy arrays for the epoch
-        train_true_labels = np.concatenate(train_true_labels)
-        train_pred_labels = np.concatenate(train_pred_labels)
-        val_true_labels = np.concatenate(val_true_labels)
-        val_pred_labels = np.concatenate(val_pred_labels)
-
-        # Generate confusion matrices and plots
-        train_conf_matrix = confusion_matrix(train_true_labels, train_pred_labels)
-        val_conf_matrix = confusion_matrix(val_true_labels, val_pred_labels)
-
-        sns.heatmap(train_conf_matrix, annot=True, fmt='d')
-        plt.title('Training Confusion Matrix')
-        plt.show()
-
-        sns.heatmap(val_conf_matrix, annot=True, fmt='d')
-        plt.title('Validation Confusion Matrix')
-        plt.show()
-
-    torch.save(model.state_dict(), f'{env}/models/{model_name}.pth')
-
+class IlseBagModel(nn.Module):
     
-if __name__ == "__main__":
+    def __init__(self, arch, num_classes = 1, pool_patches = 3, pretrained = True):
+        super(IlseBagModel,self).__init__()
+        self.pool_patches = pool_patches # how many patches to use in predicting instance label
+        self.backbone = create_timm_body(arch, pretrained = pretrained)
+        self.nf = num_features_model( nn.Sequential(*self.backbone.children()))
+        self.num_classes = num_classes # two for binary classification
+        self.M = self.nf # is 512 for resnet34
+        self.L = 128 # number of latent features in gated attention     
+        
+        self.saliency_layer = nn.Sequential(        
+            nn.Conv2d( self.nf, self.num_classes, (1,1), bias = False),
+            nn.Sigmoid() )
+        
+        self.attention_V = nn.Sequential(
+            nn.Linear(self.M, self.L),
+            nn.Tanh()
+        )
+
+        self.attention_U = nn.Sequential(
+            nn.Linear(self.M, self.L),
+            nn.Sigmoid()
+        )
+
+        self.attention_W = nn.Linear(self.L, self.num_classes)
+
+                    
+    def forward(self, input):
+        # input should be a tuple of the form (data,ids)
+        ids = input[1]
+        x = input[0]
+        
+        # compute the features using backbone network
+        h = self.backbone(x)
+        
+        # add attention head to compute instance saliency map and instance labels (as logits)
     
-    model_name = 'model_09_02_2023'
-    epochs = 2
-    image_size = 512
+        self.saliency_map = self.saliency_layer(h) # compute activation maps
+        map_flatten = self.saliency_map.flatten(start_dim = -2, end_dim = -1)
+        selected_area = map_flatten.topk(self.pool_patches, dim=2)[0]
+        self.yhat_instance = selected_area.mean(dim=2).squeeze()
+        
+        # max pool the feature maps to generate feature vector v of length self.nf (number of features)
+        v = torch.max( h, dim = 2).values
+        v = torch.max( v, dim = 2).values # maxpool complete
+        
+        # gated-attention
+        A_V = self.attention_V(v) 
+        A_U = self.attention_U(v) 
+        A  = self.attention_W(A_V * A_U).squeeze()
+        
+        unique = torch.unique_consecutive(ids)
+        num_bags = len(unique)
+        yhat_bags = torch.empty(num_bags,self.num_classes).cuda()
+        for i,bag in enumerate(unique):
+            mask = torch.where(ids == bag)[0]
+            A[mask] = nn.functional.softmax( A[mask] , dim = 0 )
+            yhat = self.yhat_instance[mask]
+
+            yhat_bags[i] = ( A[mask] * yhat ).sum(dim=0)
+        
+        self.attn_scores = A
+       
+        return yhat_bags
+
+
+
+
+if __name__ == '__main__':
+
+    model_name = 'test1'
+    img_size = 400
     batch_size = 5
-    
-    output_size = 1
-    
-    
-    # RESNET Model
-    model = models.resnet18(pretrained=True)
-    num_ftrs = model.fc.in_features
-    model.conv1 = torch.nn.Conv2d(3, model.conv1.out_channels, kernel_size=7, stride=2, padding=3, bias=False)
+    min_bag_size = 3
+    max_bag_size = 8
+    epochs = 10
+    reg_lambda = 0.001
+    lr = 0.0008
 
-    dropout_rate = 0.5  # Set dropout rate
+    print("Preprocessing Data...")
+    
+    # Load CSV data
+    export_location = 'F:/Temp_SSD_Data/export_09_14_2023/'
+    case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
+    breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
+    image_data = pd.read_csv(f'{export_location}/ImageData.csv')
+    data = filter_raw_data(breast_data, image_data)
 
-    # Create a new sequential container for the fully connected part
-    fc_layers = nn.Sequential(
-        nn.Dropout(dropout_rate),
-        nn.Linear(num_ftrs, output_size)  # Assuming you're using the model for a 1000-class problem
-    )
-    
-    model.fc = torch.nn.Linear(num_ftrs, output_size)
-    model = model.to(device)
-    
-    #Preparing data
+    #Cropping images
     cropped_images = f"{export_location}/temp_cropped/"
-    #preprocess_and_save_images(data, export_location, cropped_images, image_size)
-        
-    
-    
-    # Define transformations
-    train_transform = transforms.Compose([
-        GrayscaleToRGB(),
-        transforms.RandomHorizontalFlip(),  # Randomly flip the image horizontally
-        transforms.RandomVerticalFlip(),  # Randomly flip the image vertically
-        transforms.ToTensor()  # Convert the image to a PyTorch tensor
-    ])
-
-    val_transform = transforms.Compose([
-        GrayscaleToRGB(), 
-        transforms.ToTensor()  # Convert the image to a PyTorch tensor
-    ])
+    preprocess_and_save_images(data, export_location, cropped_images, img_size)
 
     # Split the data into training and validation sets
     train_patient_ids = case_study_data[case_study_data['valid'] == 0]['Patient_ID']
@@ -301,18 +190,121 @@ if __name__ == "__main__":
     train_data = data[data['Patient_ID'].isin(train_patient_ids)].reset_index(drop=True)
     val_data = data[data['Patient_ID'].isin(val_patient_ids)].reset_index(drop=True)
 
+    #data.to_csv(f'{env}/testData.csv')
+
+    bags_train, bags_train_labels_all, bags_train_ids = create_bags(train_data, min_bag_size, max_bag_size, cropped_images)
+    bags_val, bags_val_labels_all, bags_val_ids = create_bags(val_data, min_bag_size, max_bag_size, cropped_images)
+    
+    files_train = np.concatenate( bags_train )
+    ids_train = np.concatenate( bags_train_ids )
+    labels_train = np.array([1 if np.any(x == 1) else 0 for x in bags_train_labels_all], dtype=np.float32)
+
+    files_val = np.concatenate( bags_val )
+    ids_val = np.concatenate( bags_val_ids )
+    labels_val = np.array([1 if np.any(x == 1) else 0 for x in bags_val_labels_all], dtype=np.float32)
+    
+    print(f'There are {len(files_train)} files in the training data')
+    print(f'There are {len(files_val)} files in the validation data')
+    malignant_count, non_malignant_count = count_bag_labels(labels_train)
+    print(f"Number of Malignant Bags: {malignant_count}")
+    print(f"Number of Non-Malignant Bags: {non_malignant_count}")
+    
+    
+    
+    print("Training Data...")
     # Create datasets
-    train_dataset = CASBUSI_Dataset(train_data, f'{cropped_images}/', transform=train_transform)
-    val_dataset = CASBUSI_Dataset(val_data, f'{cropped_images}/', transform=val_transform)
-    
+    dataset_train = BagOfImagesDataset(files_train, ids_train, labels_train, img_size)
+    dataset_val = BagOfImagesDataset(files_val, ids_val, labels_val, img_size)
+        
     # Create data loaders
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=8, persistent_workers=True, pin_memory=True)
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=4, persistent_workers=True, pin_memory=True)
+    train_dl =  TUD.DataLoader(dataset_train, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
+    val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
 
     
-    os.makedirs(f"{env}/models/", exist_ok=True)
-    model = load_model(model, f"{env}/models/{model_name}.pth")
-    #summary(model, input_size=(1, 1, image_size, image_size))
-    print(f'Total model parameters: {sum(p.numel() for p in model.parameters())}')
+    bagmodel = IlseBagModel('resnet50', pretrained = True).cuda()
+    optimizer = Adam(bagmodel.parameters(), lr=lr)
+    loss_func = nn.BCELoss()
+    
+    train_losses_over_epochs = []
+    valid_losses_over_epochs = []
+    all_targs = []
+    all_preds = []
+    
+    # Training loop
+    for epoch in range(epochs):
+        # Training phase
+        bagmodel.train()
+        total_loss = 0.0
+        total_acc = 0
+        total = 0
+        correct = 0
+        for (data, yb) in tqdm(train_dl, total=len(train_dl)): 
+            xb, ids = data
+            xb, ids, yb = xb.cuda(), ids.cuda(), yb.cuda()
+            optimizer.zero_grad()
+            
+            outputs = bagmodel((xb, ids)).squeeze(dim=1)
+            loss = loss_func(outputs, yb)
+            
 
-    train_model(model, model_name, epochs)
+            #print(f'loss: {loss}\n pred: {outputs}\n true: {yb}')
+            
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item() * len(xb)
+            predicted = torch.round(outputs).squeeze()
+            total += yb.size(0)
+            correct += predicted.eq(yb.squeeze()).sum().item() 
+            
+            all_targs.extend(yb.cpu().numpy())
+            if len(predicted.size()) == 0:
+                predicted = predicted.view(1)
+            all_preds.extend(predicted.cpu().detach().numpy())
+            
+
+        train_loss = total_loss / total
+        train_acc = correct / total
+
+
+        # Evaluation phase
+        bagmodel.eval()
+        total_val_loss = 0.0
+        total_val_acc = 0.0
+        total = 0
+        correct = 0
+        with torch.no_grad():
+            for (data, yb) in tqdm(val_dl, total=len(val_dl)): 
+                xb, ids = data  
+                xb, ids, yb = xb.cuda(), ids.cuda(), yb.cuda()
+                
+                outputs = bagmodel((xb, ids)).squeeze(dim=1)
+                loss = loss_func(outputs, yb)
+                
+                total_val_loss += loss.item() * len(xb)
+                predicted = torch.round(outputs).squeeze() 
+                total += yb.size(0)
+                correct += predicted.eq(yb.squeeze()).sum().item()
+
+        val_loss = total_val_loss / total
+        val_acc = correct / total
+        
+        train_losses_over_epochs.append(train_loss)
+        valid_losses_over_epochs.append(val_loss)
+        
+        print(f"Epoch {epoch+1} | Acc   | Loss")
+        print(f"Train   | {train_acc:.4f} | {train_loss:.4f}")
+        print(f"Val     | {val_acc:.4f} | {val_loss:.4f}")
+    
+    # Save the model
+    torch.save(bagmodel.state_dict(), f"{env}/models/{model_name}.pth")
+
+    # Save the loss graph
+    plot_loss(train_losses_over_epochs, valid_losses_over_epochs, f"{env}/models/{model_name}_loss.png")
+    
+    # Save the confusion matrix
+    vocab = ['not malignant', 'malignant']  # Replace with your actual vocab
+    plot_Confusion(all_targs, all_preds, vocab, f"{env}/models/{model_name}_confusion.png")
+
+        
+    
