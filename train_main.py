@@ -193,12 +193,6 @@ class EmbeddingBagModel(nn.Module):
         self.saliency_maps = torch.cat(saliency_maps,dim=0).cuda()
         self.yhat_instances = torch.cat(yhat_instances,dim=0).cuda()
         self.attention_scores = torch.cat(attention_scores,dim=0).cuda()
-        
-        # print(f'yhat_bags: {yhat_bags}')
-        # print(f'Number of bags: {yhat_bags.shape}')
-        # print(f'Saliency Maps: {self.saliency_maps.shape}')
-        # print(f'yhat_instances: {self.yhat_instances}')
-        # print(f'attention_scores: {self.attention_scores}')
        
         return yhat_bags
 
@@ -220,7 +214,7 @@ if __name__ == '__main__':
     min_bag_size = 3
     max_bag_size = 10
     epochs = 20
-    l1_lambda = 0 #0.001
+    l1_lambda = 0.001
     lr = 0.0008
 
     print("Preprocessing Data...")
@@ -234,7 +228,7 @@ if __name__ == '__main__':
 
     #Cropping images
     cropped_images = f"{export_location}/temp_cropped/"
-    preprocess_and_save_images(data, export_location, cropped_images, img_size)
+    #preprocess_and_save_images(data, export_location, cropped_images, img_size)
 
     # Split the data into training and validation sets
     train_patient_ids = case_study_data[case_study_data['valid'] == 0]['Patient_ID']
@@ -265,6 +259,8 @@ if __name__ == '__main__':
     
     print("Training Data...")
     # Create datasets
+    #dataset_train = TUD.Subset(BagOfImagesDataset( files_train, ids_train, labels_train),list(range(0,100)))
+    #dataset_val = TUD.Subset(BagOfImagesDataset( files_val, ids_val, labels_val),list(range(0,100)))
     dataset_train = BagOfImagesDataset(files_train, ids_train, labels_train, img_size)
     dataset_val = BagOfImagesDataset(files_val, ids_val, labels_val, img_size)
 
@@ -309,8 +305,8 @@ if __name__ == '__main__':
             loss = loss_func(outputs, yb)
             
             # L1 regularization
-            l1_reg = sum(param.abs().sum() for param in bagmodel.parameters())
-            loss = loss + l1_lambda * l1_reg
+            #1_reg = sum(param.abs().sum() for param in bagmodel.parameters())
+            #loss = loss + l1_lambda * l1_reg
             
             #print(f'loss: {loss}\n pred: {outputs}\n true: {yb}')
             
@@ -322,10 +318,11 @@ if __name__ == '__main__':
             total += yb.size(0)
             correct += predicted.eq(yb.squeeze()).sum().item() 
             
-            all_targs.extend(yb.cpu().numpy())
-            if len(predicted.size()) == 0:
-                predicted = predicted.view(1)
-            all_preds.extend(predicted.cpu().detach().numpy())
+            if epoch == epochs - 1:
+                all_targs.extend(yb.cpu().numpy())
+                if len(predicted.size()) == 0:
+                    predicted = predicted.view(1)
+                all_preds.extend(predicted.cpu().detach().numpy())
             
 
         train_loss = total_loss / total
