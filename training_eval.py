@@ -1,8 +1,7 @@
 import matplotlib.pyplot as plt
-import itertools
 from sklearn.metrics import confusion_matrix
 import numpy as np
-
+import seaborn as sns
 
     
 def plot_loss(train_losses, valid_losses, save_path):
@@ -20,30 +19,25 @@ def plot_loss(train_losses, valid_losses, save_path):
     plt.savefig(save_path)
 
 
-def plot_Confusion(all_targs, all_preds, vocab, save_path):
-    # Generate the confusion matrix
+
+def plot_Confusion(all_targs, all_preds, vocab, file_path):
+    # Compute the confusion matrix
     cm = confusion_matrix(all_targs, all_preds)
+    
+    # Normalize the confusion matrix (optional)
+    cm_norm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+
+    # Create a new figure
+    fig, ax = plt.subplots(figsize=(8, 6))
 
     # Plot the confusion matrix
-    plt.figure(figsize=(6, 6))
-    plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
-    plt.title('Confusion Matrix')
-    plt.colorbar()
+    sns.heatmap(cm_norm, annot=True, fmt=".2f", cmap='Blues', xticklabels=vocab, yticklabels=vocab, ax=ax)
+    
+    # Set labels and title
+    ax.set_xlabel('Predicted labels')
+    ax.set_ylabel('True labels')
+    ax.set_title('Confusion Matrix')
 
-    # Use the passed vocab
-    tick_marks = np.arange(len(vocab))
-
-    plt.xticks(tick_marks, vocab, rotation=45)
-    plt.yticks(tick_marks, vocab)
-
-    for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
-        plt.text(j, i, cm[i, j],
-                 horizontalalignment="center",
-                 color="white" if cm[i, j] > cm.max() / 2 else "black")
-
-    plt.ylabel('True label')
-    plt.xlabel('Predicted label')
-    plt.tight_layout()
-
-    # Save the plot as a PNG file
-    plt.savefig(save_path)
+    # Save the figure
+    fig.savefig(file_path)
+    plt.close(fig)
