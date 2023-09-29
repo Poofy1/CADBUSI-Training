@@ -29,6 +29,7 @@ class BagOfImagesDataset(TUD.Dataset):
             self.tsfms = T.Compose([
                 T.RandomVerticalFlip(),
                 T.RandomHorizontalFlip(),
+                T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
                 T.RandomAffine(
                     degrees=(-20, 20),  # Random rotation between -10 and 10 degrees
                     translate=(0.05, 0.05),  # Slight translation
@@ -63,6 +64,12 @@ class BagOfImagesDataset(TUD.Dataset):
         # Select the specified image from the bag
         img_tensor = data[img_index]
 
+        # If the images were normalized, reverse the normalization
+        if self.normalize:
+            mean = torch.tensor([0.485, 0.456, 0.406]).to(img_tensor.device)
+            std = torch.tensor([0.229, 0.224, 0.225]).to(img_tensor.device)
+            img_tensor = img_tensor * std[:, None, None] + mean[:, None, None]  # Unnormalize
+
         # Convert the image tensor to a PIL Image
         img = TF.to_pil_image(img_tensor.cpu())
 
@@ -71,7 +78,8 @@ class BagOfImagesDataset(TUD.Dataset):
         plt.title(f'Label: {labels}')
         plt.axis('off')  # Hide the axis
         plt.show()
-            
+
+    
     def n_features(self):
         return self.data.size(1)
 
@@ -110,7 +118,7 @@ def create_timm_body(arch:str, pretrained=True, cut=None, n_in=3):
 
 class ABMIL_aggregate(nn.Module):
     
-    def __init__(self, nf = 512, num_classes = 1, pool_patches = 3, L = 128):
+    def __init__(self, nf, num_classes, pool_patches = 3, L = 128):
         super(ABMIL_aggregate,self).__init__()
         self.nf = nf
         self.num_classes = num_classes # two for binary classification
@@ -208,27 +216,26 @@ def ilse_splitter(model):
 
 if __name__ == '__main__':
 
-    model_name = 'test1'
-    img_size = 400
+    model_name = 'ABMIL'
+    img_size = 256
     batch_size = 4
-    min_bag_size = 3
-    max_bag_size = 10
-    epochs = 20
-    l1_lambda = 0.001
+    min_bag_size = 2
+    max_bag_size = 15
+    epochs = 15
     lr = 0.0008
 
     print("Preprocessing Data...")
     
     # Load CSV data
-    export_location = 'F:/Temp_SSD_Data/export_09_14_2023/'
+    export_location = 'D:/DATA/CASBUSI/exports/export_09_28_2023/'
     case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
     breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
     image_data = pd.read_csv(f'{export_location}/ImageData.csv')
     data = filter_raw_data(breast_data, image_data)
 
     #Cropping images
-    cropped_images = f"{export_location}/temp_cropped/"
-    #preprocess_and_save_images(data, export_location, cropped_images, img_size)
+    cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
+    preprocess_and_save_images(data, export_location, cropped_images, img_size)
 
     # Split the data into training and validation sets
     train_patient_ids = case_study_data[case_study_data['valid'] == 0]['Patient_ID']
@@ -270,7 +277,7 @@ if __name__ == '__main__':
     val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
 
 
-    encoder = create_timm_body('resnet50')
+    encoder = create_timm_body('resnet18')
     nf = num_features_model( nn.Sequential(*encoder.children()))
     
     # bag aggregator
@@ -303,10 +310,6 @@ if __name__ == '__main__':
             
             outputs = bagmodel((xb, ids)).squeeze(dim=1)
             loss = loss_func(outputs, yb)
-            
-            # L1 regularization
-            #1_reg = sum(param.abs().sum() for param in bagmodel.parameters())
-            #loss = loss + l1_lambda * l1_reg
             
             #print(f'loss: {loss}\n pred: {outputs}\n true: {yb}')
             
