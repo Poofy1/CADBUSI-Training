@@ -119,7 +119,6 @@ def count_bag_labels(bag_labels):
     return positive_bag_count, negative_bag_count
 
 def process_single_image(row, root_dir, output_dir, resize_and_pad):
-    patient_id = row['Patient_ID']
     img_name = row['ImageName']
     input_path = os.path.join(f'{root_dir}images/', img_name)
     output_path = os.path.join(output_dir, img_name)
@@ -178,14 +177,3 @@ class ResizeAndPad:
         img = transforms.functional.pad(img, padding, fill=self.fill)
         return img
     
-    
-
-def upsample_bag_to_min_count(group, min_count):
-    num_needed = min_count - len(group)
-    
-    if num_needed > 0:
-        # Duplicate random samples within the same group
-        random_rows = group.sample(num_needed, replace=True)
-        group = pd.concat([group, random_rows], axis=0).reset_index(drop=True)
-        
-    return group
