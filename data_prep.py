@@ -177,3 +177,39 @@ class ResizeAndPad:
         img = transforms.functional.pad(img, padding, fill=self.fill)
         return img
     
+    
+    
+def prepare_all_data(export_location, case_study_data, breast_data, image_data, cropped_images, img_size, min_bag_size, max_bag_size):
+    
+    print("Preprocessing Data...")
+    data = filter_raw_data(breast_data, image_data)
+    
+    #Cropping images
+    preprocess_and_save_images(data, export_location, cropped_images, img_size)
+    
+    # Split the data into training and validation sets
+    train_patient_ids = case_study_data[case_study_data['valid'] == 0]['Patient_ID']
+    val_patient_ids = case_study_data[case_study_data['valid'] == 1]['Patient_ID']
+    train_data = data[data['Patient_ID'].isin(train_patient_ids)].reset_index(drop=True)
+    val_data = data[data['Patient_ID'].isin(val_patient_ids)].reset_index(drop=True)
+    
+    #data.to_csv(f'{env}/testData.csv')
+    
+    bags_train, bags_train_labels_all, bags_train_ids = create_bags(train_data, min_bag_size, max_bag_size, cropped_images)
+    bags_val, bags_val_labels_all, bags_val_ids = create_bags(val_data, min_bag_size, max_bag_size, cropped_images)
+    
+    files_train = np.concatenate( bags_train )
+    ids_train = np.concatenate( bags_train_ids )
+    labels_train = np.array([1 if np.any(x == 1) else 0 for x in bags_train_labels_all], dtype=np.float32)
+
+    files_val = np.concatenate( bags_val )
+    ids_val = np.concatenate( bags_val_ids )
+    labels_val = np.array([1 if np.any(x == 1) else 0 for x in bags_val_labels_all], dtype=np.float32)
+    
+    print(f'There are {len(files_train)} files in the training data')
+    print(f'There are {len(files_val)} files in the validation data')
+    malignant_count, non_malignant_count = count_bag_labels(labels_train)
+    print(f"Number of Malignant Bags: {malignant_count}")
+    print(f"Number of Non-Malignant Bags: {non_malignant_count}")
+    
+    return files_train, ids_train, labels_train, files_val, ids_val, labels_val
