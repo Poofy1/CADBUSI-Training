@@ -12,6 +12,7 @@ from training_eval import *
 from torch.optim import Adam
 from data_prep import *
 import torchvision.transforms.functional as TF
+from nystrom_attention import NystromAttention
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 
@@ -115,107 +116,160 @@ def create_timm_body(arch:str, pretrained=True, cut=None, n_in=3):
     else: raise NameError("cut must be either integer or function")
 
 
+class TransLayer(nn.Module):
 
-class ABMIL_aggregate(nn.Module):
+    def __init__(self, norm_layer=nn.LayerNorm, dim=512):
+        super().__init__()
+        self.norm = norm_layer(dim)
+        self.attn = NystromAttention(
+            dim = dim,
+            dim_head = dim//8,
+            heads = 8,
+            num_landmarks = dim//2,    # number of landmarks
+            pinv_iterations = 6,    # number of moore-penrose iterations for approximating pinverse. 6 was recommended by the paper
+            residual = True,         # whether to do an extra residual with the value or not. supposedly faster convergence if turned on
+            dropout=0.1
+        )
+
+    def forward(self, x, return_attn=False):
+        if return_attn:
+            out, attn = self.attn(self.norm(x), return_attn=True)
+            x = x + out
+            return x, attn.detach()
+        else:
+            x = x + self.attn(self.norm(x))
+            return x
+
+
+class PPEG(nn.Module):
+    def __init__(self, dim=512):
+        super(PPEG, self).__init__()
+        self.proj = nn.Conv2d(dim, dim, 7, 1, 7//2, groups=dim)
+        self.proj1 = nn.Conv2d(dim, dim, 5, 1, 5//2, groups=dim)
+        self.proj2 = nn.Conv2d(dim, dim, 3, 1, 3//2, groups=dim)
+
+    def forward(self, x, H, W):
+        B, _, C = x.shape
+        cls_token, feat_token = x[:, 0], x[:, 1:]
+        
+        # Compute the values of H and W based on the total number of elements
+        total_elements = feat_token.numel()
+        H = W = int((total_elements / (B * C)) ** 0.5)
     
-    def __init__(self, nf, num_classes, pool_patches = 3, L = 128):
-        super(ABMIL_aggregate,self).__init__()
-        self.nf = nf
-        self.num_classes = num_classes # two for binary classification
-        self.pool_patches = pool_patches # how many patches to use in predicting instance label
-        self.L = L # number of latent attention features   
         
-        self.saliency_layer = nn.Sequential(        
-            nn.Conv2d( self.nf, self.num_classes, (1,1), bias = False),
-            nn.Sigmoid() )
+        cnn_feat = feat_token.transpose(1, 2).view(B, C, H, W)
+        x = self.proj(cnn_feat)+cnn_feat+self.proj1(cnn_feat)+self.proj2(cnn_feat)
+        x = x.flatten(2).transpose(1, 2)
+        x = torch.cat((cls_token.unsqueeze(1), x), dim=1)
+        return x
+
+class TransMIL(nn.Module):
+    def __init__(self, dim_in, dim_hid, n_classes, **kwargs):
+        super(TransMIL, self).__init__()
+        self.pos_layer = PPEG(dim=dim_hid)
+        self._fc1 = nn.Sequential(nn.Linear(dim_in, dim_hid), nn.ReLU())
+        self.cls_token = nn.Parameter(torch.randn(1, 1, dim_hid))
+        self.n_classes = n_classes
+        self.layer1 = TransLayer(dim=dim_hid)
+        self.layer2 = TransLayer(dim=dim_hid)
+        self.norm = nn.LayerNorm(dim_hid)
+        self._fc2 = nn.Linear(dim_hid, self.n_classes)
+
+    def forward(self, X, **kwargs):
+
+        assert X.shape[0] == 1 # [1, n, 1024], single bag
+
+        h = self._fc1(X) # [B, n, dim_hid]
         
-        self.attention_V = nn.Sequential(
-            nn.Linear(self.nf, self.L),
-            nn.Tanh()
-        )
+        #---->pad
+        H = h.shape[1]
+        _H, _W = int(np.ceil(np.sqrt(H))), int(np.ceil(np.sqrt(H)))
+        add_length = _H * _W - H
+        h = torch.cat([h, h[:,:add_length,:]],dim = 1) #[B, N, dim_hid]
 
-        self.attention_U = nn.Sequential(
-            nn.Linear(self.nf, self.L),
-            nn.Sigmoid()
-        )
-
-        self.attention_W = nn.Sequential(
-            nn.Linear(self.L, self.num_classes),
-        )
-                    
-    def forward(self, h):
-        # input is a tensor with a bag of features, dim = bag_size x nf x h x w
+        #---->cls_token
+        B = h.shape[0]
+        cls_tokens = self.cls_token.expand(B, -1, -1).cuda()
+        
+        # Reshape h to be a 3D tensor
+        h = h.view(h.size(0), -1, h.size(-1))  # reshape h to [B, N, C]
     
-        saliency_maps = self.saliency_layer(h)
-        map_flatten = saliency_maps.flatten(start_dim = -2, end_dim = -1)
-        selected_area = map_flatten.topk(self.pool_patches, dim=2)[0]
-        yhat_instance = selected_area.mean(dim=2).squeeze()
+        h = torch.cat((cls_tokens, h), dim=1) # token: 1 + H + add_length
+        n1 = h.shape[1] # n1 = 1 + H + add_length
+
+        #---->Translayer x1
+        h = self.layer1(h) #[B, N, dim_hid]
+
+        #---->PPEG
+        h = self.pos_layer(h, _H, _W) #[B, N, dim_hid]
         
-        # gated-attention
-        v = torch.max( h, dim = 2).values # begin maxpool
-        v = torch.max( v, dim = 2).values # maxpool complete
-        A_V = self.attention_V(v) 
-        A_U = self.attention_U(v) 
-        attention_scores = nn.functional.softmax(
-            self.attention_W(A_V * A_U).squeeze(), dim = 0 )
-        
-        # aggreate individual predictions to get bag prediciton
-        yhat_bag = (attention_scores * yhat_instance).sum(dim=0)
-       
-        return yhat_bag, saliency_maps, yhat_instance, attention_scores
+        #---->Translayer x2
+        if 'ret_with_attn' in kwargs and kwargs['ret_with_attn']:
+            h, attn = self.layer2(h, return_attn=True) # [B, N, dim_hid]
+            # attn shape = [1, n_heads, n2, n2], where n2 = padding + n1
+            if add_length == 0:
+                attn = attn[:, :, -n1, (-n1+1):]
+            else:
+                attn = attn[:, :, -n1, (-n1+1):(-n1+1+H)]
+            attn = attn.mean(1).detach()
+            assert attn.shape[1] == H
+        else:
+            h = self.layer2(h) # [B, N, dim_hid]
+            attn = None
+
+        #---->cls_token
+        h = self.norm(h)[:,0]
+
+        #---->predict
+        logits = self._fc2(h) #[B, n_classes]
+
+        if attn is not None:
+            return logits, attn
+
+        return logits
+
 
 
 class EmbeddingBagModel(nn.Module):
     
-    def __init__(self, encoder, aggregator, num_classes = 1):
+    def __init__(self, encoder, aggregator, num_classes=1):
         super(EmbeddingBagModel,self).__init__()
         self.encoder = encoder
         self.aggregator = aggregator
         self.num_classes = num_classes
                     
     def forward(self, input):
-        # input should be a tuple of the form (data,bag_starts)
+        # input should be a tuple of the form (data, bag_starts)
         x = input[0]
         bag_sizes = input[1]
         
         # compute the features using encoder network
         h = self.encoder(x)
         
-        # loop over the bags and compute yhat_bag, etc. for each
-        num_bags = bag_sizes.shape[0]-1
-        saliency_maps, yhat_instances, attention_scores = [],[],[]
+        # Here the shape of h is [B, C, H, W]. 
+        # You need to change it to [B, N, C] as TransMIL expects it.
+        # Assume H*W = N (total number of instances in a bag)
+        h = h.view(h.size(0), -1, h.size(1))  # reshape h to [B, N, C]
         
-        yhat_bags = torch.empty(num_bags,self.num_classes).cuda()
-
+        # TransMIL expects input of shape [1, N, C]
+        # So, loop over the bags and compute logits for each
+        num_bags = bag_sizes.shape[0]-1
+        logits = torch.empty(num_bags, self.num_classes).cuda()
+        
         for j in range(num_bags):
             start, end = bag_sizes[j], bag_sizes[j+1]
-            
-            yhat_tmp, sm, yhat_ins, att_sc = self.aggregator(h[start:end])
-            
-            yhat_bags[j] = yhat_tmp
-            saliency_maps.append(sm)
-            yhat_instances.append(yhat_ins)
-            attention_scores.append(att_sc)
-            
-        # converts lists to tensors (this seems optional)
-        self.saliency_maps = torch.cat(saliency_maps,dim=0).cuda()
-        self.yhat_instances = torch.cat(yhat_instances,dim=0).cuda()
-        self.attention_scores = torch.cat(attention_scores,dim=0).cuda()
-       
-        return yhat_bags
+            h_bag = h[start:end]  # Extract instances for the current bag
+            h_bag = h_bag.unsqueeze(0)  # Add a batch dimension
+            logits[j] = self.aggregator(h_bag).squeeze(0)  # Remove the batch dimension from the output
+
+        return logits  # The shape of logits is [num_bags, num_classes]
 
 
-
-def ilse_splitter(model):
-    # split the model so that freeze works on the backbone
-    p = params(model)
-    num_body = len( params(model.encoder) )
-    num_total = len(p)
-    return [p[0:num_body], p[(num_body+1):num_total]]
 
 
 if __name__ == '__main__':
 
+    # Config
     model_name = 'ABMIL'
     img_size = 256
     batch_size = 4
@@ -224,43 +278,18 @@ if __name__ == '__main__':
     epochs = 15
     lr = 0.0008
 
-    print("Preprocessing Data...")
-    
-    # Load CSV data
+    # Paths
     export_location = 'D:/DATA/CASBUSI/exports/export_09_28_2023/'
     case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
     breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
     image_data = pd.read_csv(f'{export_location}/ImageData.csv')
-    data = filter_raw_data(breast_data, image_data)
-
-    #Cropping images
     cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
-    preprocess_and_save_images(data, export_location, cropped_images, img_size)
-
-    # Split the data into training and validation sets
-    train_patient_ids = case_study_data[case_study_data['valid'] == 0]['Patient_ID']
-    val_patient_ids = case_study_data[case_study_data['valid'] == 1]['Patient_ID']
-    train_data = data[data['Patient_ID'].isin(train_patient_ids)].reset_index(drop=True)
-    val_data = data[data['Patient_ID'].isin(val_patient_ids)].reset_index(drop=True)
-
-    #data.to_csv(f'{env}/testData.csv')
-
-    bags_train, bags_train_labels_all, bags_train_ids = create_bags(train_data, min_bag_size, max_bag_size, cropped_images)
-    bags_val, bags_val_labels_all, bags_val_ids = create_bags(val_data, min_bag_size, max_bag_size, cropped_images)
     
-    files_train = np.concatenate( bags_train )
-    ids_train = np.concatenate( bags_train_ids )
-    labels_train = np.array([1 if np.any(x == 1) else 0 for x in bags_train_labels_all], dtype=np.float32)
-
-    files_val = np.concatenate( bags_val )
-    ids_val = np.concatenate( bags_val_ids )
-    labels_val = np.array([1 if np.any(x == 1) else 0 for x in bags_val_labels_all], dtype=np.float32)
     
-    print(f'There are {len(files_train)} files in the training data')
-    print(f'There are {len(files_val)} files in the validation data')
-    malignant_count, non_malignant_count = count_bag_labels(labels_train)
-    print(f"Number of Malignant Bags: {malignant_count}")
-    print(f"Number of Non-Malignant Bags: {non_malignant_count}")
+    
+    files_train, ids_train, labels_train, files_val, ids_val, labels_val = prepare_all_data(export_location, case_study_data, breast_data, image_data, 
+                                                                                            cropped_images, img_size, min_bag_size, max_bag_size)
+    
     
     
     
@@ -281,7 +310,7 @@ if __name__ == '__main__':
     nf = num_features_model( nn.Sequential(*encoder.children()))
     
     # bag aggregator
-    aggregator = ABMIL_aggregate( nf = nf, num_classes = 1, pool_patches = 3, L = 128)
+    aggregator = TransMIL(dim_in=nf, dim_hid=512, n_classes=1)  # Adjust dim_hid and n_classes as needed
 
     # total model
     bagmodel = EmbeddingBagModel(encoder, aggregator).cuda()
@@ -308,7 +337,8 @@ if __name__ == '__main__':
             xb, ids, yb = xb.cuda(), ids.cuda(), yb.cuda()
             optimizer.zero_grad()
             
-            outputs = bagmodel((xb, ids)).squeeze(dim=1)
+            outputs = torch.sigmoid(bagmodel((xb, ids)).squeeze(dim=1))
+
             loss = loss_func(outputs, yb)
             
             #print(f'loss: {loss}\n pred: {outputs}\n true: {yb}')
@@ -343,7 +373,7 @@ if __name__ == '__main__':
                 xb, ids = data  
                 xb, ids, yb = xb.cuda(), ids.cuda(), yb.cuda()
                 
-                outputs = bagmodel((xb, ids)).squeeze(dim=1)
+                outputs = torch.sigmoid(bagmodel((xb, ids)).squeeze(dim=1))
                 loss = loss_func(outputs, yb)
                 
                 total_val_loss += loss.item() * len(xb)
