@@ -146,6 +146,8 @@ class ABMIL_aggregate(nn.Module):
     def forward(self, h):
         # input is a tensor with a bag of features, dim = bag_size x nf x h x w
     
+        h = h.permute(0, 3, 1, 2)  # Now h has shape [1, 512, 10, 64]
+    
         saliency_maps = self.saliency_layer(h)
         map_flatten = saliency_maps.flatten(start_dim = -2, end_dim = -1)
         selected_area = map_flatten.topk(self.pool_patches, dim=2)[0]
@@ -164,45 +166,43 @@ class ABMIL_aggregate(nn.Module):
        
         return yhat_bag, saliency_maps, yhat_instance, attention_scores
 
-
 class EmbeddingBagModel(nn.Module):
     
-    def __init__(self, encoder, aggregator, num_classes = 1):
+    def __init__(self, encoder, aggregator, num_classes=1):
         super(EmbeddingBagModel,self).__init__()
         self.encoder = encoder
         self.aggregator = aggregator
         self.num_classes = num_classes
                     
+                
     def forward(self, input):
-        # input should be a tuple of the form (data,bag_starts)
         x = input[0]
         bag_sizes = input[1]
-        
-        # compute the features using encoder network
         h = self.encoder(x)
+        h = h.view(h.size(0), -1, h.size(1))
         
-        # loop over the bags and compute yhat_bag, etc. for each
         num_bags = bag_sizes.shape[0]-1
-        saliency_maps, yhat_instances, attention_scores = [],[],[]
+        logits = torch.empty(num_bags, self.num_classes).cuda()
         
-        yhat_bags = torch.empty(num_bags,self.num_classes).cuda()
-
+        # Additional lists to store the saliency_maps, yhat_instances, and attention_scores
+        saliency_maps, yhat_instances, attention_scores = [], [], []
+        
         for j in range(num_bags):
             start, end = bag_sizes[j], bag_sizes[j+1]
+            h_bag = h[start:end]
             
-            yhat_tmp, sm, yhat_ins, att_sc = self.aggregator(h[start:end])
+            # Ensure that h_bag has a first dimension of 1 before passing it to the aggregator
+            h_bag = h_bag.unsqueeze(0)
             
-            yhat_bags[j] = yhat_tmp
+            # Receive four values from aggregator
+            yhat_bag, sm, yhat_ins, att_sc = self.aggregator(h_bag)
+            
+            logits[j] = yhat_bag
             saliency_maps.append(sm)
             yhat_instances.append(yhat_ins)
             attention_scores.append(att_sc)
-            
-        # converts lists to tensors (this seems optional)
-        self.saliency_maps = torch.cat(saliency_maps,dim=0).cuda()
-        self.yhat_instances = torch.cat(yhat_instances,dim=0).cuda()
-        self.attention_scores = torch.cat(attention_scores,dim=0).cuda()
-       
-        return yhat_bags
+
+        return logits
 
 
 
