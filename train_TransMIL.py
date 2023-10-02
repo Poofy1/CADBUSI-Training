@@ -177,7 +177,7 @@ class TransMIL(nn.Module):
 
     def forward(self, X, **kwargs):
 
-        assert X.shape[0] == 1 # [1, n, 1024], single bag
+        #assert X.shape[0] == 1 # [1, n, 1024], single bag
 
         h = self._fc1(X) # [B, n, dim_hid]
         
@@ -226,7 +226,12 @@ class TransMIL(nn.Module):
         if attn is not None:
             return logits, attn
 
-        return logits
+        # Dummy values for saliency_maps, yhat_instance, and attention_scores to match ABMIL_aggregate's return type
+        saliency_maps = None
+        yhat_instance = None
+        attention_scores = None
+
+        return logits, saliency_maps, yhat_instance, attention_scores
 
 
 class EmbeddingBagModel(nn.Module):
@@ -237,32 +242,35 @@ class EmbeddingBagModel(nn.Module):
         self.aggregator = aggregator
         self.num_classes = num_classes
                     
+                
     def forward(self, input):
-        # input should be a tuple of the form (data, bag_starts)
         x = input[0]
         bag_sizes = input[1]
-        
-        # compute the features using encoder network
         h = self.encoder(x)
+        h = h.view(h.size(0), -1, h.size(1))
         
-        # Here the shape of h is [B, C, H, W]. 
-        # You need to change it to [B, N, C] as TransMIL expects it.
-        # Assume H*W = N (total number of instances in a bag)
-        h = h.view(h.size(0), -1, h.size(1))  # reshape h to [B, N, C]
-        
-        # TransMIL expects input of shape [1, N, C]
-        # So, loop over the bags and compute logits for each
         num_bags = bag_sizes.shape[0]-1
         logits = torch.empty(num_bags, self.num_classes).cuda()
         
+        # Additional lists to store the saliency_maps, yhat_instances, and attention_scores
+        saliency_maps, yhat_instances, attention_scores = [], [], []
+        
         for j in range(num_bags):
             start, end = bag_sizes[j], bag_sizes[j+1]
-            h_bag = h[start:end]  # Extract instances for the current bag
-            h_bag = h_bag.unsqueeze(0)  # Add a batch dimension
-            logits[j] = self.aggregator(h_bag).squeeze(0)  # Remove the batch dimension from the output
-
-        return logits  # The shape of logits is [num_bags, num_classes]
-
+            h_bag = h[start:end]
+            
+            # Ensure that h_bag has a first dimension of 1 before passing it to the aggregator
+            h_bag = h_bag.unsqueeze(0)
+            
+            # Receive four values from aggregator
+            yhat_bag, sm, yhat_ins, att_sc = self.aggregator(h_bag)
+            
+            logits[j] = yhat_bag
+            saliency_maps.append(sm)
+            yhat_instances.append(yhat_ins)
+            attention_scores.append(att_sc)
+        
+        return logits
 
 if __name__ == '__main__':
 
