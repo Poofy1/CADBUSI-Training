@@ -221,13 +221,12 @@ class TransMIL(nn.Module):
         h = self.norm(h)[:,0]
 
         #---->predict
-        logits = self._fc2(h) #[B, n_classes]
+        logits = torch.sigmoid(self._fc2(h))
 
         if attn is not None:
             return logits, attn
 
         return logits
-
 
 
 class EmbeddingBagModel(nn.Module):
@@ -265,17 +264,15 @@ class EmbeddingBagModel(nn.Module):
         return logits  # The shape of logits is [num_bags, num_classes]
 
 
-
-
 if __name__ == '__main__':
 
     # Config
-    model_name = 'ABMIL'
+    model_name = 'test'
     img_size = 256
-    batch_size = 4
+    batch_size = 5
     min_bag_size = 2
     max_bag_size = 15
-    epochs = 15
+    epochs = 150
     lr = 0.0008
 
     # Paths
@@ -337,7 +334,7 @@ if __name__ == '__main__':
             xb, ids, yb = xb.cuda(), ids.cuda(), yb.cuda()
             optimizer.zero_grad()
             
-            outputs = torch.sigmoid(bagmodel((xb, ids)).squeeze(dim=1))
+            outputs = bagmodel((xb, ids)).squeeze(dim=1)
 
             loss = loss_func(outputs, yb)
             
@@ -373,7 +370,7 @@ if __name__ == '__main__':
                 xb, ids = data  
                 xb, ids, yb = xb.cuda(), ids.cuda(), yb.cuda()
                 
-                outputs = torch.sigmoid(bagmodel((xb, ids)).squeeze(dim=1))
+                outputs = bagmodel((xb, ids)).squeeze(dim=1)
                 loss = loss_func(outputs, yb)
                 
                 total_val_loss += loss.item() * len(xb)
