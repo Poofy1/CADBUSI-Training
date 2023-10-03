@@ -19,14 +19,14 @@ torch.backends.cudnn.benchmark = True
 
 class BagOfImagesDataset(TUD.Dataset):
 
-    def __init__(self, filenames, ids, labels, normalize=True):
+    def __init__(self, filenames, ids, labels, train=True):
         self.filenames = filenames
         self.labels = from_numpy(labels)
         self.ids = from_numpy(ids)
-        self.normalize = normalize
+        self.train = train
     
         # Normalize
-        if normalize:
+        if train:
             self.tsfms = T.Compose([
                 T.RandomVerticalFlip(),
                 T.RandomHorizontalFlip(),
@@ -42,13 +42,14 @@ class BagOfImagesDataset(TUD.Dataset):
         else:
             self.tsfms = T.Compose([
                 T.ToTensor(),
+                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
 
     def __len__(self):
         return len(torch.unique(self.ids))
     
     def __getitem__(self, index):
-        where_id = self.ids == index
+        where_id = (self.ids == index).cpu().numpy()
         files_this_bag = self.filenames[where_id]
         data = torch.stack([
             self.tsfms(Image.open(fn).convert("RGB")) for fn in files_this_bag
@@ -83,6 +84,7 @@ class BagOfImagesDataset(TUD.Dataset):
     
     def n_features(self):
         return self.data.size(1)
+
 
 def collate_custom(batch):
     batch_data = []
@@ -280,7 +282,7 @@ if __name__ == '__main__':
     batch_size = 5
     min_bag_size = 2
     max_bag_size = 15
-    epochs = 150
+    epochs = 15
     lr = 0.0008
 
     # Paths
@@ -302,8 +304,8 @@ if __name__ == '__main__':
     # Create datasets
     #dataset_train = TUD.Subset(BagOfImagesDataset( files_train, ids_train, labels_train),list(range(0,100)))
     #dataset_val = TUD.Subset(BagOfImagesDataset( files_val, ids_val, labels_val),list(range(0,100)))
-    dataset_train = BagOfImagesDataset(files_train, ids_train, labels_train, img_size)
-    dataset_val = BagOfImagesDataset(files_val, ids_val, labels_val, img_size)
+    dataset_train = BagOfImagesDataset(files_train, ids_train, labels_train)
+    dataset_val = BagOfImagesDataset(files_val, ids_val, labels_val, train=False)
 
         
     # Create data loaders
@@ -319,6 +321,8 @@ if __name__ == '__main__':
 
     # total model
     bagmodel = EmbeddingBagModel(encoder, aggregator).cuda()
+    total_params = sum(p.numel() for p in bagmodel.parameters())
+    print(f"Total Parameters: {total_params}")
         
         
     optimizer = Adam(bagmodel.parameters(), lr=lr)
