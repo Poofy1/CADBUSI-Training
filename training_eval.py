@@ -19,24 +19,23 @@ def plot_loss(train_losses, valid_losses, save_path):
     plt.savefig(save_path)
 
 
-
 def plot_Confusion(all_targs, all_preds, vocab, file_path):
     # Compute the confusion matrix
     cm = confusion_matrix(all_targs, all_preds)
     
-    # Normalize the confusion matrix (optional)
-    cm_norm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
-
     # Create a new figure
     fig, ax = plt.subplots(figsize=(8, 6))
 
     # Plot the confusion matrix
-    sns.heatmap(cm_norm, annot=True, fmt=".2f", cmap='Blues', xticklabels=vocab, yticklabels=vocab, ax=ax)
+    sns.heatmap(cm, annot=True, fmt="d", cmap='Blues', xticklabels=vocab, yticklabels=vocab, ax=ax)
     
+    # Invert the y-axis to make it display correctly
+    ax.invert_yaxis()
+
     # Set labels and title
     ax.set_xlabel('Predicted labels')
     ax.set_ylabel('True labels')
-    ax.set_title('Confusion Matrix')
+    ax.set_title('Validation Confusion Matrix')
 
     # Save the figure
     fig.savefig(file_path)

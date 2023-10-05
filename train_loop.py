@@ -11,8 +11,9 @@ from torch import nn
 from training_eval import *
 from torch.optim import Adam
 from data_prep import *
+from model_ABMIL import *
+from model_TransMIL import *
 import torchvision.transforms.functional as TF
-from nystrom_attention import NystromAttention
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 
@@ -86,6 +87,9 @@ class BagOfImagesDataset(TUD.Dataset):
         return self.data.size(1)
 
 
+
+
+
 def collate_custom(batch):
     batch_data = []
     batch_bag_sizes = [0] 
@@ -118,122 +122,6 @@ def create_timm_body(arch:str, pretrained=True, cut=None, n_in=3):
     else: raise NameError("cut must be either integer or function")
 
 
-class TransLayer(nn.Module):
-
-    def __init__(self, norm_layer=nn.LayerNorm, dim=512):
-        super().__init__()
-        self.norm = norm_layer(dim)
-        self.attn = NystromAttention(
-            dim = dim,
-            dim_head = dim//8,
-            heads = 8,
-            num_landmarks = dim//2,    # number of landmarks
-            pinv_iterations = 6,    # number of moore-penrose iterations for approximating pinverse. 6 was recommended by the paper
-            residual = True,         # whether to do an extra residual with the value or not. supposedly faster convergence if turned on
-            dropout=0.1
-        )
-
-    def forward(self, x, return_attn=False):
-        if return_attn:
-            out, attn = self.attn(self.norm(x), return_attn=True)
-            x = x + out
-            return x, attn.detach()
-        else:
-            x = x + self.attn(self.norm(x))
-            return x
-
-
-class PPEG(nn.Module):
-    def __init__(self, dim=512):
-        super(PPEG, self).__init__()
-        self.proj = nn.Conv2d(dim, dim, 7, 1, 7//2, groups=dim)
-        self.proj1 = nn.Conv2d(dim, dim, 5, 1, 5//2, groups=dim)
-        self.proj2 = nn.Conv2d(dim, dim, 3, 1, 3//2, groups=dim)
-
-    def forward(self, x, H, W):
-        B, _, C = x.shape
-        cls_token, feat_token = x[:, 0], x[:, 1:]
-        
-        # Compute the values of H and W based on the total number of elements
-        total_elements = feat_token.numel()
-        H = W = int((total_elements / (B * C)) ** 0.5)
-    
-        
-        cnn_feat = feat_token.transpose(1, 2).view(B, C, H, W)
-        x = self.proj(cnn_feat)+cnn_feat+self.proj1(cnn_feat)+self.proj2(cnn_feat)
-        x = x.flatten(2).transpose(1, 2)
-        x = torch.cat((cls_token.unsqueeze(1), x), dim=1)
-        return x
-
-class TransMIL(nn.Module):
-    def __init__(self, dim_in, dim_hid, n_classes, **kwargs):
-        super(TransMIL, self).__init__()
-        self.pos_layer = PPEG(dim=dim_hid)
-        self._fc1 = nn.Sequential(nn.Linear(dim_in, dim_hid), nn.ReLU())
-        self.cls_token = nn.Parameter(torch.randn(1, 1, dim_hid))
-        self.n_classes = n_classes
-        self.layer1 = TransLayer(dim=dim_hid)
-        self.layer2 = TransLayer(dim=dim_hid)
-        self.norm = nn.LayerNorm(dim_hid)
-        self._fc2 = nn.Linear(dim_hid, self.n_classes)
-
-    def forward(self, X, **kwargs):
-
-        #assert X.shape[0] == 1 # [1, n, 1024], single bag
-
-        h = self._fc1(X) # [B, n, dim_hid]
-        
-        #---->pad
-        H = h.shape[1]
-        _H, _W = int(np.ceil(np.sqrt(H))), int(np.ceil(np.sqrt(H)))
-        add_length = _H * _W - H
-        h = torch.cat([h, h[:,:add_length,:]],dim = 1) #[B, N, dim_hid]
-
-        #---->cls_token
-        B = h.shape[0]
-        cls_tokens = self.cls_token.expand(B, -1, -1).cuda()
-        
-        # Reshape h to be a 3D tensor
-        h = h.view(h.size(0), -1, h.size(-1))  # reshape h to [B, N, C]
-    
-        h = torch.cat((cls_tokens, h), dim=1) # token: 1 + H + add_length
-        n1 = h.shape[1] # n1 = 1 + H + add_length
-
-        #---->Translayer x1
-        h = self.layer1(h) #[B, N, dim_hid]
-
-        #---->PPEG
-        h = self.pos_layer(h, _H, _W) #[B, N, dim_hid]
-        
-        #---->Translayer x2
-        if 'ret_with_attn' in kwargs and kwargs['ret_with_attn']:
-            h, attn = self.layer2(h, return_attn=True) # [B, N, dim_hid]
-            # attn shape = [1, n_heads, n2, n2], where n2 = padding + n1
-            if add_length == 0:
-                attn = attn[:, :, -n1, (-n1+1):]
-            else:
-                attn = attn[:, :, -n1, (-n1+1):(-n1+1+H)]
-            attn = attn.mean(1).detach()
-            assert attn.shape[1] == H
-        else:
-            h = self.layer2(h) # [B, N, dim_hid]
-            attn = None
-
-        #---->cls_token
-        h = self.norm(h)[:,0]
-
-        #---->predict
-        logits = torch.sigmoid(self._fc2(h))
-
-        if attn is not None:
-            return logits, attn
-
-        # Dummy values for saliency_maps, yhat_instance, and attention_scores to match ABMIL_aggregate's return type
-        saliency_maps = None
-        yhat_instance = None
-        attention_scores = None
-
-        return logits, saliency_maps, yhat_instance, attention_scores
 
 
 class EmbeddingBagModel(nn.Module):
@@ -271,8 +159,12 @@ class EmbeddingBagModel(nn.Module):
             saliency_maps.append(sm)
             yhat_instances.append(yhat_ins)
             attention_scores.append(att_sc)
-        
+
         return logits
+
+
+
+
 
 if __name__ == '__main__':
 
@@ -282,7 +174,7 @@ if __name__ == '__main__':
     batch_size = 5
     min_bag_size = 2
     max_bag_size = 15
-    epochs = 15
+    epochs = 1
     lr = 0.0008
 
     # Paths
@@ -296,16 +188,14 @@ if __name__ == '__main__':
     
     files_train, ids_train, labels_train, files_val, ids_val, labels_val = prepare_all_data(export_location, case_study_data, breast_data, image_data, 
                                                                                             cropped_images, img_size, min_bag_size, max_bag_size)
-    
-    
-    
-    
+
+
     print("Training Data...")
     # Create datasets
-    #dataset_train = TUD.Subset(BagOfImagesDataset( files_train, ids_train, labels_train),list(range(0,100)))
-    #dataset_val = TUD.Subset(BagOfImagesDataset( files_val, ids_val, labels_val),list(range(0,100)))
-    dataset_train = BagOfImagesDataset(files_train, ids_train, labels_train)
-    dataset_val = BagOfImagesDataset(files_val, ids_val, labels_val, train=False)
+    dataset_train = TUD.Subset(BagOfImagesDataset( files_train, ids_train, labels_train),list(range(0,100)))
+    dataset_val = TUD.Subset(BagOfImagesDataset( files_val, ids_val, labels_val),list(range(0,100)))
+    #dataset_train = BagOfImagesDataset(files_train, ids_train, labels_train)
+    #dataset_val = BagOfImagesDataset(files_val, ids_val, labels_val, train=False)
 
         
     # Create data loaders
@@ -317,7 +207,8 @@ if __name__ == '__main__':
     nf = num_features_model( nn.Sequential(*encoder.children()))
     
     # bag aggregator
-    aggregator = TransMIL(dim_in=nf, dim_hid=512, n_classes=1)  # Adjust dim_hid and n_classes as needed
+    #aggregator = ABMIL_aggregate( nf = nf, num_classes = 1, pool_patches = 3, L = 128)
+    aggregator = TransMIL(dim_in=nf, dim_hid=512, n_classes=1)
 
     # total model
     bagmodel = EmbeddingBagModel(encoder, aggregator).cuda()
@@ -347,7 +238,6 @@ if __name__ == '__main__':
             optimizer.zero_grad()
             
             outputs = bagmodel((xb, ids)).squeeze(dim=1)
-
             loss = loss_func(outputs, yb)
             
             #print(f'loss: {loss}\n pred: {outputs}\n true: {yb}')
@@ -359,12 +249,6 @@ if __name__ == '__main__':
             predicted = torch.round(outputs).squeeze()
             total += yb.size(0)
             correct += predicted.eq(yb.squeeze()).sum().item() 
-            
-            if epoch == epochs - 1:
-                all_targs.extend(yb.cpu().numpy())
-                if len(predicted.size()) == 0:
-                    predicted = predicted.view(1)
-                all_preds.extend(predicted.cpu().detach().numpy())
             
 
         train_loss = total_loss / total
@@ -389,6 +273,12 @@ if __name__ == '__main__':
                 predicted = torch.round(outputs).squeeze() 
                 total += yb.size(0)
                 correct += predicted.eq(yb.squeeze()).sum().item()
+                
+                if epoch == epochs - 1:
+                    all_targs.extend(yb.cpu().numpy())
+                    if len(predicted.size()) == 0:
+                        predicted = predicted.view(1)
+                    all_preds.extend(predicted.cpu().detach().numpy())
 
         val_loss = total_val_loss / total
         val_acc = correct / total
