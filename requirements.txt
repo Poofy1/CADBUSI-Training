@@ -1,0 +1,9 @@
+torch
+torchvision
+fastai
+timm
+tqdm
+Pillow
+pandas
+matplotlib
+NystromAttention
