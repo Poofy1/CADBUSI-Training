@@ -163,7 +163,43 @@ class EmbeddingBagModel(nn.Module):
         return logits
 
 
+def BagMixUp(xb, ids, yb):
+    # Pseudo-Bag Mixup
+    lam = np.random.beta(alpha, alpha)
 
+    # Random indices for the bags
+    rand_index_bags = torch.randperm(yb.size()[0]).cuda()
+
+    # Get the bag sizes from the ids tensor
+    bag_sizes = [ids[i+1] - ids[i] for i in range(ids.shape[0] - 1)]
+    mixed_bag_sizes = [bag_sizes[i] for i in rand_index_bags]
+
+    # Create a new mixed_ids tensor
+    mixed_ids = torch.tensor([0] + mixed_bag_sizes).cumsum(0).cuda()
+
+    mixed_xb_list = []
+    for i, rand_idx in enumerate(rand_index_bags):
+        bag1 = xb[ids[i]:ids[i+1]]
+        bag2 = xb[ids[rand_idx]:ids[rand_idx+1]]
+        
+        max_size = max(bag1.size(0), bag2.size(0))
+        if bag1.size(0) < max_size:
+            padding = torch.zeros((max_size - bag1.size(0),) + bag1.size()[1:]).cuda()
+            bag1 = torch.cat([bag1, padding])
+        if bag2.size(0) < max_size:
+            padding = torch.zeros((max_size - bag2.size(0),) + bag2.size()[1:]).cuda()
+            bag2 = torch.cat([bag2, padding])
+        
+        mixed_bag = lam * bag1 + (1-lam) * bag2
+        mixed_xb_list.append(mixed_bag)
+
+    mixed_xb = torch.cat(mixed_xb_list)
+
+    # Mixed label based on contribution
+    mixed_yb = yb if lam > 0.5 else yb[rand_index_bags]
+    
+    return mixed_xb, mixed_ids, mixed_yb
+    
 
 
 if __name__ == '__main__':
@@ -174,8 +210,9 @@ if __name__ == '__main__':
     batch_size = 5
     min_bag_size = 2
     max_bag_size = 15
-    epochs = 1
+    epochs = 5
     lr = 0.0008
+    alpha = 0.4  # hyperparameter for the beta distribution
 
     # Paths
     export_location = 'D:/DATA/CASBUSI/exports/export_09_28_2023/'
@@ -207,8 +244,8 @@ if __name__ == '__main__':
     nf = num_features_model( nn.Sequential(*encoder.children()))
     
     # bag aggregator
-    #aggregator = ABMIL_aggregate( nf = nf, num_classes = 1, pool_patches = 3, L = 128)
-    aggregator = TransMIL(dim_in=nf, dim_hid=512, n_classes=1)
+    aggregator = ABMIL_aggregate( nf = nf, num_classes = 1, pool_patches = 3, L = 128)
+    #aggregator = TransMIL(dim_in=nf, dim_hid=512, n_classes=1)
 
     # total model
     bagmodel = EmbeddingBagModel(encoder, aggregator).cuda()
@@ -235,21 +272,19 @@ if __name__ == '__main__':
         for (data, yb) in tqdm(train_dl, total=len(train_dl)): 
             xb, ids = data
             xb, ids, yb = xb.cuda(), ids.cuda(), yb.cuda()
+
+            xb, ids, yb = BagMixUp(xb, ids, yb)
+
             optimizer.zero_grad()
-            
             outputs = bagmodel((xb, ids)).squeeze(dim=1)
             loss = loss_func(outputs, yb)
-            
-            #print(f'loss: {loss}\n pred: {outputs}\n true: {yb}')
-            
             loss.backward()
             optimizer.step()
 
             total_loss += loss.item() * len(xb)
             predicted = torch.round(outputs).squeeze()
             total += yb.size(0)
-            correct += predicted.eq(yb.squeeze()).sum().item() 
-            
+            correct += predicted.eq(yb.squeeze()).sum().item()
 
         train_loss = total_loss / total
         train_acc = correct / total
