@@ -6,4 +6,4 @@ tqdm
 Pillow
 pandas
 matplotlib
-NystromAttention
+nystrom-attention
