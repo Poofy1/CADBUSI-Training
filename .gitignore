@@ -10,7 +10,6 @@ __pycache__/
 *.png
 *.csv
 *.json
-*.txt
 *.ini
 *.zip
 

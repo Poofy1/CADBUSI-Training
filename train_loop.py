@@ -163,7 +163,7 @@ class EmbeddingBagModel(nn.Module):
         return logits
 
 
-def BagMixUp(xb, ids, yb):
+def BagMixUp(xb, ids, yb, alpha):
     # Pseudo-Bag Mixup
     lam = np.random.beta(alpha, alpha)
 
@@ -205,12 +205,12 @@ def BagMixUp(xb, ids, yb):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'test'
+    model_name = 'MixupTest'
     img_size = 256
     batch_size = 5
     min_bag_size = 2
     max_bag_size = 15
-    epochs = 5
+    epochs = 75
     lr = 0.0008
     alpha = 0.4  # hyperparameter for the beta distribution
 
@@ -229,10 +229,10 @@ if __name__ == '__main__':
 
     print("Training Data...")
     # Create datasets
-    dataset_train = TUD.Subset(BagOfImagesDataset( files_train, ids_train, labels_train),list(range(0,100)))
-    dataset_val = TUD.Subset(BagOfImagesDataset( files_val, ids_val, labels_val),list(range(0,100)))
-    #dataset_train = BagOfImagesDataset(files_train, ids_train, labels_train)
-    #dataset_val = BagOfImagesDataset(files_val, ids_val, labels_val, train=False)
+    #dataset_train = TUD.Subset(BagOfImagesDataset( files_train, ids_train, labels_train),list(range(0,100)))
+    #dataset_val = TUD.Subset(BagOfImagesDataset( files_val, ids_val, labels_val),list(range(0,100)))
+    dataset_train = BagOfImagesDataset(files_train, ids_train, labels_train)
+    dataset_val = BagOfImagesDataset(files_val, ids_val, labels_val, train=False)
 
         
     # Create data loaders
@@ -273,7 +273,7 @@ if __name__ == '__main__':
             xb, ids = data
             xb, ids, yb = xb.cuda(), ids.cuda(), yb.cuda()
 
-            xb, ids, yb = BagMixUp(xb, ids, yb)
+            xb, ids, yb = BagMixUp(xb, ids, yb, alpha)
 
             optimizer.zero_grad()
             outputs = bagmodel((xb, ids)).squeeze(dim=1)
