@@ -205,21 +205,24 @@ def BagMixUp(xb, ids, yb, alpha):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'MixupTest'
+    model_name = 'MixupTest2'
     img_size = 256
-    batch_size = 5
+    batch_size = 6
     min_bag_size = 2
     max_bag_size = 15
-    epochs = 75
+    epochs = 150
     lr = 0.0008
     alpha = 0.4  # hyperparameter for the beta distribution
 
     # Paths
-    export_location = 'D:/DATA/CASBUSI/exports/export_09_28_2023/'
+    #export_location = 'D:/DATA/CASBUSI/exports/export_09_28_2023/'
+    #cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
+    export_location = '/home/hansen6528/DATA/export_09_28_2023/'
+    cropped_images = f"/home/hansen6528/DATA/Temp_Data/{img_size}_images/"
     case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
     breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
     image_data = pd.read_csv(f'{export_location}/ImageData.csv')
-    cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
+    
     
     
     
@@ -240,7 +243,7 @@ if __name__ == '__main__':
     val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
 
 
-    encoder = create_timm_body('resnet18')
+    encoder = create_timm_body('resnet50')
     nf = num_features_model( nn.Sequential(*encoder.children()))
     
     # bag aggregator
