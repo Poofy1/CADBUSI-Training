@@ -12,6 +12,7 @@ __pycache__/
 *.json
 *.ini
 *.zip
+*.pth
 
 # Distribution / packaging
 .Python

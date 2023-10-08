@@ -1,4 +1,4 @@
-import os
+import os, pickle
 from timm import create_model
 from fastai.vision.all import *
 import torch.utils.data as TUD
@@ -207,18 +207,18 @@ if __name__ == '__main__':
     # Config
     model_name = 'MixupTest2'
     img_size = 256
-    batch_size = 6
+    batch_size = 5
     min_bag_size = 2
     max_bag_size = 15
-    epochs = 150
+    epochs = 4
     lr = 0.0008
     alpha = 0.4  # hyperparameter for the beta distribution
 
     # Paths
-    #export_location = 'D:/DATA/CASBUSI/exports/export_09_28_2023/'
-    #cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
-    export_location = '/home/hansen6528/DATA/export_09_28_2023/'
-    cropped_images = f"/home/hansen6528/DATA/Temp_Data/{img_size}_images/"
+    export_location = 'D:/DATA/CASBUSI/exports/export_09_28_2023/'
+    cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
+    #export_location = '/home/hansen6528/DATA/export_09_28_2023/'
+    #cropped_images = f"/home/hansen6528/DATA/Temp_Data/{img_size}_images/"
     case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
     breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
     image_data = pd.read_csv(f'{export_location}/ImageData.csv')
@@ -232,10 +232,10 @@ if __name__ == '__main__':
 
     print("Training Data...")
     # Create datasets
-    #dataset_train = TUD.Subset(BagOfImagesDataset( files_train, ids_train, labels_train),list(range(0,100)))
-    #dataset_val = TUD.Subset(BagOfImagesDataset( files_val, ids_val, labels_val),list(range(0,100)))
-    dataset_train = BagOfImagesDataset(files_train, ids_train, labels_train)
-    dataset_val = BagOfImagesDataset(files_val, ids_val, labels_val, train=False)
+    dataset_train = TUD.Subset(BagOfImagesDataset( files_train, ids_train, labels_train),list(range(0,100)))
+    dataset_val = TUD.Subset(BagOfImagesDataset( files_val, ids_val, labels_val),list(range(0,100)))
+    #dataset_train = BagOfImagesDataset(files_train, ids_train, labels_train)
+    #dataset_val = BagOfImagesDataset(files_val, ids_val, labels_val, train=False)
 
         
     # Create data loaders
@@ -259,13 +259,38 @@ if __name__ == '__main__':
     optimizer = Adam(bagmodel.parameters(), lr=lr)
     loss_func = nn.BCELoss()
     
+    
     train_losses_over_epochs = []
     valid_losses_over_epochs = []
+    epoch_start = 0
     all_targs = []
     all_preds = []
     
+    # Check if the model already exists
+    model_folder = f"{env}/models/{model_name}/"
+    model_path = f"{model_folder}/{model_name}.pth"
+    optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
+    stats_path = f"{model_folder}/{model_name}_stats.pkl"
+    
+    if os.path.exists(model_folder):
+        bagmodel.load_state_dict(torch.load(model_path))
+        optimizer.load_state_dict(torch.load(optimizer_path))
+        print(f"Loaded pre-existing model from {model_name}")
+        
+        # Get stat data
+        with open(stats_path, 'rb') as f:
+            saved_stats = pickle.load(f)
+            train_losses_over_epochs = saved_stats['train_losses']
+            valid_losses_over_epochs = saved_stats['valid_losses']
+            epoch_start = saved_stats['epoch']
+    else:
+        print(f"{model_name} does not exist, creating new instance")
+        os.makedirs(model_folder)
+    
+    
+    
     # Training loop
-    for epoch in range(epochs):
+    for epoch in range(epoch_start, epochs):
         # Training phase
         bagmodel.train()
         total_loss = 0.0
@@ -329,14 +354,23 @@ if __name__ == '__main__':
         print(f"Val     | {val_acc:.4f} | {val_loss:.4f}")
     
     # Save the model
-    torch.save(bagmodel.state_dict(), f"{env}/models/{model_name}.pth")
+    torch.save(bagmodel.state_dict(), model_path)
+    torch.save(optimizer.state_dict(), optimizer_path)
+    
+    # Save stats
+    with open(stats_path, 'wb') as f:
+        pickle.dump({
+            'train_losses': train_losses_over_epochs,
+            'valid_losses': valid_losses_over_epochs,
+            'epoch': epoch + 1  # Save the next epoch to start
+        }, f)
 
     # Save the loss graph
-    plot_loss(train_losses_over_epochs, valid_losses_over_epochs, f"{env}/models/{model_name}_loss.png")
+    plot_loss(train_losses_over_epochs, valid_losses_over_epochs, f"{model_folder}/{model_name}_loss.png")
     
     # Save the confusion matrix
     vocab = ['not malignant', 'malignant']  # Replace with your actual vocab
-    plot_Confusion(all_targs, all_preds, vocab, f"{env}/models/{model_name}_confusion.png")
+    plot_Confusion(all_targs, all_preds, vocab, f"{model_folder}/{model_name}_confusion.png")
 
         
     
