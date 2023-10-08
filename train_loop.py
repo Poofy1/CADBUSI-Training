@@ -200,6 +200,25 @@ def BagMixUp(xb, ids, yb, alpha):
     
     return mixed_xb, mixed_ids, mixed_yb
     
+def save_state():
+    # Save the model
+    torch.save(bagmodel.state_dict(), model_path)
+    torch.save(optimizer.state_dict(), optimizer_path)
+    
+    # Save stats
+    with open(stats_path, 'wb') as f:
+        pickle.dump({
+            'train_losses': train_losses_over_epochs,
+            'valid_losses': valid_losses_over_epochs,
+            'epoch': epoch + 1  # Save the next epoch to start
+        }, f)
+
+    # Save the loss graph
+    plot_loss(train_losses_over_epochs, valid_losses_over_epochs, f"{model_folder}/{model_name}_loss.png")
+    
+    # Save the confusion matrix
+    vocab = ['not malignant', 'malignant']  # Replace with your actual vocab
+    plot_Confusion(all_targs, all_preds, vocab, f"{model_folder}/{model_name}_confusion.png")
 
 
 if __name__ == '__main__':
@@ -232,10 +251,10 @@ if __name__ == '__main__':
 
     print("Training Data...")
     # Create datasets
-    dataset_train = TUD.Subset(BagOfImagesDataset( files_train, ids_train, labels_train),list(range(0,100)))
-    dataset_val = TUD.Subset(BagOfImagesDataset( files_val, ids_val, labels_val),list(range(0,100)))
-    #dataset_train = BagOfImagesDataset(files_train, ids_train, labels_train)
-    #dataset_val = BagOfImagesDataset(files_val, ids_val, labels_val, train=False)
+    #dataset_train = TUD.Subset(BagOfImagesDataset( files_train, ids_train, labels_train),list(range(0,100)))
+    #dataset_val = TUD.Subset(BagOfImagesDataset( files_val, ids_val, labels_val),list(range(0,100)))
+    dataset_train = BagOfImagesDataset(files_train, ids_train, labels_train)
+    dataset_val = BagOfImagesDataset(files_val, ids_val, labels_val, train=False)
 
         
     # Create data loaders
@@ -352,25 +371,13 @@ if __name__ == '__main__':
         print(f"Epoch {epoch+1} | Acc   | Loss")
         print(f"Train   | {train_acc:.4f} | {train_loss:.4f}")
         print(f"Val     | {val_acc:.4f} | {val_loss:.4f}")
+        
+        # Save the model every 25 epochs
+        if (epoch + 1) % 25 == 0:
+            save_state()
+            print("Saved checkpoint")
     
     # Save the model
-    torch.save(bagmodel.state_dict(), model_path)
-    torch.save(optimizer.state_dict(), optimizer_path)
-    
-    # Save stats
-    with open(stats_path, 'wb') as f:
-        pickle.dump({
-            'train_losses': train_losses_over_epochs,
-            'valid_losses': valid_losses_over_epochs,
-            'epoch': epoch + 1  # Save the next epoch to start
-        }, f)
+    save_state()
 
-    # Save the loss graph
-    plot_loss(train_losses_over_epochs, valid_losses_over_epochs, f"{model_folder}/{model_name}_loss.png")
-    
-    # Save the confusion matrix
-    vocab = ['not malignant', 'malignant']  # Replace with your actual vocab
-    plot_Confusion(all_targs, all_preds, vocab, f"{model_folder}/{model_name}_confusion.png")
 
-        
-    
