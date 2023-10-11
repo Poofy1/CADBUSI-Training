@@ -228,8 +228,8 @@ if __name__ == '__main__':
     img_size = 256
     batch_size = 5
     min_bag_size = 2
-    max_bag_size = 15
-    epochs = 4
+    max_bag_size = 13
+    epochs = 10000
     lr = 0.0008
     alpha = 0.4  # hyperparameter for the beta distribution
 
@@ -282,8 +282,7 @@ if __name__ == '__main__':
     train_losses_over_epochs = []
     valid_losses_over_epochs = []
     epoch_start = 0
-    all_targs = []
-    all_preds = []
+    
     
     # Check if the model already exists
     model_folder = f"{env}/models/{model_name}/"
@@ -343,6 +342,8 @@ if __name__ == '__main__':
         total_val_acc = 0.0
         total = 0
         correct = 0
+        all_targs = []
+        all_preds = []
         with torch.no_grad():
             for (data, yb) in tqdm(val_dl, total=len(val_dl)): 
                 xb, ids = data  
@@ -356,7 +357,7 @@ if __name__ == '__main__':
                 total += yb.size(0)
                 correct += predicted.eq(yb.squeeze()).sum().item()
                 
-                if epoch == epochs - 1:
+                if epoch == epochs - 1 or (epoch + 1) % 20 == 0:
                     all_targs.extend(yb.cpu().numpy())
                     if len(predicted.size()) == 0:
                         predicted = predicted.view(1)
@@ -372,8 +373,8 @@ if __name__ == '__main__':
         print(f"Train   | {train_acc:.4f} | {train_loss:.4f}")
         print(f"Val     | {val_acc:.4f} | {val_loss:.4f}")
         
-        # Save the model every 25 epochs
-        if (epoch + 1) % 25 == 0:
+        # Save the model every x epochs
+        if (epoch + 1) % 20 == 0:
             save_state()
             print("Saved checkpoint")
     
