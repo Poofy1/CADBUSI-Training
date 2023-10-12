@@ -1,7 +1,8 @@
 import os
 from fastai.vision.all import *
 from torchvision import datasets
-from train_ABMIL import *
+from model_ABMIL import *
+from train_loop import *
 from data_prep import *
 env = os.path.dirname(os.path.abspath(__file__))
 
@@ -54,8 +55,8 @@ def generate_test_filenames_from_folders(test_root_path):
     return bag_files, bag_ids
 
 # Config
-model_name = 'ABMIL'
-encoder_arch = 'resnet18'
+model_name = 'MixupTest2'
+encoder_arch = 'resnet50'
 img_size = 256
 min_bag_size = 2
 max_bag_size = 15
@@ -69,7 +70,7 @@ cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
 
 
 # Load the trained model
-model_path = f'{env}/models/{model_name}.pth'
+model_path = f'{env}/models/{model_name}/{model_name}.pth'
 model = load_trained_model(model_path, encoder_arch)
 
 
@@ -102,7 +103,7 @@ for idx, uid in enumerate(selected_ids):
     # Use idx instead of the actual id to ensure ids start from 0 and are contiguous
     selected_ids_list.extend([idx] * sum(mask))
 
-selected_files_np = np.array(selected_files)
+selected_files = np.array(selected_files)
 selected_ids_list = np.array(selected_ids_list)
 selected_labels = np.array(selected_labels)
 
