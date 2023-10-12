@@ -87,25 +87,19 @@ class BagOfImagesDataset(TUD.Dataset):
         return self.data.size(1)
 
 
-
-
-
 def collate_custom(batch):
-    batch_data = []
-    batch_bag_sizes = [0] 
-    batch_labels = []
-  
+    batch_data = []  # List to store bags (which are themselves lists of images)
+    batch_labels = []  # List to store labels corresponding to each bag
+
     for sample in batch:
-        batch_data.append(sample[0])
-        batch_bag_sizes.append(sample[0].shape[0])
-        batch_labels.append(sample[1])
-  
-    out_data = torch.cat(batch_data, dim = 0).cuda()
-    bagsizes = torch.IntTensor(batch_bag_sizes).cuda()
-    out_bag_starts = torch.cumsum(bagsizes,dim=0).cuda()
-    out_labels = torch.stack(batch_labels).cuda()
+        image_data, label = sample
+        batch_data.append(image_data)  # Append the list of images for this bag
+        batch_labels.append(label)  # Append the label for this bag
+
+    out_labels = torch.tensor(batch_labels).cuda()  # Convert labels to a tensor
     
-    return (out_data, out_bag_starts), out_labels
+    return batch_data, out_labels  # batch_data is a list of lists, out_labels is a tensor
+
 
 
 
@@ -134,72 +128,37 @@ class EmbeddingBagModel(nn.Module):
                     
                 
     def forward(self, input):
-        x = input[0]
-        bag_sizes = input[1]
-        h = self.encoder(x)
-        h = h.view(h.size(0), -1, h.size(1))
+        num_bags = len(input) # input = [bag #, image #, channel, height, width]
         
-        num_bags = bag_sizes.shape[0]-1
+        # Concatenate all bags into a single tensor for batch processing
+        all_images = torch.cat(input, dim=0)  # Shape: [Total images in all bags, channel, height, width]
+        
+        # Calculate the embeddings for all images in one go
+        h_all = self.encoder(all_images)
+        h_all = h_all.view(h_all.size(0), -1, h_all.size(1))
+        
+        # Split the embeddings back into per-bag embeddings
+        split_sizes = [bag.size(0) for bag in input]
+        h_per_bag = torch.split(h_all, split_sizes, dim=0)
+        
         logits = torch.empty(num_bags, self.num_classes).cuda()
-        
-        # Additional lists to store the saliency_maps, yhat_instances, and attention_scores
         saliency_maps, yhat_instances, attention_scores = [], [], []
         
-        for j in range(num_bags):
-            start, end = bag_sizes[j], bag_sizes[j+1]
-            h_bag = h[start:end]
-            
+        for i, h in enumerate(h_per_bag):
             # Ensure that h_bag has a first dimension of 1 before passing it to the aggregator
-            h_bag = h_bag.unsqueeze(0)
+            h_bag = h.unsqueeze(0)
             
-            # Receive four values from aggregator
+            # Receive four values from the aggregator
             yhat_bag, sm, yhat_ins, att_sc = self.aggregator(h_bag)
             
-            logits[j] = yhat_bag
+            logits[i] = yhat_bag
             saliency_maps.append(sm)
             yhat_instances.append(yhat_ins)
             attention_scores.append(att_sc)
-
+        
         return logits
 
 
-def BagMixUp(xb, ids, yb, alpha):
-    # Pseudo-Bag Mixup
-    lam = np.random.beta(alpha, alpha)
-
-    # Random indices for the bags
-    rand_index_bags = torch.randperm(yb.size()[0]).cuda()
-
-    # Get the bag sizes from the ids tensor
-    bag_sizes = [ids[i+1] - ids[i] for i in range(ids.shape[0] - 1)]
-    mixed_bag_sizes = [bag_sizes[i] for i in rand_index_bags]
-
-    # Create a new mixed_ids tensor
-    mixed_ids = torch.tensor([0] + mixed_bag_sizes).cumsum(0).cuda()
-
-    mixed_xb_list = []
-    for i, rand_idx in enumerate(rand_index_bags):
-        bag1 = xb[ids[i]:ids[i+1]]
-        bag2 = xb[ids[rand_idx]:ids[rand_idx+1]]
-        
-        max_size = max(bag1.size(0), bag2.size(0))
-        if bag1.size(0) < max_size:
-            padding = torch.zeros((max_size - bag1.size(0),) + bag1.size()[1:]).cuda()
-            bag1 = torch.cat([bag1, padding])
-        if bag2.size(0) < max_size:
-            padding = torch.zeros((max_size - bag2.size(0),) + bag2.size()[1:]).cuda()
-            bag2 = torch.cat([bag2, padding])
-        
-        mixed_bag = lam * bag1 + (1-lam) * bag2
-        mixed_xb_list.append(mixed_bag)
-
-    mixed_xb = torch.cat(mixed_xb_list)
-
-    # Mixed label based on contribution
-    mixed_yb = lam * yb + (1 - lam) * yb[rand_index_bags]
-
-    
-    return mixed_xb, mixed_ids, mixed_yb
     
 def save_state():
     # Save the model
@@ -253,10 +212,10 @@ if __name__ == '__main__':
 
     print("Training Data...")
     # Create datasets
-    #dataset_train = TUD.Subset(BagOfImagesDataset( files_train, ids_train, labels_train),list(range(0,100)))
-    #dataset_val = TUD.Subset(BagOfImagesDataset( files_val, ids_val, labels_val),list(range(0,100)))
-    dataset_train = BagOfImagesDataset(files_train, ids_train, labels_train)
-    dataset_val = BagOfImagesDataset(files_val, ids_val, labels_val, train=False)
+    dataset_train = TUD.Subset(BagOfImagesDataset( files_train, ids_train, labels_train),list(range(0,100)))
+    dataset_val = TUD.Subset(BagOfImagesDataset( files_val, ids_val, labels_val),list(range(0,100)))
+    #dataset_train = BagOfImagesDataset(files_train, ids_train, labels_train)
+    #dataset_val = BagOfImagesDataset(files_val, ids_val, labels_val, train=False)
 
         
     # Create data loaders
@@ -317,14 +276,10 @@ if __name__ == '__main__':
         total_acc = 0
         total = 0
         correct = 0
-        for (data, yb) in tqdm(train_dl, total=len(train_dl)): 
-            xb, ids = data
-            xb, ids, yb = xb.cuda(), ids.cuda(), yb.cuda()
-
-            xb, ids, yb = BagMixUp(xb, ids, yb, alpha)
-
+        for (data, yb) in tqdm(train_dl, total=len(train_dl)):
+            xb, yb = data, yb.cuda() 
             optimizer.zero_grad()
-            outputs = bagmodel((xb, ids)).squeeze(dim=1)
+            outputs = bagmodel(xb).squeeze(dim=1)
             loss = loss_func(outputs, yb)
             loss.backward()
             optimizer.step()
@@ -348,10 +303,9 @@ if __name__ == '__main__':
         all_preds = []
         with torch.no_grad():
             for (data, yb) in tqdm(val_dl, total=len(val_dl)): 
-                xb, ids = data  
-                xb, ids, yb = xb.cuda(), ids.cuda(), yb.cuda()
-                
-                outputs = bagmodel((xb, ids)).squeeze(dim=1)
+                xb, yb = data, yb.cuda()
+
+                outputs = bagmodel(xb).squeeze(dim=1)
                 loss = loss_func(outputs, yb)
                 
                 total_val_loss += loss.item() * len(xb)
