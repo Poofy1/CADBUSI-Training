@@ -90,117 +90,6 @@ class BagOfImagesDataset(TUD.Dataset):
 
 
 
-def collate_custom(batch):
-    batch_data = []
-    batch_bag_sizes = [0] 
-    batch_labels = []
-  
-    for sample in batch:
-        batch_data.append(sample[0])
-        batch_bag_sizes.append(sample[0].shape[0])
-        batch_labels.append(sample[1])
-  
-    out_data = torch.cat(batch_data, dim = 0).cuda()
-    bagsizes = torch.IntTensor(batch_bag_sizes).cuda()
-    out_bag_starts = torch.cumsum(bagsizes,dim=0).cuda()
-    out_labels = torch.stack(batch_labels).cuda()
-    
-    return (out_data, out_bag_starts), out_labels
-
-
-
-# this function is used to cut off the head of a pretrained timm model and return the body
-def create_timm_body(arch:str, pretrained=True, cut=None, n_in=3):
-    "Creates a body from any model in the `timm` library."
-    model = create_model(arch, pretrained=pretrained, num_classes=0, global_pool='')
-    _update_first_layer(model, n_in, pretrained)
-    if cut is None:
-        ll = list(enumerate(model.children()))
-        cut = next(i for i,o in reversed(ll) if has_pool_type(o))
-    if isinstance(cut, int): return nn.Sequential(*list(model.children())[:cut])
-    elif callable(cut): return cut(model)
-    else: raise NameError("cut must be either integer or function")
-
-
-
-
-class EmbeddingBagModel(nn.Module):
-    
-    def __init__(self, encoder, aggregator, num_classes=1):
-        super(EmbeddingBagModel,self).__init__()
-        self.encoder = encoder
-        self.aggregator = aggregator
-        self.num_classes = num_classes
-                    
-                
-    def forward(self, input):
-        x = input[0]
-        bag_sizes = input[1]
-        h = self.encoder(x)
-        h = h.view(h.size(0), -1, h.size(1))
-        
-        num_bags = bag_sizes.shape[0]-1
-        logits = torch.empty(num_bags, self.num_classes).cuda()
-        
-        # Additional lists to store the saliency_maps, yhat_instances, and attention_scores
-        saliency_maps, yhat_instances, attention_scores = [], [], []
-        
-        for j in range(num_bags):
-            start, end = bag_sizes[j], bag_sizes[j+1]
-            h_bag = h[start:end]
-            
-            # Ensure that h_bag has a first dimension of 1 before passing it to the aggregator
-            h_bag = h_bag.unsqueeze(0)
-            
-            # Receive four values from aggregator
-            yhat_bag, sm, yhat_ins, att_sc = self.aggregator(h_bag)
-            
-            logits[j] = yhat_bag
-            saliency_maps.append(sm)
-            yhat_instances.append(yhat_ins)
-            attention_scores.append(att_sc)
-
-        return logits
-
-
-def BagMixUp(xb, ids, yb, alpha):
-    # Pseudo-Bag Mixup
-    lam = np.random.beta(alpha, alpha)
-
-    # Random indices for the bags
-    rand_index_bags = torch.randperm(yb.size()[0]).cuda()
-
-    # Get the bag sizes from the ids tensor
-    bag_sizes = [ids[i+1] - ids[i] for i in range(ids.shape[0] - 1)]
-    mixed_bag_sizes = [bag_sizes[i] for i in rand_index_bags]
-
-    # Create a new mixed_ids tensor
-    mixed_ids = torch.tensor([0] + mixed_bag_sizes).cumsum(0).cuda()
-
-    mixed_xb_list = []
-    for i, rand_idx in enumerate(rand_index_bags):
-        bag1 = xb[ids[i]:ids[i+1]]
-        bag2 = xb[ids[rand_idx]:ids[rand_idx+1]]
-        
-        max_size = max(bag1.size(0), bag2.size(0))
-        if bag1.size(0) < max_size:
-            padding = torch.zeros((max_size - bag1.size(0),) + bag1.size()[1:]).cuda()
-            bag1 = torch.cat([bag1, padding])
-        if bag2.size(0) < max_size:
-            padding = torch.zeros((max_size - bag2.size(0),) + bag2.size()[1:]).cuda()
-            bag2 = torch.cat([bag2, padding])
-        
-        mixed_bag = lam * bag1 + (1-lam) * bag2
-        mixed_xb_list.append(mixed_bag)
-
-    mixed_xb = torch.cat(mixed_xb_list)
-
-    # Mixed label based on contribution
-    mixed_yb = lam * yb + (1 - lam) * yb[rand_index_bags]
-
-    
-    return mixed_xb, mixed_ids, mixed_yb
-    
 def save_state():
     # Save the model
     torch.save(bagmodel.state_dict(), model_path)
@@ -222,6 +111,106 @@ def save_state():
     plot_Confusion(all_targs, all_preds, vocab, f"{model_folder}/{model_name}_confusion.png")
 
 
+# this function is used to cut off the head of a pretrained timm model and return the body
+def create_timm_body(arch:str, pretrained=True, cut=None, n_in=3):
+    "Creates a body from any model in the `timm` library."
+    model = create_model(arch, pretrained=pretrained, num_classes=0, global_pool='')
+    _update_first_layer(model, n_in, pretrained)
+    if cut is None:
+        ll = list(enumerate(model.children()))
+        cut = next(i for i,o in reversed(ll) if has_pool_type(o))
+    if isinstance(cut, int): return nn.Sequential(*list(model.children())[:cut])
+    elif callable(cut): return cut(model)
+    else: raise NameError("cut must be either integer or function")
+
+
+def collate_custom(batch):
+    batch_data = []  # List to store bags (which are themselves lists of images)
+    batch_labels = []  # List to store labels corresponding to each bag
+
+    for sample in batch:
+        image_data, label = sample
+        batch_data.append(image_data)  # Append the list of images for this bag
+        batch_labels.append(label)  # Append the label for this bag
+
+    out_labels = torch.tensor(batch_labels).cuda()  # Convert labels to a tensor
+    
+    return batch_data, out_labels  # batch_data is a list of lists, out_labels is a tensor
+
+
+class EmbeddingBagModel(nn.Module):
+    
+    def __init__(self, encoder, aggregator, num_classes=1):
+        super(EmbeddingBagModel,self).__init__()
+        self.encoder = encoder
+        self.aggregator = aggregator
+        self.num_classes = num_classes
+                    
+                
+    def forward(self, input):
+        num_bags = len(input) # input = [bag #, image #, channel, height, width]
+        
+        # Concatenate all bags into a single tensor for batch processing
+        all_images = torch.cat(input, dim=0)  # Shape: [Total images in all bags, channel, height, width]
+        
+        # Calculate the embeddings for all images in one go
+        h_all = self.encoder(all_images)
+        h_all = h_all.view(h_all.size(0), -1, h_all.size(1))
+        
+        # Split the embeddings back into per-bag embeddings
+        split_sizes = [bag.size(0) for bag in input]
+        h_per_bag = torch.split(h_all, split_sizes, dim=0)
+        
+        logits = torch.empty(num_bags, self.num_classes).cuda()
+        saliency_maps, yhat_instances, attention_scores = [], [], []
+        
+        for i, h in enumerate(h_per_bag):
+            # Ensure that h_bag has a first dimension of 1 before passing it to the aggregator
+            h_bag = h.unsqueeze(0)
+            
+            # Receive four values from the aggregator
+            yhat_bag, sm, yhat_ins, att_sc = self.aggregator(h_bag)
+            
+            logits[i] = yhat_bag
+            saliency_maps.append(sm)
+            yhat_instances.append(yhat_ins)
+            attention_scores.append(att_sc)
+        
+        return logits
+
+
+def select_pseudo_bags(bag, num_to_select):
+    if num_to_select == 0:
+        return torch.tensor([]).cuda()  # return an empty tensor on the same device as your model
+    
+    indices = np.random.choice(len(bag), num_to_select, replace=False)
+    selected_pseudo_bags = torch.cat([bag[i] for i in indices], dim=0)
+    return selected_pseudo_bags
+
+
+
+def generate_pseudo_bags(X, N):
+    # Shuffle the bag
+    indices = torch.randperm(X.size(0))
+    X = X[indices]
+    
+    # Calculate the size of each pseudo-bag
+    n = X.size(0)
+    size = n // N
+    
+    # Generate N pseudo-bags
+    pseudo_bags = [X[i * size: (i + 1) * size] for i in range(N)]
+    
+    # If there are remaining instances, distribute them to pseudo-bags
+    remainder = n % N
+    for i in range(remainder):
+        pseudo_bags[i] = torch.cat([pseudo_bags[i], X[-(i + 1)].unsqueeze(0)], dim=0)
+        
+    return pseudo_bags
+
+
+
+
 if __name__ == '__main__':
 
     # Config
@@ -232,7 +221,8 @@ if __name__ == '__main__':
     max_bag_size = 13
     epochs = 10000
     lr = 0.001
-    alpha = 0.4  # hyperparameter for the beta distribution
+    alpha = 0.6  # hyperparameter for the beta distribution
+    pseudo_size = 5  # The number of pseudo-bags in each WSI bag
 
     # Paths
     export_location = 'D:/DATA/CASBUSI/exports/export_09_28_2023/'
@@ -308,8 +298,6 @@ if __name__ == '__main__':
         os.makedirs(model_folder, exist_ok=True)
     
     
-    
-    # Training loop
     for epoch in range(epoch_start, epochs):
         # Training phase
         bagmodel.train()
@@ -317,17 +305,49 @@ if __name__ == '__main__':
         total_acc = 0
         total = 0
         correct = 0
-        for (data, yb) in tqdm(train_dl, total=len(train_dl)): 
-            xb, ids = data
-            xb, ids, yb = xb.cuda(), ids.cuda(), yb.cuda()
+        
+        for (data, yb) in tqdm(train_dl, total=len(train_dl)):
+            xb, yb = data, yb.cuda()
+            
+            n_batch = len(xb)  # Number of bags (samples) in the mini-batch
 
-            xb, ids, yb = BagMixUp(xb, ids, yb, alpha)
+            # 1. Divide each bag into N pseudo-bags
+            xb = [generate_pseudo_bags(bag, pseudo_size) for bag in xb]
 
+            new_idxs = torch.randperm(n_batch)
+            lam = np.random.beta(alpha, alpha)
+            lam = min(lam, 1.0 - 1e-5)
+            lam_discrete = int(lam * (pseudo_size + 1))
+            
+            # 2. Pseudo-bag-level Mixup
+            new_xb, new_yb = [], []
+            for i in range(n_batch):
+                masked_bag_A = select_pseudo_bags(xb[i], lam_discrete)
+                masked_bag_B = select_pseudo_bags(xb[new_idxs[i]], pseudo_size - lam_discrete)
+                
+                # Always perform mixup, but the ratio depends on lam_discrete
+                if lam_discrete == 0:
+                    mixed_bag = masked_bag_B
+                elif lam_discrete == pseudo_size:
+                    mixed_bag = masked_bag_A
+                else:
+                    mixed_bag = torch.cat([masked_bag_A, masked_bag_B], dim=0)
+                
+                mix_ratio = lam_discrete / pseudo_size
+                new_xb.append(mixed_bag)
+                new_yb.append(mix_ratio * yb[i] + (1 - mix_ratio) * yb[new_idxs[i]])  # Fixed the index here
+
+            
+            new_yb = torch.tensor(new_yb).cuda()
+
+            # 3. Minibatch training
             optimizer.zero_grad()
-            outputs = bagmodel((xb, ids)).squeeze(dim=1)
-            loss = loss_func(outputs, yb)
+            outputs = bagmodel(new_xb).squeeze(dim=1)
+            loss = loss_func(outputs, new_yb)
             loss.backward()
             optimizer.step()
+            
+            
 
             total_loss += loss.item() * len(xb)
             predicted = torch.round(outputs).squeeze()
@@ -348,10 +368,9 @@ if __name__ == '__main__':
         all_preds = []
         with torch.no_grad():
             for (data, yb) in tqdm(val_dl, total=len(val_dl)): 
-                xb, ids = data  
-                xb, ids, yb = xb.cuda(), ids.cuda(), yb.cuda()
-                
-                outputs = bagmodel((xb, ids)).squeeze(dim=1)
+                xb, yb = data, yb.cuda()
+
+                outputs = bagmodel(xb).squeeze(dim=1)
                 loss = loss_func(outputs, yb)
                 
                 total_val_loss += loss.item() * len(xb)
