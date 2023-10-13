@@ -8,6 +8,7 @@ import torchvision.transforms as T
 from PIL import Image
 from torch import from_numpy
 from torch import nn
+from torch.cuda.amp import autocast, GradScaler
 from training_eval import *
 from torch.optim import Adam
 from data_prep import *
@@ -185,6 +186,7 @@ def select_pseudo_bags(bag, num_to_select):
     
     indices = np.random.choice(len(bag), num_to_select, replace=False)
     selected_pseudo_bags = torch.cat([bag[i] for i in indices], dim=0)
+
     return selected_pseudo_bags
 
 
@@ -214,21 +216,21 @@ def generate_pseudo_bags(X, N):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'MixupTest3'
-    img_size = 256
+    model_name = 'Train1'
+    img_size = 512
     batch_size = 5
     min_bag_size = 2
     max_bag_size = 13
     epochs = 10000
     lr = 0.001
-    alpha = 0.6  # hyperparameter for the beta distribution
+    alpha = 0.4  # hyperparameter for the beta distribution
     pseudo_size = 5  # The number of pseudo-bags in each WSI bag
 
     # Paths
-    export_location = 'D:/DATA/CASBUSI/exports/export_09_28_2023/'
-    cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
-    #export_location = '/home/hansen6528/DATA/export_09_28_2023/'
-    #cropped_images = f"/home/hansen6528/DATA/Temp_Data/{img_size}_images/"
+    #export_location = 'D:/DATA/CASBUSI/exports/export_09_28_2023/'
+    #cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
+    export_location = '/home/paperspace/DATA/export_09_28_2023/'
+    cropped_images = f"/home/paperspace/DATA/Temp_Data/{img_size}_images/"
     case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
     breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
     image_data = pd.read_csv(f'{export_location}/ImageData.csv')
@@ -268,9 +270,8 @@ if __name__ == '__main__':
         
         
     optimizer = Adam(bagmodel.parameters(), lr=lr)
-    loss_func = nn.BCELoss()
-    
-    
+    loss_func = nn.BCEWithLogitsLoss()
+    scaler = GradScaler()
     train_losses_over_epochs = []
     valid_losses_over_epochs = []
     epoch_start = 0
@@ -298,6 +299,7 @@ if __name__ == '__main__':
         os.makedirs(model_folder, exist_ok=True)
     
     
+    
     for epoch in range(epoch_start, epochs):
         # Training phase
         bagmodel.train()
@@ -315,8 +317,9 @@ if __name__ == '__main__':
             xb = [generate_pseudo_bags(bag, pseudo_size) for bag in xb]
 
             new_idxs = torch.randperm(n_batch)
+            epsilon = 1e-5
             lam = np.random.beta(alpha, alpha)
-            lam = min(lam, 1.0 - 1e-5)
+            lam = np.clip(lam, epsilon, 1 - epsilon)
             lam_discrete = int(lam * (pseudo_size + 1))
             
             # 2. Pseudo-bag-level Mixup
@@ -329,7 +332,10 @@ if __name__ == '__main__':
                 if lam_discrete == 0:
                     mixed_bag = masked_bag_B
                 elif lam_discrete == pseudo_size:
-                    mixed_bag = masked_bag_A
+                    mixed_bag = masked_bag_A  
+                elif masked_bag_A.numel() == 0 and masked_bag_B.numel() == 0:
+                    print(f"Warning: Empty bag detected! lam: {lam_discrete}, pse-lam: {pseudo_size - lam_discrete}")
+                    continue
                 else:
                     mixed_bag = torch.cat([masked_bag_A, masked_bag_B], dim=0)
                 
@@ -342,12 +348,13 @@ if __name__ == '__main__':
 
             # 3. Minibatch training
             optimizer.zero_grad()
-            outputs = bagmodel(new_xb).squeeze(dim=1)
-            loss = loss_func(outputs, new_yb)
-            loss.backward()
-            optimizer.step()
+            with autocast():
+                outputs = bagmodel(new_xb).squeeze(dim=1)
+                loss = loss_func(outputs, new_yb)
             
-            
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             total_loss += loss.item() * len(xb)
             predicted = torch.round(outputs).squeeze()
