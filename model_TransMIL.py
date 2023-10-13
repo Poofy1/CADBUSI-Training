@@ -109,8 +109,9 @@ class TransMIL(nn.Module):
         h = self.norm(h)[:,0]
 
         #---->predict
-        logits = torch.sigmoid(self._fc2(h))
-
+        #logits = torch.sigmoid(self._fc2(h))
+        logits = self._fc2(h)
+        
         if attn is not None:
             return logits, attn
 
