@@ -183,7 +183,7 @@ class EmbeddingBagModel(nn.Module):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'MixupTest3'
+    model_name = 'test1'
     img_size = 256
     batch_size = 5
     min_bag_size = 2
@@ -195,8 +195,8 @@ if __name__ == '__main__':
     # Paths
     export_location = 'D:/DATA/CASBUSI/exports/export_09_28_2023/'
     cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
-    #export_location = '/home/hansen6528/DATA/export_09_28_2023/'
-    #cropped_images = f"/home/hansen6528/DATA/Temp_Data/{img_size}_images/"
+    #export_location = '/home/paperspace/cadbusi-LFS/export_09_28_2023/'
+    #cropped_images = f"/home/paperspace/Temp_Data/{img_size}_images/"
     case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
     breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
     image_data = pd.read_csv(f'{export_location}/ImageData.csv')
@@ -304,10 +304,9 @@ if __name__ == '__main__':
         all_preds = []
         with torch.no_grad():
             for (data, yb) in tqdm(val_dl, total=len(val_dl)): 
-                xb, ids = data  
-                xb, ids, yb = xb.cuda(), ids.cuda(), yb.cuda()
-                
-                outputs = bagmodel((xb, ids)).squeeze(dim=1)
+                xb, yb = data, yb.cuda()
+
+                outputs = bagmodel(xb).squeeze(dim=1)
                 loss = loss_func(outputs, yb)
                 
                 total_val_loss += loss.item() * len(xb)

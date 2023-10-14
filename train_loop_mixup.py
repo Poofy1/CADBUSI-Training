@@ -222,7 +222,7 @@ if __name__ == '__main__':
     model_name = 'Train1'
     img_size = 256
     batch_size = 5
-    min_bag_size = 5
+    min_bag_size = 2
     max_bag_size = 13
     epochs = 10000
     lr = 0.001
@@ -232,8 +232,8 @@ if __name__ == '__main__':
     # Paths
     export_location = 'D:/DATA/CASBUSI/exports/export_09_28_2023/'
     cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
-    #export_location = '/home/paperspace/DATA/export_09_28_2023/'
-    #cropped_images = f"/home/paperspace/DATA/Temp_Data/{img_size}_images/"
+    #export_location = '/home/paperspace/cadbusi-LFS/export_09_28_2023/'
+    #cropped_images = f"/home/paperspace/Temp_Data/{img_size}_images/"
     case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
     breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
     image_data = pd.read_csv(f'{export_location}/ImageData.csv')
