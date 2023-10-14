@@ -180,28 +180,66 @@ class EmbeddingBagModel(nn.Module):
         return logits
 
 
+def select_pseudo_bags(bag, num_to_select):
+    if num_to_select == 0:
+        return torch.tensor([]).cuda()  # return an empty tensor on the same device as your model
+    
+    indices = np.random.choice(len(bag), num_to_select, replace=False)
+    selected_pseudo_bags = torch.cat([bag[i] for i in indices], dim=0)
+
+    return selected_pseudo_bags
+
+def generate_pseudo_bags(X, N):
+    # Shuffle the bag
+    indices = torch.randperm(X.size(0))
+    X = X[indices]
+    
+    # Calculate the size of each pseudo-bag
+    n = X.size(0)
+    size = n // N
+    
+    if size == 0:
+        # Upsample by duplicating random images to make size at least 1
+        indices_to_duplicate = np.random.choice(n, N - n, replace=True)
+        X = torch.cat([X, X[indices_to_duplicate]], dim=0)
+        n = N  # Update n after upsample
+        size = 1  # Set size to 1
+    
+    # Generate N pseudo-bags
+    pseudo_bags = [X[i * size: (i + 1) * size] for i in range(N)]
+
+    # If there are remaining instances, distribute them to pseudo-bags
+    remainder = n % N
+    for i in range(remainder):
+        pseudo_bags[i] = torch.cat([pseudo_bags[i], X[-(i + 1)].unsqueeze(0)], dim=0)
+        
+    return pseudo_bags
+
+
 if __name__ == '__main__':
 
     # Config
-    model_name = 'MixupTest3'
+    model_name = 'Train1'
     img_size = 256
     batch_size = 5
-    min_bag_size = 2
+    min_bag_size = 5
     max_bag_size = 13
     epochs = 10000
     lr = 0.001
     alpha = 0.4  # hyperparameter for the beta distribution
+    pseudo_size = 5  # The number of pseudo-bags in each WSI bag
 
     # Paths
     export_location = 'D:/DATA/CASBUSI/exports/export_09_28_2023/'
     cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
-    #export_location = '/home/hansen6528/DATA/export_09_28_2023/'
-    #cropped_images = f"/home/hansen6528/DATA/Temp_Data/{img_size}_images/"
+    #export_location = '/home/paperspace/DATA/export_09_28_2023/'
+    #cropped_images = f"/home/paperspace/DATA/Temp_Data/{img_size}_images/"
     case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
     breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
     image_data = pd.read_csv(f'{export_location}/ImageData.csv')
     
-
+    
+    
     
     files_train, ids_train, labels_train, files_val, ids_val, labels_val = prepare_all_data(export_location, case_study_data, breast_data, image_data, 
                                                                                             cropped_images, img_size, min_bag_size, max_bag_size)
@@ -265,7 +303,6 @@ if __name__ == '__main__':
     
     
     
-    # Training loop
     for epoch in range(epoch_start, epochs):
         # Training phase
         bagmodel.train()
@@ -273,14 +310,51 @@ if __name__ == '__main__':
         total_acc = 0
         total = 0
         correct = 0
-        for (data, yb) in tqdm(train_dl, total=len(train_dl)): 
+        
+        for (data, yb) in tqdm(train_dl, total=len(train_dl)):
             xb, yb = data, yb.cuda()
             
+            n_batch = len(xb)  # Number of bags (samples) in the mini-batch
+
+            # 1. Divide each bag into N pseudo-bags
+            xb = [generate_pseudo_bags(bag, pseudo_size) for bag in xb]
+
+            new_idxs = torch.randperm(n_batch)
+            epsilon = 1e-5
+            lam = np.random.beta(alpha, alpha)
+            lam = np.clip(lam, epsilon, 1 - epsilon)
+            lam_discrete = int(lam * (pseudo_size + 1))
+            
+            # 2. Pseudo-bag-level Mixup
+            new_xb, new_yb = [], []
+            for i in range(n_batch):
+                masked_bag_A = select_pseudo_bags(xb[i], lam_discrete)
+                masked_bag_B = select_pseudo_bags(xb[new_idxs[i]], pseudo_size - lam_discrete)
+                
+                # Always perform mixup, but the ratio depends on lam_discrete
+                if lam_discrete == 0:
+                    mixed_bag = masked_bag_B
+                elif lam_discrete == pseudo_size:
+                    mixed_bag = masked_bag_A  
+                elif masked_bag_A.numel() == 0 and masked_bag_B.numel() == 0:
+                    print(f"Warning: Empty bag detected! lam: {lam_discrete}, pse-lam: {pseudo_size - lam_discrete}")
+                    continue
+                else:
+                    mixed_bag = torch.cat([masked_bag_A, masked_bag_B], dim=0)
+                
+                mix_ratio = lam_discrete / pseudo_size
+                new_xb.append(mixed_bag)
+                new_yb.append(mix_ratio * yb[i] + (1 - mix_ratio) * yb[new_idxs[i]])  # Fixed the index here
+
+            
+            new_yb = torch.tensor(new_yb).cuda()
+
+            # 3. Minibatch training
             optimizer.zero_grad()
             with autocast():
-                outputs = bagmodel(xb).squeeze(dim=1)
-                loss = loss_func(outputs, yb)
-
+                outputs = bagmodel(new_xb).squeeze(dim=1)
+                loss = loss_func(outputs, new_yb)
+            
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
@@ -304,10 +378,9 @@ if __name__ == '__main__':
         all_preds = []
         with torch.no_grad():
             for (data, yb) in tqdm(val_dl, total=len(val_dl)): 
-                xb, ids = data  
-                xb, ids, yb = xb.cuda(), ids.cuda(), yb.cuda()
-                
-                outputs = bagmodel((xb, ids)).squeeze(dim=1)
+                xb, yb = data, yb.cuda()
+
+                outputs = bagmodel(xb).squeeze(dim=1)
                 loss = loss_func(outputs, yb)
                 
                 total_val_loss += loss.item() * len(xb)
@@ -338,3 +411,5 @@ if __name__ == '__main__':
     
     # Save the model
     save_state()
+
+
