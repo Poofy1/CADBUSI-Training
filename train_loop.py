@@ -183,14 +183,13 @@ class EmbeddingBagModel(nn.Module):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'test1'
-    img_size = 256
+    model_name = 'Train-NoMixup'
+    img_size = 400
     batch_size = 5
     min_bag_size = 2
-    max_bag_size = 13
+    max_bag_size = 15
     epochs = 10000
     lr = 0.001
-    alpha = 0.4  # hyperparameter for the beta distribution
 
     # Paths
     export_location = 'D:/DATA/CASBUSI/exports/export_09_28_2023/'
