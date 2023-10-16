@@ -227,7 +227,7 @@ if __name__ == '__main__':
     epochs = 10000
     lr = 0.001
     alpha = 0.4  # hyperparameter for the beta distribution
-    pseudo_size = 5  # The number of pseudo-bags in each WSI bag
+    pseudo_size = 3  # The number of pseudo-bags in each WSI bag
 
     # Paths
     #export_location = 'D:/DATA/CASBUSI/exports/export_09_28_2023/'
