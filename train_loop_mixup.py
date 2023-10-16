@@ -221,12 +221,12 @@ if __name__ == '__main__':
     # Config
     model_name = 'Train1'
     img_size = 400
-    batch_size = 5
+    batch_size = 10
     min_bag_size = 2
     max_bag_size = 15
     epochs = 10000
     lr = 0.001
-    alpha = 0.5  # hyperparameter for the beta distribution
+    alpha = 0.4  # hyperparameter for the beta distribution
     pseudo_size = 5  # The number of pseudo-bags in each WSI bag
 
     # Paths
