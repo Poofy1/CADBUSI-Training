@@ -221,7 +221,7 @@ if __name__ == '__main__':
     # Config
     model_name = 'Train1'
     img_size = 400
-    batch_size = 10
+    batch_size = 5
     min_bag_size = 2
     max_bag_size = 15
     epochs = 10000
@@ -388,7 +388,7 @@ if __name__ == '__main__':
                 total += yb.size(0)
                 correct += predicted.eq(yb.squeeze()).sum().item()
                 
-                if epoch == epochs - 1 or (epoch + 1) % 20 == 0:
+                if epoch == epochs - 1 or (epoch + 1) % 10 == 0:
                     all_targs.extend(yb.cpu().numpy())
                     if len(predicted.size()) == 0:
                         predicted = predicted.view(1)
@@ -405,7 +405,7 @@ if __name__ == '__main__':
         print(f"Val     | {val_acc:.4f} | {val_loss:.4f}")
         
         # Save the model every x epochs
-        if (epoch + 1) % 20 == 0:
+        if (epoch + 1) % 10 == 0:
             save_state()
             print("Saved checkpoint")
     
