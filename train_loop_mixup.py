@@ -220,20 +220,20 @@ if __name__ == '__main__':
 
     # Config
     model_name = 'Train1'
-    img_size = 256
+    img_size = 400
     batch_size = 5
     min_bag_size = 2
-    max_bag_size = 13
+    max_bag_size = 15
     epochs = 10000
     lr = 0.001
-    alpha = 0.4  # hyperparameter for the beta distribution
+    alpha = 0.5  # hyperparameter for the beta distribution
     pseudo_size = 5  # The number of pseudo-bags in each WSI bag
 
     # Paths
-    export_location = 'D:/DATA/CASBUSI/exports/export_09_28_2023/'
-    cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
-    #export_location = '/home/paperspace/cadbusi-LFS/export_09_28_2023/'
-    #cropped_images = f"/home/paperspace/Temp_Data/{img_size}_images/"
+    #export_location = 'D:/DATA/CASBUSI/exports/export_09_28_2023/'
+    #cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
+    export_location = '/home/paperspace/cadbusi-LFS/export_09_28_2023/'
+    cropped_images = f"/home/paperspace/Temp_Data/{img_size}_images/"
     case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
     breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
     image_data = pd.read_csv(f'{export_location}/ImageData.csv')
@@ -344,7 +344,7 @@ if __name__ == '__main__':
                 
                 mix_ratio = lam_discrete / pseudo_size
                 new_xb.append(mixed_bag)
-                new_yb.append(mix_ratio * yb[i] + (1 - mix_ratio) * yb[new_idxs[i]])  # Fixed the index here
+                new_yb.append(mix_ratio * yb[i] + (1 - mix_ratio) * yb[new_idxs[i]]) 
 
             
             new_yb = torch.tensor(new_yb).cuda()
