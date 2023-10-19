@@ -219,9 +219,9 @@ def generate_pseudo_bags(X, N):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'Train1'
-    img_size = 400
-    batch_size = 5
+    model_name = 'test-mixup'
+    img_size = 256
+    batch_size = 10
     min_bag_size = 2
     max_bag_size = 15
     epochs = 10000
@@ -273,8 +273,7 @@ if __name__ == '__main__':
         
         
     optimizer = Adam(bagmodel.parameters(), lr=lr)
-    loss_func = nn.BCEWithLogitsLoss()
-    scaler = GradScaler()
+    loss_func = nn.BCELoss()
     train_losses_over_epochs = []
     valid_losses_over_epochs = []
     epoch_start = 0
@@ -350,19 +349,16 @@ if __name__ == '__main__':
             new_yb = torch.tensor(new_yb).cuda()
 
             # 3. Minibatch training
-            optimizer.zero_grad()
-            with autocast():
-                outputs = bagmodel(new_xb).squeeze(dim=1)
-                loss = loss_func(outputs, new_yb)
-            
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            outputs = bagmodel(new_xb).squeeze(dim=1)
+            loss = loss_func(outputs, new_yb)
 
-            total_loss += loss.item() * len(xb)
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item() * len(new_xb)
             predicted = torch.round(outputs).squeeze()
-            total += yb.size(0)
-            correct += predicted.eq(yb.squeeze()).sum().item()
+            total += new_yb.size(0)
+            correct += predicted.eq(new_yb.squeeze()).sum().item()
 
         train_loss = total_loss / total
         train_acc = correct / total

@@ -15,7 +15,7 @@ class ABMIL_aggregate(nn.Module):
         
         self.saliency_layer = nn.Sequential(        
             nn.Conv2d( self.nf, self.num_classes, (1,1), bias = False),
-            #nn.Sigmoid()
+            nn.Sigmoid()
         )
         
         self.attention_V = nn.Sequential(
