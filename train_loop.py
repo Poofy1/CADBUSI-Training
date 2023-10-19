@@ -183,12 +183,12 @@ class EmbeddingBagModel(nn.Module):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'Train-NoMixup'
-    img_size = 400
+    model_name = 'BCELoss'
+    img_size = 256
     batch_size = 5
     min_bag_size = 2
-    max_bag_size = 15
-    epochs = 10000
+    max_bag_size = 13
+    epochs = 20
     lr = 0.001
 
     # Paths
@@ -234,8 +234,7 @@ if __name__ == '__main__':
         
         
     optimizer = Adam(bagmodel.parameters(), lr=lr)
-    loss_func = nn.BCEWithLogitsLoss()
-    scaler = GradScaler()
+    loss_func = nn.BCELoss()
     train_losses_over_epochs = []
     valid_losses_over_epochs = []
     epoch_start = 0
@@ -276,13 +275,12 @@ if __name__ == '__main__':
             xb, yb = data, yb.cuda()
             
             optimizer.zero_grad()
-            with autocast():
-                outputs = bagmodel(xb).squeeze(dim=1)
-                loss = loss_func(outputs, yb)
+            
+            outputs = bagmodel(xb).squeeze(dim=1)
+            loss = loss_func(outputs, yb)
 
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            loss.backward()
+            optimizer.step()
 
             total_loss += loss.item() * len(xb)
             predicted = torch.round(outputs).squeeze()
@@ -313,7 +311,7 @@ if __name__ == '__main__':
                 total += yb.size(0)
                 correct += predicted.eq(yb.squeeze()).sum().item()
                 
-                if epoch == epochs - 1 or (epoch + 1) % 20 == 0:
+                if epoch == epochs - 1 or (epoch + 1) % 10 == 0:
                     all_targs.extend(yb.cpu().numpy())
                     if len(predicted.size()) == 0:
                         predicted = predicted.view(1)
@@ -330,7 +328,7 @@ if __name__ == '__main__':
         print(f"Val     | {val_acc:.4f} | {val_loss:.4f}")
         
         # Save the model every x epochs
-        if (epoch + 1) % 20 == 0:
+        if (epoch + 1) % 10 == 0:
             save_state()
             print("Saved checkpoint")
     
