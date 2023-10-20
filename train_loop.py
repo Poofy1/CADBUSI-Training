@@ -183,10 +183,10 @@ class EmbeddingBagModel(nn.Module):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'BCELoss'
+    model_name = 'test321423'
     img_size = 256
     batch_size = 5
-    min_bag_size = 2
+    min_bag_size = 4
     max_bag_size = 13
     epochs = 20
     lr = 0.001
@@ -278,6 +278,9 @@ if __name__ == '__main__':
             
             outputs = bagmodel(xb).squeeze(dim=1)
             loss = loss_func(outputs, yb)
+            
+            print(f"true: {yb}")
+            print(f"pred: {outputs}")
 
             loss.backward()
             optimizer.step()
