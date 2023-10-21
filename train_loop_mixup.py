@@ -181,7 +181,7 @@ class EmbeddingBagModel(nn.Module):
 
 
 
-def split_bag_fixed_size(x, sub_bag_size=3):
+def split_bag_fixed_size(x, sub_bag_size):
     """Split a bag into smaller bags with sub_bag_size images, filling the last sub-bag if necessary."""
     # Randomly shuffle the images
     indices = torch.randperm(x.size(0))
@@ -207,7 +207,7 @@ def split_bag_fixed_size(x, sub_bag_size=3):
 
     return sub_bags
 
-def mixup_subbags(x, y, alpha=1.0, sub_bag_size=3):
+def mixup_subbags(x, y, alpha, sub_bag_size=4):
     '''Returns mixed inputs, pairs of targets, and lambda'''
     if alpha > 0:
         lam = np.random.beta(alpha, alpha)
@@ -245,12 +245,13 @@ def mixup_subbags(x, y, alpha=1.0, sub_bag_size=3):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'test321423'
+    model_name = 'Mixup3'
     img_size = 256
     batch_size = 5
-    min_bag_size = 4
-    max_bag_size = 13
-    epochs = 20
+    min_bag_size = 3
+    max_bag_size = 15
+    epochs = 10000
+    alpha = .4
     lr = 0.001
 
     # Paths
@@ -273,7 +274,7 @@ if __name__ == '__main__':
     # Create datasets
     #dataset_train = TUD.Subset(BagOfImagesDataset( files_train, ids_train, labels_train),list(range(0,100)))
     #dataset_val = TUD.Subset(BagOfImagesDataset( files_val, ids_val, labels_val),list(range(0,100)))
-    dataset_train = BagOfImagesDataset(files_train, ids_train, labels_train)
+    dataset_train = BagOfImagesDataset(files_train, ids_train, labels_train, train=True)
     dataset_val = BagOfImagesDataset(files_val, ids_val, labels_val, train=False)
 
         
@@ -336,7 +337,7 @@ if __name__ == '__main__':
         for (data, yb) in tqdm(train_dl, total=len(train_dl)): 
             xb, yb = data, yb.cuda()
             
-            mixed_x, mixed_y, lam, index = mixup_subbags(xb, yb, alpha=1.0, sub_bag_size=3)
+            mixed_x, mixed_y, lam, index = mixup_subbags(xb, yb, alpha=alpha, sub_bag_size=3)
             
             optimizer.zero_grad()
             
