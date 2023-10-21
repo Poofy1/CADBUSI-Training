@@ -7,12 +7,12 @@ __pycache__/
 *.so
 
 # User-specific files
-#*.png
+*.png
 *.csv
 *.json
 *.ini
 *.zip
-#*.pth
+*.pth
 
 # Distribution / packaging
 .Python
