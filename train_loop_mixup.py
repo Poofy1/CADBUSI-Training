@@ -245,7 +245,7 @@ def mixup_subbags(x, y, alpha, sub_bag_size=4):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'Mixup3'
+    model_name = '10_28_Mixup'
     img_size = 256
     batch_size = 5
     min_bag_size = 3
@@ -255,7 +255,7 @@ if __name__ == '__main__':
     lr = 0.001
 
     # Paths
-    export_location = 'D:/DATA/CASBUSI/exports/export_09_28_2023/'
+    export_location = 'D:/DATA/CASBUSI/exports/export_10_28_2023/'
     cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
     #export_location = '/home/paperspace/cadbusi-LFS/export_09_28_2023/'
     #cropped_images = f"/home/paperspace/Temp_Data/{img_size}_images/"

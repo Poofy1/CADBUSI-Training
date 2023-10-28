@@ -119,16 +119,19 @@ def count_bag_labels(bag_labels):
     return positive_bag_count, negative_bag_count
 
 def process_single_image(row, root_dir, output_dir, resize_and_pad):
-    img_name = row['ImageName']
-    input_path = os.path.join(f'{root_dir}images/', img_name)
-    output_path = os.path.join(output_dir, img_name)
+    try:
+        img_name = row['ImageName']
+        input_path = os.path.join(f'{root_dir}images/', img_name)
+        output_path = os.path.join(output_dir, img_name)
 
-    if os.path.exists(output_path):  # Skip images that are already processed
-        return
+        if os.path.exists(output_path):  # Skip images that are already processed
+            return
 
-    image = Image.open(input_path)
-    image = resize_and_pad(image)
-    image.save(output_path)
+        image = Image.open(input_path)
+        image = resize_and_pad(image)
+        image.save(output_path)
+    except Exception as e:
+        print(f"Error processing image {img_name}: {e}")
 
 def preprocess_and_save_images(data, root_dir, output_dir, image_size, fill=0):
     if not os.path.exists(output_dir):

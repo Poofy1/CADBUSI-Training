@@ -183,7 +183,7 @@ class EmbeddingBagModel(nn.Module):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'NoMixup'
+    model_name = 'NoMixup2'
     img_size = 256
     batch_size = 5
     min_bag_size = 3
@@ -192,7 +192,7 @@ if __name__ == '__main__':
     lr = 0.001
 
     # Paths
-    export_location = 'D:/DATA/CASBUSI/exports/export_09_28_2023/'
+    export_location = 'D:/DATA/CASBUSI/exports/export_10_28_2023/'
     cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
     #export_location = '/home/paperspace/cadbusi-LFS/export_09_28_2023/'
     #cropped_images = f"/home/paperspace/Temp_Data/{img_size}_images/"
@@ -220,7 +220,7 @@ if __name__ == '__main__':
     val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
 
 
-    encoder = create_timm_body('resnet50')
+    encoder = create_timm_body('resnet18')
     nf = num_features_model( nn.Sequential(*encoder.children()))
     
     # bag aggregator
