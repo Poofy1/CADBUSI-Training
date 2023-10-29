@@ -265,7 +265,7 @@ if __name__ == '__main__':
     
 
     
-    files_train, ids_train, labels_train, files_val, ids_val, labels_val = prepare_all_data(export_location, case_study_data, breast_data, image_data, 
+    files_train, ids_train, labels_train, _, files_val, ids_val, labels_val, _ = prepare_all_data(export_location, case_study_data, breast_data, image_data, 
                                                                                             cropped_images, img_size, min_bag_size, max_bag_size)
 
 
