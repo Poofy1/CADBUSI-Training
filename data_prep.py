@@ -215,4 +215,6 @@ def prepare_all_data(export_location, case_study_data, breast_data, image_data, 
     print(f"Number of Malignant Bags: {malignant_count}")
     print(f"Number of Non-Malignant Bags: {non_malignant_count}")
     
-    return files_train, ids_train, labels_train, files_val, ids_val, labels_val
+    val_patient_ids_list = val_data['Patient_ID'].tolist()
+    train_patient_ids_list = val_data['Patient_ID'].tolist()
+    return files_train, ids_train, labels_train, train_patient_ids_list, files_val, ids_val, labels_val, val_patient_ids_list

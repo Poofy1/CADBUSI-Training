@@ -1,6 +1,6 @@
 import os
 from fastai.vision.all import *
-from torchvision import datasets
+from torch.nn.functional import binary_cross_entropy
 from model_ABMIL import *
 from train_loop import *
 from data_prep import *
@@ -25,16 +25,19 @@ def predict_on_test_set(model, test_dl):
     
     with torch.no_grad():
         for (data, yb) in tqdm(test_dl, total=len(test_dl)): 
-            xb, ids = data  
-            xb, ids, yb = xb.cuda(), ids.cuda(), yb.cuda()
-            
-            outputs = model((xb, ids)).squeeze(dim=1)
+            xb, yb = data, yb.cuda()
+
+            outputs = model(xb).squeeze(dim=1)
             
             # For the bag-level prediction, we can take the maximum prediction across images in the bag.
             bag_pred = torch.max(outputs).item()
             bag_predictions.append(bag_pred)
     
     return bag_predictions
+
+
+def compute_errors(predictions, true_labels):
+    return [binary_cross_entropy(torch.tensor([pred]), torch.tensor([label])).item() for pred, label in zip(predictions, true_labels)]
 
 
 def generate_test_filenames_from_folders(test_root_path):
@@ -55,14 +58,14 @@ def generate_test_filenames_from_folders(test_root_path):
     return bag_files, bag_ids
 
 # Config
-model_name = 'MixupTest2'
-encoder_arch = 'resnet50'
+model_name = 'NoMixup2'
+encoder_arch = 'resnet18'
 img_size = 256
-min_bag_size = 2
+min_bag_size = 3
 max_bag_size = 15
 
 # Paths
-export_location = 'D:/DATA/CASBUSI/exports/export_09_28_2023/'
+export_location = 'D:/DATA/CASBUSI/exports/export_10_28_2023/'
 case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
 breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
 image_data = pd.read_csv(f'{export_location}/ImageData.csv')
@@ -76,42 +79,26 @@ model = load_trained_model(model_path, encoder_arch)
 
 
 # Load test data
-_, _, _, files_val, ids_val, labels_val = prepare_all_data(export_location, case_study_data, breast_data, image_data, 
+_, _, _, _, files_val, ids_val, labels_val, val_patient_ids  = prepare_all_data(export_location, case_study_data, breast_data, image_data, 
                                                                                         cropped_images, img_size, min_bag_size, max_bag_size)
 
 
-# 1. Extract unique IDs
-unique_ids = np.unique(ids_val)
 
-# 2. Randomly select 5 of them
-selected_ids = np.random.choice(unique_ids, 5, replace=False)
-
-selected_files = []
-selected_ids_list = []
-selected_labels = []
-
-# 3. For each selected ID, extract the corresponding file paths and labels
-for idx, uid in enumerate(selected_ids):
-    mask = (np.array(ids_val) == uid)
-    
-    # For labels, directly append the label corresponding to the unique ID
-    selected_labels.append(labels_val[uid])
-    
-    # For files and IDs
-    selected_files.extend(list(np.array(files_val)[mask]))
-    
-    # Use idx instead of the actual id to ensure ids start from 0 and are contiguous
-    selected_ids_list.extend([idx] * sum(mask))
-
-selected_files = np.array(selected_files)
-selected_ids_list = np.array(selected_ids_list)
-selected_labels = np.array(selected_labels)
-
-# Now, create your dataset and dataloader using selected_files, selected_ids_list, and selected_labels
-dataset_val = BagOfImagesDataset(selected_files, selected_ids_list, selected_labels, train=False)
+dataset_val = BagOfImagesDataset(files_val, ids_val, labels_val, train=False)
 val_dl = TUD.DataLoader(dataset_val, batch_size=1, collate_fn=collate_custom, drop_last=True)
 
 # Make predictions on test set
 predictions = predict_on_test_set(model, val_dl)
 
-print(predictions)
+# Compute errors
+errors = compute_errors(predictions, labels_val)
+
+# Sort errors to get worst cases
+sorted_indices = np.argsort(errors)[::-1]  # Sorting in descending order
+
+# Display top N worst cases
+N = 25
+for i in range(N):
+    idx = sorted_indices[i]
+    patient_id = val_patient_ids[idx]
+    print(f"Patient_ID {patient_id} | Prediction: {round(predictions[idx], 4)} True Label: {labels_val[idx]}, Error: {round(errors[idx], 4)}")

@@ -91,7 +91,7 @@ class BagOfImagesDataset(TUD.Dataset):
 
 
 
-def save_state():
+def save_state(val_acc):
     # Save the model
     torch.save(bagmodel.state_dict(), model_path)
     torch.save(optimizer.state_dict(), optimizer_path)
@@ -101,8 +101,10 @@ def save_state():
         pickle.dump({
             'train_losses': train_losses_over_epochs,
             'valid_losses': valid_losses_over_epochs,
-            'epoch': epoch + 1  # Save the next epoch to start
+            'epoch': epoch + 1,  # Save the next epoch to start
+            'val_acc': val_acc  # Save the validation accuracy
         }, f)
+
 
     # Save the loss graph
     plot_loss(train_losses_over_epochs, valid_losses_over_epochs, f"{model_folder}/{model_name}_loss.png")
@@ -202,7 +204,7 @@ if __name__ == '__main__':
     
 
     
-    files_train, ids_train, labels_train, files_val, ids_val, labels_val = prepare_all_data(export_location, case_study_data, breast_data, image_data, 
+    files_train, ids_train, labels_train, _, files_val, ids_val, labels_val, _ = prepare_all_data(export_location, case_study_data, breast_data, image_data, 
                                                                                             cropped_images, img_size, min_bag_size, max_bag_size)
 
 
@@ -251,15 +253,16 @@ if __name__ == '__main__':
         optimizer.load_state_dict(torch.load(optimizer_path))
         print(f"Loaded pre-existing model from {model_name}")
         
-        # Get stat data
         with open(stats_path, 'rb') as f:
             saved_stats = pickle.load(f)
             train_losses_over_epochs = saved_stats['train_losses']
             valid_losses_over_epochs = saved_stats['valid_losses']
             epoch_start = saved_stats['epoch']
+            val_acc_best = saved_stats.get('val_acc', -1)  # If 'val_acc' does not exist, default to -1
     else:
         print(f"{model_name} does not exist, creating new instance")
         os.makedirs(model_folder, exist_ok=True)
+        val_acc_best = -1 
     
     
     
@@ -311,11 +314,11 @@ if __name__ == '__main__':
                 total += yb.size(0)
                 correct += predicted.eq(yb.squeeze()).sum().item()
                 
-                if epoch == epochs - 1 or (epoch + 1) % 10 == 0:
-                    all_targs.extend(yb.cpu().numpy())
-                    if len(predicted.size()) == 0:
-                        predicted = predicted.view(1)
-                    all_preds.extend(predicted.cpu().detach().numpy())
+                # Confusion Matrix data
+                all_targs.extend(yb.cpu().numpy())
+                if len(predicted.size()) == 0:
+                    predicted = predicted.view(1)
+                all_preds.extend(predicted.cpu().detach().numpy())
 
         val_loss = total_val_loss / total
         val_acc = correct / total
@@ -327,10 +330,11 @@ if __name__ == '__main__':
         print(f"Train   | {train_acc:.4f} | {train_loss:.4f}")
         print(f"Val     | {val_acc:.4f} | {val_loss:.4f}")
         
-        # Save the model every x epochs
-        if (epoch + 1) % 10 == 0:
-            save_state()
-            print("Saved checkpoint")
-    
+        # Save the model
+        if val_acc > val_acc_best:
+            val_acc_best = val_acc  # Update the best validation accuracy
+            save_state(val_acc)
+            print("Saved checkpoint due to improved val_acc")
+            
     # Save the model
     save_state()
