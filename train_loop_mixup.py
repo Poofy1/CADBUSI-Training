@@ -51,15 +51,15 @@ class BagOfImagesDataset(TUD.Dataset):
         return len(torch.unique(self.ids))
     
     def __getitem__(self, index):
-        where_id = (self.ids == index).cpu().numpy()
+        actual_id = self.ids[index].item() 
+        where_id = (self.ids == actual_id).cpu().numpy() 
         files_this_bag = self.filenames[where_id]
         data = torch.stack([
             self.tsfms(Image.open(fn).convert("RGB")) for fn in files_this_bag
         ]).cuda()
-
         labels = self.labels[index]
-
-        return data, labels
+        
+        return data, labels, actual_id
 
     def show_image(self, index, img_index=0):
         # Get the transformed image tensor and label
@@ -86,7 +86,6 @@ class BagOfImagesDataset(TUD.Dataset):
     
     def n_features(self):
         return self.data.size(1)
-
 
 
 
@@ -124,20 +123,21 @@ def create_timm_body(arch:str, pretrained=True, cut=None, n_in=3):
     elif callable(cut): return cut(model)
     else: raise NameError("cut must be either integer or function")
 
-
 def collate_custom(batch):
-    batch_data = []  # List to store bags (which are themselves lists of images)
-    batch_labels = []  # List to store labels corresponding to each bag
+    batch_data = []
+    batch_labels = []
+    batch_ids = []  # List to store bag IDs
 
     for sample in batch:
-        image_data, label = sample
-        batch_data.append(image_data)  # Append the list of images for this bag
-        batch_labels.append(label)  # Append the label for this bag
+        image_data, label, bag_id = sample
+        batch_data.append(image_data)
+        batch_labels.append(label)
+        batch_ids.append(bag_id)  # Append the bag ID
 
-    out_labels = torch.tensor(batch_labels).cuda()  # Convert labels to a tensor
+    out_labels = torch.tensor(batch_labels).cuda()
+    out_ids = torch.tensor(batch_ids).cuda()  # Convert bag IDs to a tensor
     
-    return batch_data, out_labels  # batch_data is a list of lists, out_labels is a tensor
-
+    return batch_data, out_labels, out_ids
 
 class EmbeddingBagModel(nn.Module):
     
@@ -265,7 +265,7 @@ if __name__ == '__main__':
     
 
     
-    files_train, ids_train, labels_train, _, files_val, ids_val, labels_val, _ = prepare_all_data(export_location, case_study_data, breast_data, image_data, 
+    files_train, ids_train, labels_train, files_val, ids_val, labels_val = prepare_all_data(export_location, case_study_data, breast_data, image_data, 
                                                                                             cropped_images, img_size, min_bag_size, max_bag_size)
 
 
@@ -334,7 +334,7 @@ if __name__ == '__main__':
         total_acc = 0
         total = 0
         correct = 0
-        for (data, yb) in tqdm(train_dl, total=len(train_dl)): 
+        for (data, yb, _) in tqdm(train_dl, total=len(train_dl)): 
             xb, yb = data, yb.cuda()
             
             mixed_x, mixed_y, lam, index = mixup_subbags(xb, yb, alpha=alpha, sub_bag_size=3)
@@ -376,7 +376,7 @@ if __name__ == '__main__':
         all_targs = []
         all_preds = []
         with torch.no_grad():
-            for (data, yb) in tqdm(val_dl, total=len(val_dl)): 
+            for (data, yb, _) in tqdm(val_dl, total=len(val_dl)): 
                 xb, yb = data, yb.cuda()
 
 

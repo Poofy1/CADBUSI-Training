@@ -77,7 +77,6 @@ def create_bags(data, min_size, max_size, root_dir):
     bag_files = []
     bag_labels = []
     bag_ids = []
-    id = 0  # initialize bag id
 
     for patient_id in tqdm(unique_patient_ids):
         patient_data = data[data['Accession_Number'] == patient_id]
@@ -97,11 +96,10 @@ def create_bags(data, min_size, max_size, root_dir):
 
         bag_files.append(np.array(bag_file))  # convert to numpy array and append to bag_files
         bag_labels.append(np.array(bag_label))  # convert to numpy array and append to bag_labels
-        bag_ids.append(id * np.ones(len(bag_file), dtype=int))  # create id array and append to bag_ids
-
-        id += 1  # increment bag id for the next bag
+        bag_ids.append(np.full(len(bag_file), patient_id, dtype=int))  # use original accession_number as the bag id
 
     return bag_files, bag_labels, bag_ids
+
 
 
 
@@ -214,7 +212,5 @@ def prepare_all_data(export_location, case_study_data, breast_data, image_data, 
     malignant_count, non_malignant_count = count_bag_labels(labels_train)
     print(f"Number of Malignant Bags: {malignant_count}")
     print(f"Number of Non-Malignant Bags: {non_malignant_count}")
-    
-    val_patient_ids_list = val_data['Patient_ID'].tolist()
-    train_patient_ids_list = train_data['Patient_ID'].tolist()
-    return files_train, ids_train, labels_train, train_patient_ids_list, files_val, ids_val, labels_val, val_patient_ids_list
+
+    return files_train, ids_train, labels_train, files_val, ids_val, labels_val
