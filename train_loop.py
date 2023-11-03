@@ -4,116 +4,14 @@ from fastai.vision.all import *
 import torch.utils.data as TUD
 from fastai.vision.learner import _update_first_layer
 from tqdm import tqdm
-import torchvision.transforms as T
-from PIL import Image
-from torch import from_numpy
 from torch import nn
-from torch.cuda.amp import autocast, GradScaler
 from training_eval import *
 from torch.optim import Adam
 from data_prep import *
 from model_ABMIL import *
 from model_TransMIL import *
-import torchvision.transforms.functional as TF
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
-
-
-class BagOfImagesDataset(TUD.Dataset):
-
-    def __init__(self, filenames, ids, labels, train=True):
-        self.filenames = filenames
-        self.labels = from_numpy(labels)
-        self.ids = from_numpy(ids)
-        self.unique_bag_ids = torch.unique(self.ids).tolist()
-        self.train = train
-    
-        # Normalize
-        if train:
-            self.tsfms = T.Compose([
-                T.RandomVerticalFlip(),
-                T.RandomHorizontalFlip(),
-                T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
-                T.RandomAffine(
-                    degrees=(-20, 20),  # Random rotation between -10 and 10 degrees
-                    translate=(0.05, 0.05),  # Slight translation
-                    scale=(0.95, 1.05),  # Slight scaling
-                ),
-                T.ToTensor(),
-                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
-        else:
-            self.tsfms = T.Compose([
-                T.ToTensor(),
-                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
-
-    def __len__(self):
-        return len(torch.unique(self.ids))
-    
-    def __getitem__(self, index):
-        actual_id = self.unique_bag_ids[index]
-        where_id = (self.ids == actual_id).cpu().numpy() 
-        files_this_bag = self.filenames[where_id]
-        data = torch.stack([
-            self.tsfms(Image.open(fn).convert("RGB")) for fn in files_this_bag
-        ]).cuda()
-        labels = self.labels[index]
-        
-        return data, labels, actual_id
-    
-
-    def show_image(self, index, img_index=0):
-        # Get the transformed image tensor and label
-        data, labels = self.__getitem__(index)
-
-        # Select the specified image from the bag
-        img_tensor = data[img_index]
-
-        # If the images were normalized, reverse the normalization
-        if self.normalize:
-            mean = torch.tensor([0.485, 0.456, 0.406]).to(img_tensor.device)
-            std = torch.tensor([0.229, 0.224, 0.225]).to(img_tensor.device)
-            img_tensor = img_tensor * std[:, None, None] + mean[:, None, None]  # Unnormalize
-
-        # Convert the image tensor to a PIL Image
-        img = TF.to_pil_image(img_tensor.cpu())
-
-        # Display the image and label
-        plt.imshow(img)
-        plt.title(f'Label: {labels}')
-        plt.axis('off')  # Hide the axis
-        plt.show()
-
-    
-    def n_features(self):
-        return self.data.size(1)
-
-
-
-
-
-def save_state(val_acc):
-    # Save the model
-    torch.save(bagmodel.state_dict(), model_path)
-    torch.save(optimizer.state_dict(), optimizer_path)
-    
-    # Save stats
-    with open(stats_path, 'wb') as f:
-        pickle.dump({
-            'train_losses': train_losses_over_epochs,
-            'valid_losses': valid_losses_over_epochs,
-            'epoch': epoch + 1,  # Save the next epoch to start
-            'val_acc': val_acc  # Save the validation accuracy
-        }, f)
-
-
-    # Save the loss graph
-    plot_loss(train_losses_over_epochs, valid_losses_over_epochs, f"{model_folder}/{model_name}_loss.png")
-    
-    # Save the confusion matrix
-    vocab = ['not malignant', 'malignant']  # Replace with your actual vocab
-    plot_Confusion(all_targs, all_preds, vocab, f"{model_folder}/{model_name}_confusion.png")
 
 
 # this function is used to cut off the head of a pretrained timm model and return the body
@@ -189,16 +87,16 @@ class EmbeddingBagModel(nn.Module):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'NoMixup4'
+    model_name = 'testing'
     img_size = 350
     batch_size = 5
     min_bag_size = 3
     max_bag_size = 15
-    epochs = 100
+    epochs = 500
     lr = 0.001
 
     # Paths
-    export_location = 'D:/DATA/CASBUSI/exports/export_10_28_2023/'
+    export_location = 'D:/DATA/CASBUSI/exports/export_10_31_2023/'
     cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
     #export_location = '/home/paperspace/cadbusi-LFS/export_09_28_2023/'
     #cropped_images = f"/home/paperspace/Temp_Data/{img_size}_images/"
@@ -215,10 +113,10 @@ if __name__ == '__main__':
 
     print("Training Data...")
     # Create datasets
-    #dataset_train = TUD.Subset(BagOfImagesDataset( files_train, ids_train, labels_train),list(range(0,100)))
-    #dataset_val = TUD.Subset(BagOfImagesDataset( files_val, ids_val, labels_val),list(range(0,100)))
-    dataset_train = BagOfImagesDataset(files_train, ids_train, labels_train)
-    dataset_val = BagOfImagesDataset(files_val, ids_val, labels_val, train=False)
+    dataset_train = TUD.Subset(BagOfImagesDataset( files_train, ids_train, labels_train),list(range(0,100)))
+    dataset_val = TUD.Subset(BagOfImagesDataset( files_val, ids_val, labels_val),list(range(0,100)))
+    #dataset_train = BagOfImagesDataset(files_train, ids_train, labels_train, save_processed=False)
+    #dataset_val = BagOfImagesDataset(files_val, ids_val, labels_val, train=False)
 
             
     # Create data loaders
@@ -226,7 +124,7 @@ if __name__ == '__main__':
     val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
 
 
-    encoder = create_timm_body('resnet18')
+    encoder = create_timm_body('resnet34')
     nf = num_features_model( nn.Sequential(*encoder.children()))
     
     # bag aggregator
@@ -337,8 +235,5 @@ if __name__ == '__main__':
         # Save the model
         if val_acc > val_acc_best:
             val_acc_best = val_acc  # Update the best validation accuracy
-            save_state(val_acc)
+            save_state(epoch, train_acc, val_acc, model_folder, model_name, bagmodel, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs)
             print("Saved checkpoint due to improved val_acc")
-            
-    # Save the model
-    save_state()
