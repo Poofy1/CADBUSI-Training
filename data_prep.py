@@ -1,12 +1,95 @@
 import os
 from PIL import Image
 from torchvision import transforms
+from fastai.vision.all import *
+import torch.utils.data as TUD
+import torchvision.transforms.functional as TF
 from tqdm import tqdm
+import torchvision.transforms as T
 import numpy as np
+from torch import from_numpy
 import pandas as pd
-from sklearn.utils import resample
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from itertools import cycle
+env = os.path.dirname(os.path.abspath(__file__))
+
+
+class GaussianNoise(object):
+    def __init__(self, mean=0., std=0.1):
+        self.mean = mean
+        self.std = std
+
+    def __call__(self, tensor):
+        noise = torch.randn(tensor.size()).mul_(self.std).add_(self.mean)
+        return tensor.add_(noise)
+
+
+
+class BagOfImagesDataset(TUD.Dataset):
+
+    def __init__(self, filenames, ids, labels, train=True, save_processed=False):
+        self.filenames = filenames
+        self.labels = from_numpy(labels)
+        self.ids = from_numpy(ids)
+        self.unique_bag_ids = torch.unique(self.ids).tolist()
+        self.save_processed = save_processed
+        self.train = train
+    
+        # Normalize
+        if train:
+            self.tsfms = T.Compose([
+                T.RandomVerticalFlip(),
+                T.RandomHorizontalFlip(),
+                T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+                T.RandomAffine(
+                    degrees=(-45, 45),  # Rotation
+                    translate=(0.1, 0.1),  # Translation
+                    scale=(1, 1.2),  # Scaling
+                ),
+                T.ToTensor(),
+                #GaussianNoise(mean=0, std=0.025),  # Add slight noise
+                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
+        else:
+            self.tsfms = T.Compose([
+                T.ToTensor(),
+                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
+
+    def __len__(self):
+        return len(torch.unique(self.ids))
+    
+    def __getitem__(self, index):
+        actual_id = self.unique_bag_ids[index]
+        where_id = (self.ids == actual_id).cpu().numpy() 
+        files_this_bag = self.filenames[where_id]
+        data = torch.stack([
+            self.tsfms(Image.open(fn).convert("RGB")) for fn in files_this_bag
+        ]).cuda()
+        labels = self.labels[index]
+        
+        if self.save_processed:
+            save_folder = f'{env}/processed_images'  
+            os.makedirs(save_folder, exist_ok=True)
+            for idx, img_tensor in enumerate(data):
+                img_tensor = self.unnormalize(img_tensor)  # Unnormalize before saving
+                img_save_path = os.path.join(save_folder, f'bag_{actual_id}_img_{idx}.jpg')
+                img = TF.to_pil_image(img_tensor.cpu())
+                img.save(img_save_path)
+        
+        return data, labels, actual_id
+    
+    def unnormalize(self, tensor):
+        mean = torch.tensor([0.485, 0.456, 0.406]).view(-1, 1, 1).to(tensor.device)
+        std = torch.tensor([0.229, 0.224, 0.225]).view(-1, 1, 1).to(tensor.device)
+        tensor = tensor * std + mean  # unnormalize
+        return torch.clamp(tensor, 0, 1)
+    
+    
+    def n_features(self):
+        return self.data.size(1)
+
+
 
 
 def filter_raw_data(breast_data, image_data):
