@@ -87,9 +87,9 @@ class EmbeddingBagModel(nn.Module):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'testing'
+    model_name = 'NoMixup6'
     img_size = 350
-    batch_size = 5
+    batch_size = 3
     min_bag_size = 3
     max_bag_size = 15
     epochs = 500
@@ -113,10 +113,10 @@ if __name__ == '__main__':
 
     print("Training Data...")
     # Create datasets
-    dataset_train = TUD.Subset(BagOfImagesDataset( files_train, ids_train, labels_train),list(range(0,100)))
-    dataset_val = TUD.Subset(BagOfImagesDataset( files_val, ids_val, labels_val),list(range(0,100)))
-    #dataset_train = BagOfImagesDataset(files_train, ids_train, labels_train, save_processed=False)
-    #dataset_val = BagOfImagesDataset(files_val, ids_val, labels_val, train=False)
+    #dataset_train = TUD.Subset(BagOfImagesDataset( files_train, ids_train, labels_train),list(range(0,100)))
+    #dataset_val = TUD.Subset(BagOfImagesDataset( files_val, ids_val, labels_val),list(range(0,100)))
+    dataset_train = BagOfImagesDataset(files_train, ids_train, labels_train, save_processed=False)
+    dataset_val = BagOfImagesDataset(files_val, ids_val, labels_val, train=False)
 
             
     # Create data loaders
@@ -124,7 +124,7 @@ if __name__ == '__main__':
     val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
 
 
-    encoder = create_timm_body('resnet34')
+    encoder = create_timm_body('resnet50')
     nf = num_features_model( nn.Sequential(*encoder.children()))
     
     # bag aggregator
