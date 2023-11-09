@@ -89,11 +89,15 @@ def generate_pseudo_labels(attention_scores):
     Normalization ensures that the attention scores sum up to 1 for each bag, 
     representing a probability distribution over instances.
     """
+    print(attention_scores)
+    
     pseudo_labels = []
     for bag_attention in attention_scores:
         # Normalize the attention scores to sum to 1 for each bag
         pseudo_labels_bag = bag_attention / bag_attention.sum()
         pseudo_labels.append(pseudo_labels_bag)
+        
+    print(pseudo_labels)
     return torch.cat(pseudo_labels, dim=0)
 
 def supervised_contrastive_loss(features, labels, temperature=0.07):
@@ -124,7 +128,7 @@ def supervised_contrastive_loss(features, labels, temperature=0.07):
 
     # Mask-out self-similarities (diagonal elements)
     logits_mask = torch.scatter(
-        torch.ones_like(mask),
+        torch.ones_like(similarity_matrix),
         1,
         torch.arange(batch_size).view(-1, 1).to(device),
         0
@@ -329,9 +333,13 @@ if __name__ == '__main__':
                 param.requires_grad = True
 
             # Iterate over the training data
-            for (data, yb, _) in tqdm(train_dl, total=len(train_dl)): 
-                xb, yb = data, yb.cuda()
+            for (data, _, _) in tqdm(train_dl, total=len(train_dl)):
+                xb = data
                 optimizer.zero_grad()
+
+                # Generate pseudo labels from attention scores
+                logits, features, attention_scores = bagmodel(xb)
+                pseudo_labels = generate_pseudo_labels(attention_scores)
 
                 # Forward pass through the encoder only
                 outputs = encoder(torch.cat(xb, dim=0))
@@ -346,14 +354,14 @@ if __name__ == '__main__':
                 # Initialize a list to hold losses for each bag
                 losses = []
 
-                # Iterate over each bag's features and corresponding labels
-                for bag_features, bag_labels in zip(features_per_bag, yb):
-                    # Ensure bag_features is on the same device as labels
+                # Iterate over each bag's features and corresponding pseudo labels
+                for bag_features, bag_pseudo_labels in zip(features_per_bag, pseudo_labels.split(split_sizes)):
+                    # Ensure bag_features and bag_pseudo_labels are on the same device
                     bag_features = bag_features.to(device)
-                    bag_labels = bag_labels.to(device)
+                    bag_pseudo_labels = bag_pseudo_labels.to(device)
 
                     # Compute the loss for the current bag
-                    bag_loss = supervised_contrastive_loss(bag_features, bag_labels)
+                    bag_loss = supervised_contrastive_loss(bag_features, bag_pseudo_labels)
 
                     # Store the loss
                     losses.append(bag_loss)
@@ -365,8 +373,8 @@ if __name__ == '__main__':
                 total_loss.backward()
                 optimizer.step()
 
-            # After the contrastive update, remember to unfreeze the aggregator and freeze the encoder
+            # After the contrastive update, unfreeze the aggregator and encoder
             for param in aggregator.parameters():
                 param.requires_grad = True
             for param in encoder.parameters():
-                param.requires_grad = False
+                param.requires_grad = True

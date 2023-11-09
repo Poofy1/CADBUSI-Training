@@ -12,6 +12,7 @@ from model_ABMIL import *
 from model_TransMIL import *
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
+os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 
 
 # this function is used to cut off the head of a pretrained timm model and return the body
@@ -43,6 +44,8 @@ def collate_custom(batch):
     
     return batch_data, out_labels, out_ids
 
+
+
 class EmbeddingBagModel(nn.Module):
     
     def __init__(self, encoder, aggregator, num_classes=1):
@@ -50,8 +53,7 @@ class EmbeddingBagModel(nn.Module):
         self.encoder = encoder
         self.aggregator = aggregator
         self.num_classes = num_classes
-                    
-                
+
     def forward(self, input):
         num_bags = len(input) # input = [bag #, image #, channel, height, width]
         
@@ -60,21 +62,16 @@ class EmbeddingBagModel(nn.Module):
         
         # Calculate the embeddings for all images in one go
         h_all = self.encoder(all_images)
-        h_all = h_all.view(h_all.size(0), -1, h_all.size(1))
         
         # Split the embeddings back into per-bag embeddings
         split_sizes = [bag.size(0) for bag in input]
         h_per_bag = torch.split(h_all, split_sizes, dim=0)
-        
         logits = torch.empty(num_bags, self.num_classes).cuda()
         saliency_maps, yhat_instances, attention_scores = [], [], []
         
         for i, h in enumerate(h_per_bag):
-            # Ensure that h_bag has a first dimension of 1 before passing it to the aggregator
-            h_bag = h.unsqueeze(0)
-            
             # Receive four values from the aggregator
-            yhat_bag, sm, yhat_ins, att_sc = self.aggregator(h_bag)
+            yhat_bag, sm, yhat_ins, att_sc = self.aggregator(h)
             
             logits[i] = yhat_bag
             saliency_maps.append(sm)
@@ -87,9 +84,9 @@ class EmbeddingBagModel(nn.Module):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'NoMixup6'
+    model_name = 'NoMixup7'
     img_size = 350
-    batch_size = 3
+    batch_size = 5
     min_bag_size = 3
     max_bag_size = 15
     epochs = 500
@@ -104,32 +101,27 @@ if __name__ == '__main__':
     breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
     image_data = pd.read_csv(f'{export_location}/ImageData.csv')
     
-
     
-    files_train, ids_train, labels_train, files_val, ids_val, labels_val = prepare_all_data(export_location, case_study_data, breast_data, image_data, 
-                                                                                            cropped_images, img_size, min_bag_size, max_bag_size)
-
+    bags_train, bags_val = prepare_all_data(export_location, case_study_data, breast_data, image_data, cropped_images, img_size, min_bag_size, max_bag_size)
 
 
     print("Training Data...")
     # Create datasets
     #dataset_train = TUD.Subset(BagOfImagesDataset( files_train, ids_train, labels_train),list(range(0,100)))
     #dataset_val = TUD.Subset(BagOfImagesDataset( files_val, ids_val, labels_val),list(range(0,100)))
-    dataset_train = BagOfImagesDataset(files_train, ids_train, labels_train, save_processed=False)
-    dataset_val = BagOfImagesDataset(files_val, ids_val, labels_val, train=False)
+    dataset_train = BagOfImagesDataset(bags_train, save_processed=False)
+    dataset_val = BagOfImagesDataset(bags_val, train=False)
 
             
     # Create data loaders
     train_dl =  TUD.DataLoader(dataset_train, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
     val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
 
-
-    encoder = create_timm_body('resnet50')
+    encoder = create_timm_body('resnet18')
     nf = num_features_model( nn.Sequential(*encoder.children()))
     
     # bag aggregator
     aggregator = ABMIL_aggregate( nf = nf, num_classes = 1, pool_patches = 3, L = 128)
-    #aggregator = TransMIL(dim_in=nf, dim_hid=512, n_classes=1)
 
     # total model
     bagmodel = EmbeddingBagModel(encoder, aggregator).cuda()
@@ -182,6 +174,8 @@ if __name__ == '__main__':
             optimizer.zero_grad()
             
             outputs = bagmodel(xb).squeeze(dim=1)
+            #print(yb)
+            #print(outputs)
             loss = loss_func(outputs, yb)
 
             loss.backward()
