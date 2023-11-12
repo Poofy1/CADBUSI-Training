@@ -161,7 +161,7 @@ def create_bags(data, min_size, max_size, root_dir):
         # Add to dictionary
         bags_dict[patient_id] = [bag_label, bag_files]
 
-    return bags_dict
+    return bags_dict # bag_id : [label, [image_files]]
 
 
 
