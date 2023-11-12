@@ -60,21 +60,18 @@ class EmbeddingBagModel(nn.Module):
         
         # Calculate the embeddings for all images in one go
         h_all = self.encoder(all_images)
-        h_all = h_all.view(h_all.size(0), -1, h_all.size(1))
+
         
         # Split the embeddings back into per-bag embeddings
         split_sizes = [bag.size(0) for bag in input]
         h_per_bag = torch.split(h_all, split_sizes, dim=0)
-        
         logits = torch.empty(num_bags, self.num_classes).cuda()
         saliency_maps, yhat_instances, attention_scores = [], [], []
         
         for i, h in enumerate(h_per_bag):
-            # Ensure that h_bag has a first dimension of 1 before passing it to the aggregator
-            h_bag = h.unsqueeze(0)
             
             # Receive four values from the aggregator
-            yhat_bag, sm, yhat_ins, att_sc = self.aggregator(h_bag)
+            yhat_bag, sm, yhat_ins, att_sc = self.aggregator(h)
             
             logits[i] = yhat_bag
             saliency_maps.append(sm)
@@ -149,9 +146,9 @@ def mixup_subbags(x, y, alpha, sub_bag_size=4):
 if __name__ == '__main__':
 
     # Config
-    model_name = '10_28_Mixup'
-    img_size = 256
-    batch_size = 5
+    model_name = 'Mixup_11_12_23'
+    img_size = 350
+    batch_size = 3
     min_bag_size = 3
     max_bag_size = 15
     epochs = 10000
@@ -159,7 +156,7 @@ if __name__ == '__main__':
     lr = 0.001
 
     # Paths
-    export_location = 'D:/DATA/CASBUSI/exports/export_10_28_2023/'
+    export_location = 'D:/DATA/CASBUSI/exports/export_11_11_2023/'
     cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
     #export_location = '/home/paperspace/cadbusi-LFS/export_09_28_2023/'
     #cropped_images = f"/home/paperspace/Temp_Data/{img_size}_images/"
@@ -169,17 +166,16 @@ if __name__ == '__main__':
     
 
     
-    files_train, ids_train, labels_train, files_val, ids_val, labels_val = prepare_all_data(export_location, case_study_data, breast_data, image_data, 
-                                                                                            cropped_images, img_size, min_bag_size, max_bag_size)
-
+    bags_train, bags_val = prepare_all_data(export_location, case_study_data, breast_data, image_data, cropped_images, img_size, min_bag_size, max_bag_size)
 
 
     print("Training Data...")
     # Create datasets
     #dataset_train = TUD.Subset(BagOfImagesDataset( files_train, ids_train, labels_train),list(range(0,100)))
     #dataset_val = TUD.Subset(BagOfImagesDataset( files_val, ids_val, labels_val),list(range(0,100)))
-    dataset_train = BagOfImagesDataset(files_train, ids_train, labels_train, train=True)
-    dataset_val = BagOfImagesDataset(files_val, ids_val, labels_val, train=False)
+    dataset_train = BagOfImagesDataset(bags_train, save_processed=False)
+    dataset_val = BagOfImagesDataset(bags_val, train=False)
+
 
         
     # Create data loaders
@@ -218,15 +214,16 @@ if __name__ == '__main__':
         optimizer.load_state_dict(torch.load(optimizer_path))
         print(f"Loaded pre-existing model from {model_name}")
         
-        # Get stat data
         with open(stats_path, 'rb') as f:
             saved_stats = pickle.load(f)
             train_losses_over_epochs = saved_stats['train_losses']
             valid_losses_over_epochs = saved_stats['valid_losses']
             epoch_start = saved_stats['epoch']
+            val_acc_best = saved_stats.get('val_acc', -1)  # If 'val_acc' does not exist, default to -1
     else:
         print(f"{model_name} does not exist, creating new instance")
         os.makedirs(model_folder, exist_ok=True)
+        val_acc_best = -1 
     
     
     
@@ -308,10 +305,8 @@ if __name__ == '__main__':
         print(f"Train   | {train_acc:.4f} | {train_loss:.4f}")
         print(f"Val     | {val_acc:.4f} | {val_loss:.4f}")
         
-        # Save the model every x epochs
-        if (epoch + 1) % 10 == 0:
-            save_state()
-            print("Saved checkpoint")
-    
-    # Save the model
-    save_state()
+        # Save the model
+        if val_acc > val_acc_best:
+            val_acc_best = val_acc  # Update the best validation accuracy
+            save_state(epoch, train_acc, val_acc, model_folder, model_name, bagmodel, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs)
+            print("Saved checkpoint due to improved val_acc")
