@@ -8,6 +8,7 @@ from tqdm import tqdm
 import torchvision.transforms as T
 import numpy as np
 import cv2
+from PIL import ImageOps
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from sklearn.utils import resample
@@ -56,6 +57,32 @@ class ResizeAndPad:
         return img
     
     
+    
+class ResizeAndStretch:
+    def __init__(self, output_size, fill=0):
+        assert isinstance(output_size, int)
+        self.output_size = output_size
+        self.fill = fill
+
+    def __call__(self, img):
+        w, h = img.size
+
+        # Determine which dimension (width or height) is smaller
+        if w < h:  # Width is smaller
+            stretched_w = self.output_size
+            stretched_h = int(h * (stretched_w / w))
+        else:  # Height is smaller
+            stretched_h = self.output_size
+            stretched_w = int(w * (stretched_h / h))
+
+        # Stretch the image
+        img = img.resize((stretched_w, stretched_h), Image.ANTIALIAS)
+
+        # Final resize to ensure the image is output_size x output_size
+        img = img.resize((self.output_size, self.output_size), Image.ANTIALIAS)
+
+        return img
+    
 class HistogramEqualization(object):
     def __call__(self, image):
         # Must be a PIL Image
@@ -94,15 +121,11 @@ class BagOfImagesDataset(TUD.Dataset):
             self.tsfms = T.Compose([
                 T.RandomVerticalFlip(),
                 T.RandomHorizontalFlip(),
-                T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
-                T.RandomAffine(
-                    degrees=(-45, 45),  # Rotation
-                    translate=(0.05, 0.05),  # Translation
-                    scale=(1, 1.2),  # Scaling
-                ),
+                #T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
+                T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
                 HistogramEqualization(),
                 T.ToTensor(),
-                GaussianNoise(mean=0, std=0.015),  # Add slight noise
+                #GaussianNoise(mean=0, std=0.015),  # Add slight noise
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
         else:
@@ -127,7 +150,7 @@ class BagOfImagesDataset(TUD.Dataset):
             save_folder = os.path.join(env, 'processed_images')  
             os.makedirs(save_folder, exist_ok=True)
             for idx, img_tensor in enumerate(data):
-                img_save_path = os.path.join(save_folder, f'bag_{actual_id}_img_{idx}.jpg')
+                img_save_path = os.path.join(save_folder, f'bag_{actual_id}_img_{idx}.png')
                 img_tensor = unnormalize(img_tensor)
                 img = TF.to_pil_image(img_tensor.cpu().detach())
                 img.save(img_save_path)
@@ -221,7 +244,7 @@ def preprocess_and_save_images(data, root_dir, output_dir, image_size, fill=0):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    resize_and_pad = ResizeAndPad(image_size, fill)
+    resize_and_pad = ResizeAndStretch(image_size, fill=fill)
     data_rows = [row for _, row in data.iterrows()]  # Convert the DataFrame to a list of rows
 
     with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
