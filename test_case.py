@@ -130,7 +130,7 @@ encoder_arch = 'resnet50'
 img_size = 325
 min_bag_size = 3
 max_bag_size = 13
-export_location = 'D:/DATA/CASBUSI/exports/export_10_28_2023/'
+export_location = 'D:/DATA/CASBUSI/exports/export_11_11_2023/'
 
 # Paths
 case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')

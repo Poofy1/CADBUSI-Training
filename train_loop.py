@@ -84,10 +84,10 @@ class EmbeddingBagModel(nn.Module):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'test'
-    img_size = 325
-    batch_size = 3
-    min_bag_size = 3
+    model_name = 'NoMixup_11_14_2'
+    img_size = 350
+    batch_size = 5
+    min_bag_size = 2
     max_bag_size = 15
     epochs = 500
     lr = 0.001
@@ -117,7 +117,7 @@ if __name__ == '__main__':
     train_dl =  TUD.DataLoader(dataset_train, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
     val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
 
-    encoder = create_timm_body('resnet34')
+    encoder = create_timm_body('resnet18')
     nf = num_features_model( nn.Sequential(*encoder.children()))
     
     # bag aggregator
@@ -201,7 +201,7 @@ if __name__ == '__main__':
             for (data, yb, _) in tqdm(val_dl, total=len(val_dl)): 
                 xb, yb = data, yb.cuda()
 
-                outputs = bagmodel(xb).squeeze(dim=1)
+                outputs, _, _, _ = bagmodel(xb)
                 loss = loss_func(outputs, yb)
                 
                 total_val_loss += loss.item() * len(xb)

@@ -282,7 +282,7 @@ if __name__ == '__main__':
                 xb, yb = data, yb.cuda()
 
 
-                outputs = bagmodel(xb).squeeze(dim=1)
+                outputs, _, _, _ = bagmodel(xb)
                 loss = loss_func(outputs, yb)
                 
                 total_val_loss += loss.item() * len(xb)
