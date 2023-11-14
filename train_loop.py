@@ -78,22 +78,22 @@ class EmbeddingBagModel(nn.Module):
             yhat_instances.append(yhat_ins)
             attention_scores.append(att_sc)
         
-        return logits
+        return logits.squeeze(1), saliency_maps, yhat_instances, attention_scores
 
 
 if __name__ == '__main__':
 
     # Config
-    model_name = 'NoMixup7'
-    img_size = 350
-    batch_size = 5
+    model_name = 'test'
+    img_size = 325
+    batch_size = 3
     min_bag_size = 3
     max_bag_size = 15
     epochs = 500
     lr = 0.001
 
     # Paths
-    export_location = 'D:/DATA/CASBUSI/exports/export_10_31_2023/'
+    export_location = 'D:/DATA/CASBUSI/exports/export_11_11_2023/'
     cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
     #export_location = '/home/paperspace/cadbusi-LFS/export_09_28_2023/'
     #cropped_images = f"/home/paperspace/Temp_Data/{img_size}_images/"
@@ -117,7 +117,7 @@ if __name__ == '__main__':
     train_dl =  TUD.DataLoader(dataset_train, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
     val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
 
-    encoder = create_timm_body('resnet18')
+    encoder = create_timm_body('resnet34')
     nf = num_features_model( nn.Sequential(*encoder.children()))
     
     # bag aggregator
@@ -173,9 +173,8 @@ if __name__ == '__main__':
             
             optimizer.zero_grad()
             
-            outputs = bagmodel(xb).squeeze(dim=1)
-            #print(yb)
-            #print(outputs)
+            outputs, _, _, _ = bagmodel(xb)
+
             loss = loss_func(outputs, yb)
 
             loss.backward()

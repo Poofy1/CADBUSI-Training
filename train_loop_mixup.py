@@ -78,7 +78,7 @@ class EmbeddingBagModel(nn.Module):
             yhat_instances.append(yhat_ins)
             attention_scores.append(att_sc)
         
-        return logits
+        return logits.squeeze(1), saliency_maps, yhat_instances, attention_scores
 
 
 
@@ -146,11 +146,11 @@ def mixup_subbags(x, y, alpha, sub_bag_size=4):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'Mixup_11_12_23'
-    img_size = 350
+    model_name = 'Mixup_11_13_23'
+    img_size = 325
     batch_size = 3
     min_bag_size = 3
-    max_bag_size = 15
+    max_bag_size = 13
     epochs = 10000
     alpha = .4
     lr = 0.001
@@ -242,7 +242,8 @@ if __name__ == '__main__':
             
             optimizer.zero_grad()
             
-            outputs = bagmodel(mixed_x).squeeze(dim=1)
+            outputs, _, _, _ = bagmodel(mixed_x)
+
             loss = loss_func(outputs, mixed_y)
             
             loss.backward()
@@ -289,11 +290,11 @@ if __name__ == '__main__':
                 total += yb.size(0)
                 correct += predicted.eq(yb.squeeze()).sum().item()
                 
-                if epoch == epochs - 1 or (epoch + 1) % 10 == 0:
-                    all_targs.extend(yb.cpu().numpy())
-                    if len(predicted.size()) == 0:
-                        predicted = predicted.view(1)
-                    all_preds.extend(predicted.cpu().detach().numpy())
+                # Confusion Matrix data
+                all_targs.extend(yb.cpu().numpy())
+                if len(predicted.size()) == 0:
+                    predicted = predicted.view(1)
+                all_preds.extend(predicted.cpu().detach().numpy())
 
         val_loss = total_val_loss / total
         val_acc = correct / total
