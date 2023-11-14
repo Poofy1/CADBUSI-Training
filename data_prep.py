@@ -7,6 +7,7 @@ import torchvision.transforms.functional as TF
 from tqdm import tqdm
 import torchvision.transforms as T
 import numpy as np
+import cv2
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from sklearn.utils import resample
@@ -53,8 +54,33 @@ class ResizeAndPad:
         padding = (padding[0], 0, padding[1], 0) if h > w else (0, padding[0], 0, padding[1])
         img = transforms.functional.pad(img, padding, fill=self.fill)
         return img
+    
+    
+class HistogramEqualization(object):
+    def __call__(self, image):
+        # Must be a PIL Image
+        image_np = np.array(image)
 
+        # Check if the image is grayscale or color and apply histogram equalization accordingly
+        if len(image_np.shape) == 2:
+            # Grayscale image
+            image_eq = cv2.equalizeHist(image_np)
+        else:
+            # Color image
+            image_eq = np.zeros_like(image_np)
+            for i in range(image_np.shape[2]):
+                image_eq[..., i] = cv2.equalizeHist(image_np[..., i])
 
+        # Convert back to PIL Image
+        image_eq = Image.fromarray(image_eq)
+        return image_eq
+    
+def unnormalize(tensor):
+        mean = torch.tensor([0.485, 0.456, 0.406]).view(-1, 1, 1).to(tensor.device)
+        std = torch.tensor([0.229, 0.224, 0.225]).view(-1, 1, 1).to(tensor.device)
+        tensor = tensor * std + mean  # unnormalize
+        return torch.clamp(tensor, 0, 1)
+    
 class BagOfImagesDataset(TUD.Dataset):
 
     def __init__(self, bags_dict, train=True, save_processed=False):
@@ -71,15 +97,17 @@ class BagOfImagesDataset(TUD.Dataset):
                 T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
                 T.RandomAffine(
                     degrees=(-45, 45),  # Rotation
-                    translate=(0.1, 0.1),  # Translation
+                    translate=(0.05, 0.05),  # Translation
                     scale=(1, 1.2),  # Scaling
                 ),
+                HistogramEqualization(),
                 T.ToTensor(),
-                GaussianNoise(mean=0, std=0.025),  # Add slight noise
+                GaussianNoise(mean=0, std=0.015),  # Add slight noise
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
         else:
             self.tsfms = T.Compose([
+                HistogramEqualization(),
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
@@ -96,23 +124,17 @@ class BagOfImagesDataset(TUD.Dataset):
         data = data.cuda() 
         
         if self.save_processed:
-            save_folder = os.path.join(self.env, 'processed_images')  
+            save_folder = os.path.join(env, 'processed_images')  
             os.makedirs(save_folder, exist_ok=True)
             for idx, img_tensor in enumerate(data):
                 img_save_path = os.path.join(save_folder, f'bag_{actual_id}_img_{idx}.jpg')
+                img_tensor = unnormalize(img_tensor)
                 img = TF.to_pil_image(img_tensor.cpu().detach())
                 img.save(img_save_path)
                 
         label = torch.tensor(label, dtype=torch.float32)
         
         return data, label, actual_id
-    
-    def unnormalize(self, tensor):
-        mean = torch.tensor([0.485, 0.456, 0.406]).view(-1, 1, 1).to(tensor.device)
-        std = torch.tensor([0.229, 0.224, 0.225]).view(-1, 1, 1).to(tensor.device)
-        tensor = tensor * std + mean  # unnormalize
-        return torch.clamp(tensor, 0, 1)
-    
     
     def n_features(self):
         return self.data.size(1)
