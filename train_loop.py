@@ -84,11 +84,11 @@ class EmbeddingBagModel(nn.Module):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'NoMixup_11_14_2'
+    model_name = 'NoMixup_11_16_Pool6'
     img_size = 350
     batch_size = 5
     min_bag_size = 2
-    max_bag_size = 15
+    max_bag_size = 20
     epochs = 500
     lr = 0.001
 
@@ -121,7 +121,7 @@ if __name__ == '__main__':
     nf = num_features_model( nn.Sequential(*encoder.children()))
     
     # bag aggregator
-    aggregator = ABMIL_aggregate( nf = nf, num_classes = 1, pool_patches = 3, L = 128)
+    aggregator = ABMIL_aggregate( nf = nf, num_classes = 1, pool_patches = 6, L = 128)
 
     # total model
     bagmodel = EmbeddingBagModel(encoder, aggregator).cuda()

@@ -38,12 +38,29 @@ class ResizeAndPad:
 
     def __call__(self, img):
         w, h = img.size
+
+        # Determine the longer side and calculate 5% of its length
+        trim_percent = 0.05
+        if h > w:
+            trim_size = int(h * trim_percent)
+            # Trim 5% from the top and bottom
+            img = img.crop((0, trim_size, w, h - trim_size))
+        else:
+            trim_size = int(w * trim_percent)
+            # Trim 5% from the left and right
+            img = img.crop((trim_size, 0, w - trim_size, h))
+
+        # Update new image size
+        w, h = img.size
+
+        # Resize the image
         if h > w:
             new_h, new_w = self.output_size, int(self.output_size * (w / h))
         else:
             new_h, new_w = int(self.output_size * (h / w)), self.output_size
-        img = transforms.functional.resize(img, (new_h, new_w))
+        img = img.resize((new_w, new_h))
 
+        # Calculate padding
         diff = self.output_size - new_w if h > w else self.output_size - new_h
         padding = [diff // 2, diff // 2]
 
@@ -51,9 +68,10 @@ class ResizeAndPad:
         if diff % 2 != 0:
             padding[1] += 1
 
-        # Use the padding values for the left/right or top/bottom
+        # Apply padding
         padding = (padding[0], 0, padding[1], 0) if h > w else (0, padding[0], 0, padding[1])
-        img = transforms.functional.pad(img, padding, fill=self.fill)
+        img = ImageOps.expand(img, border=padding, fill=self.fill)
+
         return img
     
     
@@ -123,14 +141,14 @@ class BagOfImagesDataset(TUD.Dataset):
                 T.RandomHorizontalFlip(),
                 #T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
                 T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
-                HistogramEqualization(),
+                #HistogramEqualization(),
                 T.ToTensor(),
                 #GaussianNoise(mean=0, std=0.015),  # Add slight noise
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
         else:
             self.tsfms = T.Compose([
-                HistogramEqualization(),
+                #HistogramEqualization(),
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
@@ -244,7 +262,7 @@ def preprocess_and_save_images(data, root_dir, output_dir, image_size, fill=0):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    resize_and_pad = ResizeAndStretch(image_size, fill=fill)
+    resize_and_pad = ResizeAndPad(image_size, fill=fill)
     data_rows = [row for _, row in data.iterrows()]  # Convert the DataFrame to a list of rows
 
     with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:

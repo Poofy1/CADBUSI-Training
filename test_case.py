@@ -11,7 +11,7 @@ env = os.path.dirname(os.path.abspath(__file__))
 def load_trained_model(model_path, encoder_arch):
     encoder = create_timm_body(encoder_arch)
     nf = num_features_model(nn.Sequential(*encoder.children()))
-    aggregator = ABMIL_aggregate(nf=nf, num_classes=1, pool_patches=3, L=128)
+    aggregator = ABMIL_aggregate(nf=nf, num_classes=1, pool_patches=6, L=128)
     bagmodel = EmbeddingBagModel(encoder, aggregator).cuda()
     bagmodel.load_state_dict(torch.load(model_path))
     bagmodel.eval()
@@ -125,11 +125,11 @@ def test_dataset():
 
 
 # Config
-model_name = 'Mixup_11_13_23'
-encoder_arch = 'resnet50'
-img_size = 325
-min_bag_size = 3
-max_bag_size = 13
+model_name = 'NoMixup_11_16_Pool6'
+encoder_arch = 'resnet18'
+img_size = 350
+min_bag_size = 2
+max_bag_size = 20
 export_location = 'D:/DATA/CASBUSI/exports/export_11_11_2023/'
 
 # Paths
