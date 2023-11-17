@@ -5,7 +5,7 @@ from fastai.vision.all import *
 import seaborn as sns
 
     
-def plot_loss(train_losses, valid_losses, auc, sensitivity, specificity, train_acc, val_acc, save_path):
+def plot_loss(train_losses, valid_losses, train_acc, val_acc, save_path):
     # Create a plot
     plt.figure(figsize=(10, 6))
     plt.plot(train_losses, label='Training Loss', color='blue')
@@ -20,16 +20,50 @@ def plot_loss(train_losses, valid_losses, auc, sensitivity, specificity, train_a
     x_position = len(train_losses) * 0.1
     y_position = max(max(train_losses), max(valid_losses))
 
-    # Add text annotations for AUC, Sensitivity, Specificity, Training and Validation Accuracy
-    plt.text(x_position, y_position, f'AUC: {auc:.4f}', fontsize=9)
-    plt.text(x_position, y_position*0.975, f'Sensitivity: {sensitivity:.4f}', fontsize=9)
-    plt.text(x_position, y_position*0.95, f'Specificity: {specificity:.4f}', fontsize=9)
+    # Add text Training and Validation Accuracy
     plt.text(x_position, y_position*0.925, f'Train ACC: {train_acc:.4f}', fontsize=9)
     plt.text(x_position, y_position*0.9, f'Val ACC: {val_acc:.4f}', fontsize=9)
 
     # Save the plot as a PNG file
     plt.savefig(save_path)
     plt.close()
+
+def plot_auc(auc_scores, save_path):
+    plt.figure(figsize=(10, 6))
+    plt.plot(auc_scores, label='AUC', color='green')
+
+    plt.title('AUC over Epochs')
+    plt.xlabel('Epochs')
+    plt.ylabel('AUC')
+    plt.legend()
+
+    plt.savefig(save_path)
+    plt.close()
+
+def plot_specificity(specificity_scores, save_path):
+    plt.figure(figsize=(10, 6))
+    plt.plot(specificity_scores, label='Specificity', color='purple')
+
+    plt.title('Specificity over Epochs')
+    plt.xlabel('Epochs')
+    plt.ylabel('Specificity')
+    plt.legend()
+
+    plt.savefig(save_path)
+    plt.close()
+    
+def plot_sensitivity(sensitivity_scores, save_path):
+    plt.figure(figsize=(10, 6))
+    plt.plot(sensitivity_scores, label='Sensitivity', color='orange')
+
+    plt.title('Sensitivity over Epochs')
+    plt.xlabel('Epochs')
+    plt.ylabel('Sensitivity')
+    plt.legend()
+
+    plt.savefig(save_path)
+    plt.close()
+
 
 
 def calculate_specificity(y_true, y_pred):
@@ -42,35 +76,51 @@ def save_state(e, train_acc, val_acc, model_folder, model_name, bagmodel, optimi
     model_path = f"{model_folder}/{model_name}.pth"
     optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
     stats_path = f"{model_folder}/{model_name}_stats.pkl"
-    
-    # Assuming all_preds and all_targs are numpy arrays or can be converted to them
+
+    # Initialize or load previous metrics
+    if os.path.exists(stats_path):
+        with open(stats_path, 'rb') as f:
+            stats = pickle.load(f)
+            auc_scores = stats.get('auc_scores', [])
+            specificity_scores = stats.get('specificity_scores', [])
+            sensitivity_scores = stats.get('sensitivity_scores', [])
+    else:
+        auc_scores, specificity_scores, sensitivity_scores = [], [], []
+
+    # Calculate current epoch metrics
     all_preds_np = all_preds.numpy() if isinstance(all_preds, torch.Tensor) else np.array(all_preds)
     all_targs_np = all_targs.numpy() if isinstance(all_targs, torch.Tensor) else np.array(all_targs)
-
-    # Calculate additional metrics
     auc = roc_auc_score(all_targs_np, all_preds_np)
     sensitivity = recall_score(all_targs_np, all_preds_np)
     specificity = calculate_specificity(all_targs_np, all_preds_np)
-    
-    # Save the model
+
+    # Append current epoch metrics
+    auc_scores.append(auc)
+    specificity_scores.append(specificity)
+    sensitivity_scores.append(sensitivity)
+
+    # Save the model and optimizer
     torch.save(bagmodel.state_dict(), model_path)
     torch.save(optimizer.state_dict(), optimizer_path)
     
-    # Save stats
+    # Save updated stats
     with open(stats_path, 'wb') as f:
         pickle.dump({
-            'epoch': e + 1,  # Save the next epoch to start
+            'epoch': e + 1,
             'train_losses': train_losses_over_epochs,
             'valid_losses': valid_losses_over_epochs,
-            'val_acc': val_acc,  # Save the validation accuracy
-            'auc': auc,  # Save the AUC
-            'sensitivity': sensitivity,  # Save the Sensitivity (Recall)
-            'specificity': specificity,  # Save the Specificity
+            'val_acc': val_acc,
+            'auc_scores': auc_scores,
+            'specificity_scores': specificity_scores,
+            'sensitivity_scores': sensitivity_scores,
         }, f)
 
+    # Save the plots
+    plot_loss(train_losses_over_epochs, valid_losses_over_epochs, train_acc, val_acc, f"{model_folder}/{model_name}_loss.png")
+    plot_auc(auc_scores, f"{model_folder}/{model_name}_auc.png")
+    plot_specificity(specificity_scores, f"{model_folder}/{model_name}_specificity.png")
+    plot_sensitivity(sensitivity_scores, f"{model_folder}/{model_name}_sensitivity.png")
 
-    # Save the loss graph
-    plot_loss(train_losses_over_epochs, valid_losses_over_epochs, auc, sensitivity, specificity, train_acc, val_acc, f"{model_folder}/{model_name}_loss.png")
     
     # Save the confusion matrix
     vocab = ['not malignant', 'malignant']  # Replace with your actual vocab
