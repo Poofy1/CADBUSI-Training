@@ -107,8 +107,8 @@ if __name__ == '__main__':
 
     print("Training Data...")
     # Create datasets
-    #dataset_train = TUD.Subset(BagOfImagesDataset( files_train, ids_train, labels_train),list(range(0,100)))
-    #dataset_val = TUD.Subset(BagOfImagesDataset( files_val, ids_val, labels_val),list(range(0,100)))
+    #dataset_train = TUD.Subset(BagOfImagesDataset(bags_train),list(range(0,100)))
+    #dataset_val = TUD.Subset(BagOfImagesDataset(bags_val),list(range(0,100)))
     dataset_train = BagOfImagesDataset(bags_train, save_processed=False)
     dataset_val = BagOfImagesDataset(bags_val, train=False)
 
