@@ -1,5 +1,5 @@
 import matplotlib.pyplot as plt
-from sklearn.metrics import roc_auc_score, recall_score, confusion_matrix
+from sklearn.metrics import roc_auc_score, recall_score, confusion_matrix, roc_curve, auc
 import numpy as np
 from fastai.vision.all import *
 import seaborn as sns
@@ -28,48 +28,22 @@ def plot_loss(train_losses, valid_losses, train_acc, val_acc, save_path):
     plt.savefig(save_path)
     plt.close()
 
-def plot_auc(auc_scores, save_path):
+def plot_roc_curve(tpr, fpr, auc_scores, save_path):
     plt.figure(figsize=(10, 6))
-    plt.plot(auc_scores, label='AUC', color='green')
+    plt.plot(fpr, tpr, color='blue', label=f'ROC curve (AUC = {auc_scores[-1]:.2f})')
 
-    plt.title('AUC over Epochs')
-    plt.xlabel('Epochs')
-    plt.ylabel('AUC')
-    plt.legend()
+    # Add a red dotted diagonal line (random classifier)
+    plt.plot([0, 1], [0, 1], color='red', linestyle='--', label='Random (AUC = 0.5)')
 
-    plt.savefig(save_path)
-    plt.close()
-
-def plot_specificity(specificity_scores, save_path):
-    plt.figure(figsize=(10, 6))
-    plt.plot(specificity_scores, label='Specificity', color='purple')
-
-    plt.title('Specificity over Epochs')
-    plt.xlabel('Epochs')
-    plt.ylabel('Specificity')
-    plt.legend()
-
-    plt.savefig(save_path)
-    plt.close()
-    
-def plot_sensitivity(sensitivity_scores, save_path):
-    plt.figure(figsize=(10, 6))
-    plt.plot(sensitivity_scores, label='Sensitivity', color='orange')
-
-    plt.title('Sensitivity over Epochs')
-    plt.xlabel('Epochs')
-    plt.ylabel('Sensitivity')
-    plt.legend()
+    plt.title('ROC Curve')
+    plt.xlabel('1 - Specificity (False Positive Rate)')
+    plt.ylabel('Sensitivity (True Positive Rate)')
+    plt.legend(loc="lower right")
 
     plt.savefig(save_path)
     plt.close()
 
 
-
-def calculate_specificity(y_true, y_pred):
-    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
-    specificity = tn / (tn+fp)
-    return specificity
 
 def save_state(e, train_acc, val_acc, model_folder, model_name, bagmodel, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs):
     
@@ -82,22 +56,15 @@ def save_state(e, train_acc, val_acc, model_folder, model_name, bagmodel, optimi
         with open(stats_path, 'rb') as f:
             stats = pickle.load(f)
             auc_scores = stats.get('auc_scores', [])
-            specificity_scores = stats.get('specificity_scores', [])
-            sensitivity_scores = stats.get('sensitivity_scores', [])
     else:
-        auc_scores, specificity_scores, sensitivity_scores = [], [], []
+        auc_scores = []
 
     # Calculate current epoch metrics
     all_preds_np = all_preds.numpy() if isinstance(all_preds, torch.Tensor) else np.array(all_preds)
     all_targs_np = all_targs.numpy() if isinstance(all_targs, torch.Tensor) else np.array(all_targs)
-    auc = roc_auc_score(all_targs_np, all_preds_np)
-    sensitivity = recall_score(all_targs_np, all_preds_np)
-    specificity = calculate_specificity(all_targs_np, all_preds_np)
-
-    # Append current epoch metrics
-    auc_scores.append(auc)
-    specificity_scores.append(specificity)
-    sensitivity_scores.append(sensitivity)
+    fpr, tpr, _ = roc_curve(all_targs_np, all_preds_np)
+    roc_auc = auc(fpr, tpr)
+    auc_scores.append(roc_auc)
 
     # Save the model and optimizer
     torch.save(bagmodel.state_dict(), model_path)
@@ -111,15 +78,11 @@ def save_state(e, train_acc, val_acc, model_folder, model_name, bagmodel, optimi
             'valid_losses': valid_losses_over_epochs,
             'val_acc': val_acc,
             'auc_scores': auc_scores,
-            'specificity_scores': specificity_scores,
-            'sensitivity_scores': sensitivity_scores,
         }, f)
 
     # Save the plots
     plot_loss(train_losses_over_epochs, valid_losses_over_epochs, train_acc, val_acc, f"{model_folder}/{model_name}_loss.png")
-    plot_auc(auc_scores, f"{model_folder}/{model_name}_auc.png")
-    plot_specificity(specificity_scores, f"{model_folder}/{model_name}_specificity.png")
-    plot_sensitivity(sensitivity_scores, f"{model_folder}/{model_name}_sensitivity.png")
+    plot_roc_curve(tpr, fpr, auc_scores, f"{model_folder}/{model_name}_roc.png")
 
     
     # Save the confusion matrix
