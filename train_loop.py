@@ -84,7 +84,7 @@ class EmbeddingBagModel(nn.Module):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'NoMixup_11_16_Pool6'
+    model_name = 'test2'
     img_size = 350
     batch_size = 5
     min_bag_size = 2
