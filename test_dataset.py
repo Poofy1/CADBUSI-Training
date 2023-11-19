@@ -47,7 +47,7 @@ def predict_on_test_set(model, test_dl):
         for (data, yb, bag_id) in tqdm(test_dl, total=len(test_dl)): 
             xb, yb = data, yb.cuda()
             
-            outputs = model(xb).squeeze(dim=1)
+            outputs, _, _, _  = model(xb)
             loss = loss_func(outputs, yb)
 
             bag_predictions.append(round(outputs.cpu().item(), 4))
@@ -60,16 +60,15 @@ def predict_on_test_set(model, test_dl):
 
 def test_dataset():
     # Load data
-    files_train, ids_train, labels_train, files_val, ids_val, labels_val = prepare_all_data(export_location, case_study_data, breast_data, image_data, cropped_images, img_size, min_bag_size, max_bag_size)
+    bags_train, bags_val = prepare_all_data(export_location, case_study_data, breast_data, image_data, cropped_images, img_size, min_bag_size, max_bag_size)
 
     # Combine training and validation data
-    combined_files = np.concatenate((files_train, files_val))
-    combined_ids = np.concatenate((ids_train, ids_val))
-    combined_labels = np.concatenate((labels_train, labels_val))
+    combined_dict = bags_train
+    combined_dict.update(bags_val)
 
     # Now use the combined data for the dataset
     #dataset_combined = TUD.Subset(BagOfImagesDataset( combined_files, combined_ids, combined_labels),list(range(0,100)))
-    dataset_combined = BagOfImagesDataset(combined_files, combined_ids, combined_labels, train=False)
+    dataset_combined = BagOfImagesDataset(combined_dict, train=False)
     combined_dl = TUD.DataLoader(dataset_combined, batch_size=1, collate_fn=collate_custom, drop_last=True)
 
     # Make predictions on test set
@@ -96,14 +95,14 @@ def test_dataset():
 
 
 # Config
-model_name = 'NoMixup3'
+model_name = 'NoMixup_11_14_2'
 encoder_arch = 'resnet18'
 img_size = 350
-min_bag_size = 3
-max_bag_size = 15
+min_bag_size = 2
+max_bag_size = 20
 
 # Paths
-export_location = 'D:/DATA/CASBUSI/exports/export_10_28_2023/'
+export_location = 'D:/DATA/CASBUSI/exports/export_11_11_2023/'
 case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
 breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
 image_data = pd.read_csv(f'{export_location}/ImageData.csv')
