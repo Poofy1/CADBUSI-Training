@@ -13,6 +13,7 @@ from model_TransMIL import *
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 
 
 # this function is used to cut off the head of a pretrained timm model and return the body
@@ -80,19 +81,14 @@ class EmbeddingBagModel(nn.Module):
 
 
 def generate_pseudo_labels(attention_scores):
-    """
-    Generate pseudo labels for instances using normalized attention scores.
-    Normalization ensures that the attention scores sum up to 1 for each bag, 
-    representing a probability distribution over instances.
-    """
-
     pseudo_labels = []
-    for bag_attention in attention_scores:
-        # Normalize the attention scores to sum to 1 for each bag
-        pseudo_labels_bag = bag_attention / bag_attention.sum()
-        pseudo_labels.append(pseudo_labels_bag)
-        
-    return torch.cat(pseudo_labels, dim=0)
+    for tensor in attention_scores:
+        # Calculate the dynamic threshold for each tensor
+        threshold = 1 / tensor.size(0)
+        # Apply the threshold to each tensor
+        pseudo_labels_tensor = (tensor > threshold).float()
+        pseudo_labels.append(pseudo_labels_tensor)
+    return pseudo_labels
 
 def supervised_contrastive_loss(features, labels, temperature=0.07):
     """
@@ -138,9 +134,6 @@ def supervised_contrastive_loss(features, labels, temperature=0.07):
     # Sum of exp similarities for positive pairs, avoiding the self-similarity
     # We subtract 1 to remove the self-similarity as exp(0) = 1
     pos_exp_sum = torch.sum(pos_exp_similarity, dim=1) - 1
-
-    # Log-sum of negative similarities for each sample
-    log_neg_exp_sum = torch.log(neg_exp_sum + 1e-10)
 
     # Loss for each sample
     loss_per_sample = - torch.log(pos_exp_sum / (neg_exp_sum + 1e-10) + 1e-10)
@@ -235,7 +228,7 @@ if __name__ == '__main__':
     img_size = 350
     batch_size = 5
     min_bag_size = 2
-    max_bag_size = 20
+    max_bag_size = 18
     epochs = 500
     lr = 0.001
 
@@ -256,10 +249,10 @@ if __name__ == '__main__':
 
     print("Training Data...")
     # Create datasets
-    dataset_train = TUD.Subset(BagOfImagesDataset(bags_train),list(range(0,100)))
-    dataset_val = TUD.Subset(BagOfImagesDataset(bags_val),list(range(0,100)))
-    #dataset_train = BagOfImagesDataset(bags_train, save_processed=False)
-    #dataset_val = BagOfImagesDataset(bags_val, train=False)
+    #dataset_train = TUD.Subset(BagOfImagesDataset(bags_train),list(range(0,100)))
+    #dataset_val = TUD.Subset(BagOfImagesDataset(bags_val),list(range(0,100)))
+    dataset_train = BagOfImagesDataset(bags_train, save_processed=False)
+    dataset_val = BagOfImagesDataset(bags_val, train=False)
 
             
     # Create data loaders
@@ -347,7 +340,7 @@ if __name__ == '__main__':
                 losses = []
 
                 # Iterate over each bag's features and corresponding pseudo labels
-                for bag_features, bag_pseudo_labels in zip(features_per_bag, pseudo_labels.split(split_sizes)):
+                for bag_features, bag_pseudo_labels in zip(features_per_bag, pseudo_labels):
                     # Ensure bag_features and bag_pseudo_labels are on the same device
                     bag_features = bag_features.to(device)
                     bag_pseudo_labels = bag_pseudo_labels.to(device)
