@@ -106,7 +106,6 @@ export_location = 'D:/DATA/CASBUSI/exports/export_11_11_2023/'
 case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
 breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
 image_data = pd.read_csv(f'{export_location}/ImageData.csv')
-cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
 
 
 # Load the trained model
