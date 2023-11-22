@@ -17,23 +17,6 @@ def load_trained_model(model_path, encoder_arch):
     bagmodel.eval()
     return bagmodel
 
-
-def predict_on_test_set(model, test_dl, save_path):
-    loss_func = nn.BCELoss()
-    
-    bag_predictions = []
-    bag_losses = []
-    bag_ids = [] 
-    bag_labels = []
-    saliency_maps_list = []  # to store saliency maps
-    
-    with torch.no_grad():
-        for (data, yb, bag_id) in tqdm(test_dl, total=len(test_dl)): 
-            xb, yb = data, yb.cuda()
-            
-            outputs, saliency_maps, yhat, att = model(xb)
-            loss = loss_func(outputs, yb)
-
             
 def predict_on_test_set(model, test_dl, save_path):
     loss_func = nn.BCELoss()

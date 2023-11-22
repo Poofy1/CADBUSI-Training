@@ -59,28 +59,24 @@ class EmbeddingBagModel(nn.Module):
         all_images = torch.cat(input, dim=0)  # Shape: [Total images in all bags, channel, height, width]
         
         # Calculate the embeddings for all images in one go
-        features = self.encoder(all_images)
-        features_viewed = features.view(features.size(0), -1, features.size(1))
+        h_all = self.encoder(all_images)
         
         # Split the embeddings back into per-bag embeddings
         split_sizes = [bag.size(0) for bag in input]
-        h_per_bag = torch.split(features_viewed, split_sizes, dim=0)
-        
+        h_per_bag = torch.split(h_all, split_sizes, dim=0)
         logits = torch.empty(num_bags, self.num_classes).cuda()
-        attention_scores = []
+        saliency_maps, yhat_instances, attention_scores = [], [], []
         
         for i, h in enumerate(h_per_bag):
-            # Ensure that h_bag has a first dimension of 1 before passing it to the aggregator
-            h_bag = h.unsqueeze(0)
-            
             # Receive four values from the aggregator
-            yhat_bag, _, yhat_ins, att_sc = self.aggregator(h_bag)
+            yhat_bag, sm, yhat_ins, att_sc = self.aggregator(h)
             
             logits[i] = yhat_bag
+            saliency_maps.append(sm)
+            yhat_instances.append(yhat_ins)
             attention_scores.append(att_sc)
         
-        # Now return the logits, the features before the aggregation, and the attention scores
-        return logits, features, attention_scores
+        return logits.squeeze(1), saliency_maps, yhat_instances, attention_scores
 
 
 def generate_pseudo_labels(attention_scores):
@@ -89,15 +85,13 @@ def generate_pseudo_labels(attention_scores):
     Normalization ensures that the attention scores sum up to 1 for each bag, 
     representing a probability distribution over instances.
     """
-    print(attention_scores)
-    
+
     pseudo_labels = []
     for bag_attention in attention_scores:
         # Normalize the attention scores to sum to 1 for each bag
         pseudo_labels_bag = bag_attention / bag_attention.sum()
         pseudo_labels.append(pseudo_labels_bag)
         
-    print(pseudo_labels)
     return torch.cat(pseudo_labels, dim=0)
 
 def supervised_contrastive_loss(features, labels, temperature=0.07):
@@ -175,10 +169,10 @@ def default_train():
         
         optimizer.zero_grad()
         
-        outputs, features, attention_scores = bagmodel(xb)
-        outputs = outputs.squeeze(dim=1)
+        outputs, _, _, _ = bagmodel(xb)
 
         loss = loss_func(outputs, yb)
+
         loss.backward()
         optimizer.step()
 
@@ -203,8 +197,7 @@ def default_train():
         for (data, yb, _) in tqdm(val_dl, total=len(val_dl)): 
             xb, yb = data, yb.cuda()
 
-            outputs, features, attention_scores = bagmodel(xb)
-            outputs = outputs.squeeze(dim=1)
+            outputs, _, _, _ = bagmodel(xb)
             loss = loss_func(outputs, yb)
             
             total_val_loss += loss.item() * len(xb)
@@ -241,13 +234,13 @@ if __name__ == '__main__':
     model_name = 'ITS2CLR_1'
     img_size = 350
     batch_size = 5
-    min_bag_size = 3
-    max_bag_size = 15
+    min_bag_size = 2
+    max_bag_size = 20
     epochs = 500
     lr = 0.001
 
     # Paths
-    export_location = 'D:/DATA/CASBUSI/exports/export_10_31_2023/'
+    export_location = 'D:/DATA/CASBUSI/exports/export_11_11_2023/'
     cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
     #export_location = '/home/paperspace/cadbusi-LFS/export_09_28_2023/'
     #cropped_images = f"/home/paperspace/Temp_Data/{img_size}_images/"
@@ -257,17 +250,16 @@ if __name__ == '__main__':
     
 
     
-    files_train, ids_train, labels_train, files_val, ids_val, labels_val = prepare_all_data(export_location, case_study_data, breast_data, image_data, 
-                                                                                            cropped_images, img_size, min_bag_size, max_bag_size)
+    bags_train, bags_val = prepare_all_data(export_location, case_study_data, breast_data, image_data, cropped_images, img_size, min_bag_size, max_bag_size)
 
 
 
     print("Training Data...")
     # Create datasets
-    dataset_train = TUD.Subset(BagOfImagesDataset( files_train, ids_train, labels_train),list(range(0,100)))
-    dataset_val = TUD.Subset(BagOfImagesDataset( files_val, ids_val, labels_val),list(range(0,100)))
-    #dataset_train = BagOfImagesDataset(files_train, ids_train, labels_train, save_processed=False)
-    #dataset_val = BagOfImagesDataset(files_val, ids_val, labels_val, train=False)
+    dataset_train = TUD.Subset(BagOfImagesDataset(bags_train),list(range(0,100)))
+    dataset_val = TUD.Subset(BagOfImagesDataset(bags_val),list(range(0,100)))
+    #dataset_train = BagOfImagesDataset(bags_train, save_processed=False)
+    #dataset_val = BagOfImagesDataset(bags_val, train=False)
 
             
     # Create data loaders
@@ -338,8 +330,8 @@ if __name__ == '__main__':
                 optimizer.zero_grad()
 
                 # Generate pseudo labels from attention scores
-                logits, features, attention_scores = bagmodel(xb)
-                pseudo_labels = generate_pseudo_labels(attention_scores)
+                logits, sm, yhat_ins, att_sc = bagmodel(xb)
+                pseudo_labels = generate_pseudo_labels(att_sc)
 
                 # Forward pass through the encoder only
                 outputs = encoder(torch.cat(xb, dim=0))
