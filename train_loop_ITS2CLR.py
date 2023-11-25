@@ -90,58 +90,130 @@ def generate_pseudo_labels(attention_scores):
         pseudo_labels.append(pseudo_labels_tensor)
     return pseudo_labels
 
-def supervised_contrastive_loss(features, labels, temperature=0.07):
-    """
-    Compute the supervised contrastive loss between features.
-    """
-    device = features.device
-    batch_size = features.shape[0]
 
-    # Normalize the features to be on the unit sphere
-    features = F.normalize(features, p=2, dim=1)
 
-    # Compute the pairwise cosine similarities
-    similarity_matrix = torch.matmul(features, features.T)
+class SupConLoss(nn.Module):
+    """Supervised Contrastive Learning: https://arxiv.org/pdf/2004.11362.pdf.
+    It also supports the unsupervised contrastive loss in SimCLR"""
+    def __init__(self, temperature=0.07, contrast_mode='all',
+                 base_temperature=0.07, pair_mode=0, mask_uncertain_neg=False):
+        super(SupConLoss, self).__init__()
+        self.temperature = temperature
+        self.contrast_mode = contrast_mode
+        self.base_temperature = base_temperature
+        self.pair_mode = pair_mode
+        self.mask_uncertain_neg = mask_uncertain_neg
 
-    # Scale the similarity by the temperature
-    similarity_matrix /= temperature
+    def forward(self, features, labels=None, bag_label=None, mask=None):
+        """Compute loss for model. If both `labels` and `mask` are None,
+        it degenerates to SimCLR unsupervised loss:
+        https://arxiv.org/pdf/2002.05709.pdf
 
-    # Create the mask for positive and negative examples
-    labels = labels.contiguous().view(-1, 1)
-    if labels.dim() == 1:
-        labels = labels.unsqueeze(1)
-    mask = torch.eq(labels, labels.T).float().to(device)
+        Args:
+            features: hidden vector of shape [bsz, n_views, ...].
+            labels: ground truth of shape [bsz].
+            mask: contrastive mask of shape [bsz, bsz], mask_{i,j}=1 if sample j
+                has the same class as sample i. Can be asymmetric.
+        Returns:
+            A loss scalar.
+        """
+        device = (torch.device('cuda')
+                  if features.is_cuda
+                  else torch.device('cpu'))
 
-    # Subtract the max similarity for numerical stability
-    max_similarity = torch.max(similarity_matrix, dim=1, keepdim=True)[0]
-    exp_similarity = torch.exp(similarity_matrix - max_similarity)
+        if len(features.shape) < 3:
+            raise ValueError('`features` needs to be [bsz, n_views, ...],'
+                             'at least 3 dimensions are required')
+        if len(features.shape) > 3:
+            features = features.view(features.shape[0], features.shape[1], -1)
 
-    # Mask-out self-similarities (diagonal elements)
-    logits_mask = torch.scatter(
-        torch.ones_like(similarity_matrix),
-        1,
-        torch.arange(batch_size).view(-1, 1).to(device),
-        0
-    )
-    masked_exp_similarity = exp_similarity * logits_mask
+        batch_size = features.shape[0]
+        if labels is not None and mask is not None:
+            raise ValueError('Cannot define both `labels` and `mask`')
+        elif labels is None and mask is None:
+            mask = torch.eye(batch_size, dtype=torch.float32).to(device)
+        elif labels is not None:
+            labels = labels.contiguous().view(-1, 1)
+            if labels.shape[0] != batch_size:
+                raise ValueError('Num of labels does not match num of features')
+            mask = torch.eq(labels, labels.T).float().to(device)
+            if self.pair_mode==0:
+                # mask = torch.eq(labels, labels.T).float().to(device)
+                pass
 
-    # Sum of exp similarities for negative pairs
-    neg_exp_sum = torch.sum(masked_exp_similarity, dim=1)
+            # only take the positive into account
+            elif self.pair_mode==1:
+                # mask = (torch.eq(labels, labels.T) * (labels == 1)).float().to(device)
+                mask[labels[:, 0] == 0, :] = 0
+                mask[:, labels[:, 0] == 0] = 0
 
-    # Position of positive pairs on the similarity matrix
-    pos_exp_similarity = exp_similarity * mask
+            # only take the negative into account
+            elif self.pair_mode==2:
+                # mask = (torch.eq(labels, labels.T) * (labels == 0)).float().to(device)
+                mask[labels[:, 0] == 1, :] = 0
+                mask[:, labels[:, 0] == 1] = 0
+        else:
+            mask = mask.float().to(device)
 
-    # Sum of exp similarities for positive pairs, avoiding the self-similarity
-    # We subtract 1 to remove the self-similarity as exp(0) = 1
-    pos_exp_sum = torch.sum(pos_exp_similarity, dim=1) - 1
+        contrast_count = features.shape[1]
+        contrast_feature = torch.cat(torch.unbind(features, dim=1), dim=0)
+        if self.contrast_mode == 'one':
+            anchor_feature = features[:, 0]
+            anchor_count = 1
+        elif self.contrast_mode == 'all':
+            anchor_feature = contrast_feature
+            anchor_count = contrast_count
+        else:
+            raise ValueError('Unknown mode: {}'.format(self.contrast_mode))
 
-    # Loss for each sample
-    loss_per_sample = - torch.log(pos_exp_sum / (neg_exp_sum + 1e-10) + 1e-10)
+        # compute logits
+        anchor_dot_contrast = torch.div(
+            torch.matmul(anchor_feature, contrast_feature.T),
+            self.temperature)
+        # for numerical stability
+        logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
+        # logits = anchor_dot_contrast - logits_max.detach()
+        logits = anchor_dot_contrast
+        # tile mask
+        mask = mask.repeat(anchor_count, contrast_count)
 
-    # Mean loss over the batch
-    loss = loss_per_sample.mean()
+        # mask-out self-contrast cases
+        logits_mask = torch.scatter(
+            torch.ones_like(mask),
+            1,
+            torch.arange(batch_size * anchor_count).view(-1, 1).to(device),
+            0
+        )
 
-    return loss
+        if self.mask_uncertain_neg:
+            # to mask out the instance with bag-label being 1 and instance-label being 0
+            labels_repeat = labels.repeat(anchor_count, 1)
+            bag_label_repeat = bag_label.repeat(anchor_count, 1)
+
+            labels_repeat = labels_repeat.to(device)
+            bag_label_repeat = bag_label_repeat.to(device)
+
+            logits_mask[:, (bag_label_repeat[:, 0] == 1) * (labels_repeat[:, 0] == 0)] = 0
+
+
+        mask = mask * logits_mask
+        # compute log_prob
+        exp_logits = torch.exp(logits) * logits_mask
+        if self.mask_uncertain_neg:
+            log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True)+ 1e-10)
+        else:
+            log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True) )
+
+        # compute mean of log-likelihood over positive
+        mean_log_prob_pos = (mask * log_prob).sum(1) / (mask.sum(1) + 1e-10)
+
+
+        # loss
+        loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
+        loss = loss.view(anchor_count, batch_size).mean()
+
+
+        return loss
 
 
 
@@ -154,7 +226,6 @@ def default_train():
     # Training phase
     bagmodel.train()
     total_loss = 0.0
-    total_acc = 0
     total = 0
     correct = 0
     for (data, yb, _) in tqdm(train_dl, total=len(train_dl)): 
@@ -176,12 +247,17 @@ def default_train():
 
     train_loss = total_loss / total
     train_acc = correct / total
+    
+    val_check(train_acc, train_loss)
 
 
+
+def val_check(train_acc, train_loss):
+    global val_acc_best
+    
     # Evaluation phase
     bagmodel.eval()
     total_val_loss = 0.0
-    total_val_acc = 0.0
     total = 0
     correct = 0
     all_targs = []
@@ -224,9 +300,10 @@ def default_train():
 if __name__ == '__main__':
 
     # Config
-    model_name = 'ITS2CLR_1'
+    model_name = 'ITS2CLR_2'
     img_size = 350
     batch_size = 5
+    feature_extractor_train_count = 5
     min_bag_size = 2
     max_bag_size = 18
     epochs = 500
@@ -275,6 +352,7 @@ if __name__ == '__main__':
         
     optimizer = Adam(bagmodel.parameters(), lr=lr)
     loss_func = nn.BCELoss()
+    supcon_loss = SupConLoss(temperature=0.07, contrast_mode='all', base_temperature=0.07)
     train_losses_over_epochs = []
     valid_losses_over_epochs = []
     epoch_start = 0
@@ -301,11 +379,13 @@ if __name__ == '__main__':
         print(f"{model_name} does not exist, creating new instance")
         os.makedirs(model_folder, exist_ok=True)
         val_acc_best = -1 
-    
-    
+
+
     # Training loop
     for epoch in range(epoch_start, epochs):
-        if epoch % 2 == 0:
+        if epoch % (1 + feature_extractor_train_count) == 0:
+            val_check(0, 0)
+            
             print('Training Default')
             default_train()
         else:
@@ -329,12 +409,9 @@ if __name__ == '__main__':
                 # Forward pass through the encoder only
                 outputs = encoder(torch.cat(xb, dim=0))
 
-                # Flatten the feature maps for each image
-                features = outputs.view(outputs.size(0), -1)
-
                 # Calculate the correct number of features per bag
                 split_sizes = [bag.size(0) for bag in xb]
-                features_per_bag = torch.split(features, split_sizes, dim=0)
+                features_per_bag = torch.split(outputs, split_sizes, dim=0)
 
                 # Initialize a list to hold losses for each bag
                 losses = []
@@ -346,7 +423,7 @@ if __name__ == '__main__':
                     bag_pseudo_labels = bag_pseudo_labels.to(device)
 
                     # Compute the loss for the current bag
-                    bag_loss = supervised_contrastive_loss(bag_features, bag_pseudo_labels)
+                    bag_loss = supcon_loss(bag_features, bag_pseudo_labels)
 
                     # Store the loss
                     losses.append(bag_loss)
@@ -363,3 +440,5 @@ if __name__ == '__main__':
                 param.requires_grad = True
             for param in encoder.parameters():
                 param.requires_grad = True
+                
+                
