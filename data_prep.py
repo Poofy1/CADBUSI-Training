@@ -125,7 +125,22 @@ def unnormalize(tensor):
         std = torch.tensor([0.229, 0.224, 0.225]).view(-1, 1, 1).to(tensor.device)
         tensor = tensor * std + mean  # unnormalize
         return torch.clamp(tensor, 0, 1)
-    
+
+
+class CLAHETransform(object):
+    def __init__(self, clip_limit=2.0, tile_grid_size=(8, 8)):
+        self.clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
+
+    def __call__(self, img):
+        img = np.array(img)
+        if len(img.shape) == 2:
+            img = self.clahe.apply(img)
+        else:
+            img = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+            img[:, :, 0] = self.clahe.apply(img[:, :, 0])
+            img = cv2.cvtColor(img, cv2.COLOR_LAB2RGB)
+        return Image.fromarray(img)
+
 class BagOfImagesDataset(TUD.Dataset):
 
     def __init__(self, bags_dict, train=True, save_processed=False):
@@ -142,6 +157,7 @@ class BagOfImagesDataset(TUD.Dataset):
                 #T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
                 T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
                 #HistogramEqualization(),
+                CLAHETransform(),
                 T.ToTensor(),
                 #GaussianNoise(mean=0, std=0.015),  # Add slight noise
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
@@ -149,6 +165,7 @@ class BagOfImagesDataset(TUD.Dataset):
         else:
             self.tsfms = T.Compose([
                 #HistogramEqualization(),
+                CLAHETransform(),
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
