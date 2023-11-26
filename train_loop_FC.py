@@ -82,7 +82,7 @@ class EmbeddingBagModel(nn.Module):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'FC_test_2'
+    model_name = 'test'
     img_size = 350
     batch_size = 5
     min_bag_size = 2
@@ -105,10 +105,10 @@ if __name__ == '__main__':
 
     print("Training Data...")
     # Create datasets
-    #dataset_train = TUD.Subset(BagOfImagesDataset(bags_train),list(range(0,100)))
-    #dataset_val = TUD.Subset(BagOfImagesDataset(bags_val),list(range(0,100)))
-    dataset_train = BagOfImagesDataset(bags_train, save_processed=False)
-    dataset_val = BagOfImagesDataset(bags_val, train=False)
+    dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, save_processed=False),list(range(0,100)))
+    dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, save_processed=False),list(range(0,100)))
+    #dataset_train = BagOfImagesDataset(bags_train, save_processed=False)
+    #dataset_val = BagOfImagesDataset(bags_val, train=False)
 
             
     # Create data loaders
