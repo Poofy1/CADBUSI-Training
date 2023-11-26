@@ -28,21 +28,23 @@ def plot_loss(train_losses, valid_losses, train_acc, val_acc, save_path):
     plt.savefig(save_path)
     plt.close()
 
-def plot_roc_curve(tpr, fpr, auc_scores, save_path):
+def plot_roc_curve(all_tpr, all_fpr, save_path):
     plt.figure(figsize=(10, 6))
-    plt.plot(fpr, tpr, color='blue', label=f'ROC curve (AUC = {auc_scores[-1]:.2f})')
+    
+    # Plot ROC curve for each epoch
+    for i in range(len(all_tpr)):
+        plt.plot(all_fpr[i], all_tpr[i], label=f'ROC curve at Epoch {i+1}')
 
     # Add a red dotted diagonal line (random classifier)
     plt.plot([0, 1], [0, 1], color='red', linestyle='--', label='Random (AUC = 0.5)')
 
-    plt.title('ROC Curve')
+    plt.title('ROC Curve Over Epochs')
     plt.xlabel('1 - Specificity (False Positive Rate)')
     plt.ylabel('Sensitivity (True Positive Rate)')
     plt.legend(loc="lower right")
 
     plt.savefig(save_path)
     plt.close()
-
 
 
 def save_state(e, train_acc, val_acc, model_folder, model_name, bagmodel, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs):
@@ -55,34 +57,37 @@ def save_state(e, train_acc, val_acc, model_folder, model_name, bagmodel, optimi
     if os.path.exists(stats_path):
         with open(stats_path, 'rb') as f:
             stats = pickle.load(f)
-            auc_scores = stats.get('auc_scores', [])
+            all_fpr = stats.get('all_fpr', [])
+            all_tpr = stats.get('all_tpr', [])
     else:
-        auc_scores = []
+        all_fpr = []
+        all_tpr = []
 
     # Calculate current epoch metrics
     all_preds_np = all_preds.numpy() if isinstance(all_preds, torch.Tensor) else np.array(all_preds)
     all_targs_np = all_targs.numpy() if isinstance(all_targs, torch.Tensor) else np.array(all_targs)
     fpr, tpr, _ = roc_curve(all_targs_np, all_preds_np)
-    roc_auc = auc(fpr, tpr)
-    auc_scores.append(roc_auc)
+    all_fpr.append(fpr)
+    all_tpr.append(tpr)
 
     # Save the model and optimizer
     torch.save(bagmodel.state_dict(), model_path)
     torch.save(optimizer.state_dict(), optimizer_path)
     
-    # Save updated stats
+    # Save updated stats with all_fpr and all_tpr
     with open(stats_path, 'wb') as f:
         pickle.dump({
             'epoch': e + 1,
             'train_losses': train_losses_over_epochs,
             'valid_losses': valid_losses_over_epochs,
             'val_acc': val_acc,
-            'auc_scores': auc_scores,
+            'all_fpr': all_fpr,
+            'all_tpr': all_tpr
         }, f)
 
     # Save the plots
     plot_loss(train_losses_over_epochs, valid_losses_over_epochs, train_acc, val_acc, f"{model_folder}/{model_name}_loss.png")
-    plot_roc_curve(tpr, fpr, auc_scores, f"{model_folder}/{model_name}_roc.png")
+    plot_roc_curve(all_tpr, all_fpr, f"{model_folder}/{model_name}_roc.png")
 
     
     # Save the confusion matrix

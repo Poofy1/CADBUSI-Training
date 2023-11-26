@@ -82,7 +82,7 @@ class EmbeddingBagModel(nn.Module):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'FC_test'
+    model_name = 'FC_test_2'
     img_size = 350
     batch_size = 5
     min_bag_size = 2
