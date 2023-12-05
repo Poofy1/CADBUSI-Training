@@ -54,5 +54,4 @@ class ABMIL_aggregate(nn.Module):
         
         # Aggregate individual predictions to get the final bag prediction
         yhat_bag = (attention_scores * yhat_instance).sum(dim=0)
-
         return yhat_bag, saliency_maps, yhat_instance, attention_scores

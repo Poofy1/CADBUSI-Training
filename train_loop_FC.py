@@ -26,7 +26,16 @@ def create_timm_body(arch:str, pretrained=True, cut=None, n_in=3):
     elif callable(cut): return cut(model)
     else: raise NameError("cut must be either integer or function")
 
-
+def create_custom_body(model, pretrained=True, cut=None, n_in=3):
+    if cut is None:
+        ll = list(enumerate(model.children()))
+        cut = next(i for i,o in reversed(ll) if has_pool_type(o))
+    if isinstance(cut, int): return nn.Sequential(*list(model.children())[:cut])
+    elif callable(cut): return cut(model)
+    else: raise NameError("cut must be either integer or function")
+    
+    
+    
 def collate_custom(batch):
     batch_data = []
     batch_labels = []
@@ -68,7 +77,10 @@ class EmbeddingBagModel(nn.Module):
         logits = torch.empty(num_bags, self.num_classes).cuda()
         yhat_instances, attention_scores = [], []
         
+        print(h_per_bag.shape)
+        
         for i, h in enumerate(h_per_bag):
+            print(h.shape)
             # Receive values from the aggregator
             yhat_bag, yhat_ins, att_sc = self.aggregator(h)
             
@@ -82,7 +94,9 @@ class EmbeddingBagModel(nn.Module):
 if __name__ == '__main__':
 
     # Config
+    pretrained_head = None
     model_name = 'test'
+    encoder_arch = 'resnet18'
     img_size = 350
     batch_size = 5
     min_bag_size = 2
@@ -105,17 +119,26 @@ if __name__ == '__main__':
 
     print("Training Data...")
     # Create datasets
-    dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, save_processed=False),list(range(0,100)))
-    dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, save_processed=False),list(range(0,100)))
-    #dataset_train = BagOfImagesDataset(bags_train, save_processed=False)
-    #dataset_val = BagOfImagesDataset(bags_val, train=False)
-
+    #dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, save_processed=False),list(range(0,100)))
+    #dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, save_processed=False),list(range(0,100)))
+    dataset_train = BagOfImagesDataset(bags_train, save_processed=False)
+    dataset_val = BagOfImagesDataset(bags_val, train=False)
             
     # Create data loaders
     train_dl =  TUD.DataLoader(dataset_train, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
     val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
 
-    encoder = create_timm_body('resnet18')
+    
+    # Check if the model already exists
+    model_folder = f"{env}/models/{model_name}/"
+    model_path = f"{model_folder}/{model_name}.pth"
+    pretrained_path = f"{env}/models/{pretrained_head}/{pretrained_head}.pth"
+    optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
+    stats_path = f"{model_folder}/{model_name}_stats.pkl"
+    
+    model_exists = os.path.exists(model_path)
+    
+    encoder = create_timm_body(encoder_arch)
     nf = num_features_model( nn.Sequential(*encoder.children()))
     
     # bag aggregator
@@ -134,11 +157,7 @@ if __name__ == '__main__':
     epoch_start = 0
     
     
-    # Check if the model already exists
-    model_folder = f"{env}/models/{model_name}/"
-    model_path = f"{model_folder}/{model_name}.pth"
-    optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
-    stats_path = f"{model_folder}/{model_name}_stats.pkl"
+    
     
     if os.path.exists(model_path):
         bagmodel.load_state_dict(torch.load(model_path))
@@ -155,6 +174,12 @@ if __name__ == '__main__':
         print(f"{model_name} does not exist, creating new instance")
         os.makedirs(model_folder, exist_ok=True)
         val_acc_best = -1 
+        
+        """if pretrained_head is not None and os.path.exists(pretrained_path):
+            print(f"Using pretrained head: {pretrained_head}")
+            #bagmodel.load_state_dict(torch.load(pretrained_path))
+            #encoder = create_custom_body(bagmodel)
+            bagmodel = EmbeddingBagModel(encoder, aggregator).cuda()"""
     
     
     
