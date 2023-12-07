@@ -44,14 +44,17 @@ def collate_custom(batch):
     batch_ids = []  # List to store bag IDs
 
     for sample in batch:
-        image_data, label, bag_id = sample
+        image_data, labels, bag_id = sample
         batch_data.append(image_data)
-        batch_labels.append(label)
+        batch_labels.append(labels)  # labels are already tensors
         batch_ids.append(bag_id)  # Append the bag ID
 
-    out_labels = torch.tensor(batch_labels).cuda()
-    out_ids = torch.tensor(batch_ids).cuda()  # Convert bag IDs to a tensor
-    
+    # Using torch.stack for labels to handle multiple labels per bag
+    out_labels = torch.stack(batch_labels).cuda()
+
+    # Converting to a tensor
+    out_ids = torch.tensor(batch_ids, dtype=torch.long).cuda()
+
     return batch_data, out_labels, out_ids
 
 class EmbeddingBagModel(nn.Module):
@@ -86,7 +89,7 @@ class EmbeddingBagModel(nn.Module):
             yhat_instances.append(yhat_ins)
             attention_scores.append(att_sc)
         
-        return logits.squeeze(1), saliency_maps, yhat_instances, attention_scores
+        return logits, saliency_maps, yhat_instances, attention_scores
 
 
 def generate_pseudo_labels(inputs, threshold = .5):
@@ -120,7 +123,7 @@ def generate_pseudo_labels(inputs, threshold = .5):
 class SupConLoss(nn.Module):
     """Supervised Contrastive Learning: https://arxiv.org/pdf/2004.11362.pdf.
     It also supports the unsupervised contrastive loss in SimCLR"""
-    def __init__(self, temperature=0.07, contrast_mode='all',
+    def __init__(self, temperature=0.07, contrast_mode='one',
                  base_temperature=0.07, pair_mode=0, mask_uncertain_neg=False):
         super(SupConLoss, self).__init__()
         self.temperature = temperature
@@ -163,18 +166,15 @@ class SupConLoss(nn.Module):
                 raise ValueError('Num of labels does not match num of features')
             mask = torch.eq(labels, labels.T).float().to(device)
             if self.pair_mode==0:
-                # mask = torch.eq(labels, labels.T).float().to(device)
                 pass
 
             # only take the positive into account
             elif self.pair_mode==1:
-                # mask = (torch.eq(labels, labels.T) * (labels == 1)).float().to(device)
                 mask[labels[:, 0] == 0, :] = 0
                 mask[:, labels[:, 0] == 0] = 0
 
             # only take the negative into account
             elif self.pair_mode==2:
-                # mask = (torch.eq(labels, labels.T) * (labels == 0)).float().to(device)
                 mask[labels[:, 0] == 1, :] = 0
                 mask[:, labels[:, 0] == 1] = 0
         else:
@@ -195,10 +195,11 @@ class SupConLoss(nn.Module):
         anchor_dot_contrast = torch.div(
             torch.matmul(anchor_feature, contrast_feature.T),
             self.temperature)
+        
         # for numerical stability
         logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
-        # logits = anchor_dot_contrast - logits_max.detach()
-        logits = anchor_dot_contrast
+        logits = anchor_dot_contrast - logits_max.detach()
+        # logits = anchor_dot_contrast
         # tile mask
         mask = mask.repeat(anchor_count, contrast_count)
 
@@ -222,6 +223,8 @@ class SupConLoss(nn.Module):
 
 
         mask = mask * logits_mask
+        print("mask", mask)
+        
         # compute log_prob
         exp_logits = torch.exp(logits) * logits_mask
         if self.mask_uncertain_neg:
@@ -231,12 +234,38 @@ class SupConLoss(nn.Module):
 
         # compute mean of log-likelihood over positive
         mean_log_prob_pos = (mask * log_prob).sum(1) / (mask.sum(1) + 1e-10)
-
+        
+        
+        print("anchor_feature", anchor_feature)
+        print("anchor_dot_contrast", anchor_dot_contrast)
+        print("logits", logits)
+        print("torch.exp(logits)", torch.exp(logits))
+        print("mean_log_prob_pos", mean_log_prob_pos)
 
         # loss
         loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
+        
+        if torch.isinf(mask).any():
+            print("There are NaNs in the mask tensor.")
+        else:
+            print("No NaNs in the mask tensor.")
+            
+        if torch.isinf(log_prob).any():
+            print("There are NaNs in the log_prob tensor.")
+        else:
+            print("No NaNs in the log_prob tensor.")
+            
+        if torch.isnan(mean_log_prob_pos).any():
+            print("There are NaNs in the mean_log_prob_pos tensor.")
+        else:
+            print("No NaNs in the mean_log_prob_pos tensor.")
+            
+        print("LOSS", loss)
+        print("anchor_count", anchor_count)
+        print("batch_size", batch_size)
         loss = loss.view(anchor_count, batch_size).mean()
 
+        print("LOSS", loss)
 
         return loss
 
@@ -266,10 +295,13 @@ def default_train():
         optimizer.step()
 
         total_loss += loss.item() * len(xb)
-        predicted = torch.round(outputs).squeeze()
+        predicted = (outputs > .5).float()
         total += yb.size(0)
-        correct += predicted.eq(yb.squeeze()).sum().item()
-
+        if len(label_columns) == 1:  # Binary or single-label classification
+            correct += (predicted == yb).sum().item()
+        else:  # Multi-label classification
+            correct += ((predicted == yb).sum(dim=1) == len(label_columns)).sum().item()
+            
     train_loss = total_loss / total
     train_acc = correct / total
 
@@ -288,9 +320,12 @@ def default_train():
             loss = loss_func(outputs, yb)
             
             total_val_loss += loss.item() * len(xb)
-            predicted = torch.round(outputs).squeeze() 
+            predicted = (outputs > .5).float()
             total += yb.size(0)
-            correct += predicted.eq(yb.squeeze()).sum().item()
+            if len(label_columns) == 1:  # Binary or single-label classification
+                correct += (predicted == yb).sum().item()
+            else:  # Multi-label classification
+                correct += ((predicted == yb).sum(dim=1) == len(label_columns)).sum().item()
             
             # Confusion Matrix data
             all_targs.extend(yb.cpu().numpy())
@@ -318,8 +353,9 @@ def default_train():
 if __name__ == '__main__':
 
     # Config
-    pretrained_head = None
     model_name = 'testing'
+    label_columns = ['Has_Malignant', 'Has_Benign']
+    encoder_arch = 'resnet18'
     img_size = 350
     batch_size = 5
     feature_extractor_train_count = 1
@@ -333,14 +369,10 @@ if __name__ == '__main__':
     cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
     #export_location = '/home/paperspace/cadbusi-LFS/export_09_28_2023/'
     #cropped_images = f"/home/paperspace/Temp_Data/{img_size}_images/"
-    case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
-    breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
-    image_data = pd.read_csv(f'{export_location}/ImageData.csv')
     
 
-    
-    bags_train, bags_val = prepare_all_data(export_location, case_study_data, breast_data, image_data, cropped_images, img_size, min_bag_size, max_bag_size)
-
+    # Get Training Data
+    bags_train, bags_val = prepare_all_data(export_location, label_columns, cropped_images, img_size, min_bag_size, max_bag_size)
 
 
     print("Training Data...")
@@ -360,14 +392,11 @@ if __name__ == '__main__':
     # Check if the model already exists
     model_folder = f"{env}/models/{model_name}/"
     model_path = f"{model_folder}/{model_name}.pth"
-    pretrained_path = f"{env}/models/{pretrained_head}/{pretrained_head}.pth"
     optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
     stats_path = f"{model_folder}/{model_name}_stats.pkl"
 
-    model_exists = os.path.exists(model_path)
-
     
-    encoder = create_timm_body('resnet18')
+    encoder = create_timm_body(encoder_arch)
 
     nf = num_features_model(nn.Sequential(*encoder.children()))
     # bag aggregator
@@ -388,7 +417,7 @@ if __name__ == '__main__':
     
 
     
-    if model_exists:
+    if os.path.exists(model_path):
         bagmodel.load_state_dict(torch.load(model_path))
         optimizer.load_state_dict(torch.load(optimizer_path))
         print(f"Loaded pre-existing model from {model_name}")
@@ -403,12 +432,7 @@ if __name__ == '__main__':
         print(f"{model_name} does not exist, creating new instance")
         os.makedirs(model_folder, exist_ok=True)
         val_acc_best = -1 
-        
-        """if pretrained_head is not None:
-            print(f"Using pretrained head: {pretrained_head}")
-            bagmodel.load_state_dict(torch.load(pretrained_path))
-            encoder = create_custom_body(bagmodel)
-            bagmodel = EmbeddingBagModel(encoder, aggregator).cuda()"""
+
 
     # Training loop
     for epoch in range(epoch_start, epochs):
@@ -453,7 +477,7 @@ if __name__ == '__main__':
                     #bag_pseudo_labels_tensor = torch.tensor(bag_pseudo_labels_list, dtype=torch.float32).to(device)
                     
                     print("final: ", bag_pseudo_labels_tensor)
-                    #print(bag_pseudo_labels_tensor)
+                    print("bag_features: ", bag_features.shape)
                     
                     # Compute the loss for the current bag
                     bag_loss = supcon_loss(bag_features, bag_pseudo_labels_tensor)
@@ -466,8 +490,8 @@ if __name__ == '__main__':
                 print(total_loss)
 
                 # Backward pass
-                #total_loss.backward()
-                #optimizer.step()
+                total_loss.backward()
+                optimizer.step()
 
             # After the contrastive update, unfreeze the aggregator and encoder
             for param in aggregator.parameters():

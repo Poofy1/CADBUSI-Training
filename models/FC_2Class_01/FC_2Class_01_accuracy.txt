@@ -1,0 +1,24 @@
+Epoch 1
+Training Accuracies:
+  Has_Malignant: 0.6164
+  Has_Benign: 0.6357
+Validation Accuracies:
+  Has_Malignant: 0.6169
+  Has_Benign: 0.6386
+
+Epoch 2
+Training Accuracies:
+  Has_Malignant: 0.6272
+  Has_Benign: 0.6448
+Validation Accuracies:
+  Has_Malignant: 0.6231
+  Has_Benign: 0.6408
+
+Epoch 3
+Training Accuracies:
+  Has_Malignant: 0.6374
+  Has_Benign: 0.6504
+Validation Accuracies:
+  Has_Malignant: 0.6235
+  Has_Benign: 0.6302
+
