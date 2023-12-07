@@ -169,13 +169,10 @@ class BagOfImagesDataset(TUD.Dataset):
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
-
-    def __len__(self):
-        return len(self.unique_bag_ids)
     
     def __getitem__(self, index):
         actual_id = self.unique_bag_ids[index]
-        label, files_this_bag = self.bags_dict[actual_id]
+        labels, files_this_bag = self.bags_dict[actual_id]
         data = torch.stack([
             self.tsfms(Image.open(fn).convert("RGB")) for fn in files_this_bag
         ])
@@ -190,9 +187,13 @@ class BagOfImagesDataset(TUD.Dataset):
                 img = TF.to_pil_image(img_tensor.cpu().detach())
                 img.save(img_save_path)
                 
-        label = torch.tensor(label, dtype=torch.float32)
+        # Convert labels list to a tensor
+        label_tensor = torch.tensor(labels, dtype=torch.float32)
         
-        return data, label, actual_id
+        return data, label_tensor, actual_id
+    
+    def __len__(self):
+        return len(self.unique_bag_ids)
     
     def n_features(self):
         return self.data.size(1)
@@ -221,7 +222,7 @@ def filter_raw_data(breast_data, image_data):
     return data
 
 
-def create_bags(data, min_size, max_size, root_dir):
+def create_bags(data, min_size, max_size, root_dir, label_columns):
     unique_patient_ids = data['Accession_Number'].unique()
 
     bags_dict = {}  # This will be indexed by bag_id
@@ -235,13 +236,14 @@ def create_bags(data, min_size, max_size, root_dir):
 
         # Initialize the list of file names for this bag
         bag_files = [os.path.join(root_dir, row['ImageName']) for _, row in patient_data.iterrows()]
-        # Assume all labels in the bag are the same, so take the label of the first one
-        bag_label = int(patient_data.iloc[0]['Has_Malignant'])
+        
+        # Extract labels from the specified columns
+        bag_labels = [int(patient_data.iloc[0][label]) for label in label_columns]
 
         # Add to dictionary
-        bags_dict[patient_id] = [bag_label, bag_files]
+        bags_dict[patient_id] = [bag_labels, bag_files]
 
-    return bags_dict # bag_id : [label, [image_files]]
+    return bags_dict # bag_id : [[labels], [image_files]]
 
 
 
@@ -320,7 +322,11 @@ def upsample_minority_class(bags_dict, seed=0):
     return bags_dict
     
     
-def prepare_all_data(export_location, case_study_data, breast_data, image_data, cropped_images, img_size, min_bag_size, max_bag_size):
+def prepare_all_data(export_location, label_columns, cropped_images, img_size, min_bag_size, max_bag_size):
+    
+    case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
+    breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
+    image_data = pd.read_csv(f'{export_location}/ImageData.csv')
     
     print("Preprocessing Data...")
     data = filter_raw_data(breast_data, image_data)
@@ -334,8 +340,8 @@ def prepare_all_data(export_location, case_study_data, breast_data, image_data, 
     train_data = data[data['Patient_ID'].isin(train_patient_ids)].reset_index(drop=True)
     val_data = data[data['Patient_ID'].isin(val_patient_ids)].reset_index(drop=True)
     
-    bags_train = create_bags(train_data, min_bag_size, max_bag_size, cropped_images)
-    bags_val = create_bags(val_data, min_bag_size, max_bag_size, cropped_images)
+    bags_train = create_bags(train_data, min_bag_size, max_bag_size, cropped_images, label_columns)
+    bags_val = create_bags(val_data, min_bag_size, max_bag_size, cropped_images, label_columns)
     
     bags_train = upsample_minority_class(bags_train)  # Upsample the minority class in the training set
     

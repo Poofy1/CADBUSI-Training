@@ -34,16 +34,18 @@ def collate_custom(batch):
     batch_ids = []  # List to store bag IDs
 
     for sample in batch:
-        image_data, label, bag_id = sample
+        image_data, labels, bag_id = sample
         batch_data.append(image_data)
-        batch_labels.append(label)
+        batch_labels.append(labels)  # labels are already tensors
         batch_ids.append(bag_id)  # Append the bag ID
 
-    out_labels = torch.tensor(batch_labels).cuda()
-    out_ids = torch.tensor(batch_ids).cuda()  # Convert bag IDs to a tensor
-    
-    return batch_data, out_labels, out_ids
+    # Using torch.stack for labels to handle multiple labels per bag
+    out_labels = torch.stack(batch_labels).cuda()
 
+    # Converting to a tensor
+    out_ids = torch.tensor(batch_ids, dtype=torch.long).cuda()
+
+    return batch_data, out_labels, out_ids
 
 
 class EmbeddingBagModel(nn.Module):
@@ -78,13 +80,15 @@ class EmbeddingBagModel(nn.Module):
             yhat_instances.append(yhat_ins)
             attention_scores.append(att_sc)
         
-        return logits.squeeze(1), saliency_maps, yhat_instances, attention_scores
+        return logits, saliency_maps, yhat_instances, attention_scores
 
 
 if __name__ == '__main__':
 
     # Config
     model_name = 'test2'
+    label_columns = ['Has_Malignant', 'Has_Benign']
+    encoder_arch = 'resnet18'
     img_size = 350
     batch_size = 5
     min_bag_size = 2
@@ -97,12 +101,9 @@ if __name__ == '__main__':
     cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
     #export_location = '/home/paperspace/cadbusi-LFS/export_09_28_2023/'
     #cropped_images = f"/home/paperspace/Temp_Data/{img_size}_images/"
-    case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
-    breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
-    image_data = pd.read_csv(f'{export_location}/ImageData.csv')
-    
-    
-    bags_train, bags_val = prepare_all_data(export_location, case_study_data, breast_data, image_data, cropped_images, img_size, min_bag_size, max_bag_size)
+
+    # Get Training Data
+    bags_train, bags_val = prepare_all_data(export_location, label_columns, cropped_images, img_size, min_bag_size, max_bag_size)
 
 
     print("Training Data...")
@@ -117,7 +118,7 @@ if __name__ == '__main__':
     train_dl =  TUD.DataLoader(dataset_train, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
     val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
 
-    encoder = create_timm_body('resnet18')
+    encoder = create_timm_body(encoder_arch)
     nf = num_features_model( nn.Sequential(*encoder.children()))
     
     # bag aggregator
@@ -181,9 +182,13 @@ if __name__ == '__main__':
             optimizer.step()
 
             total_loss += loss.item() * len(xb)
-            predicted = torch.round(outputs).squeeze()
+            predicted = (outputs > .5).float()
             total += yb.size(0)
-            correct += predicted.eq(yb.squeeze()).sum().item()
+            
+            if len(label_columns) == 1:  # Binary or single-label classification
+                correct += (predicted == yb).sum().item()
+            else:  # Multi-label classification
+                correct += ((predicted == yb).sum(dim=1) == len(label_columns)).sum().item()
 
         train_loss = total_loss / total
         train_acc = correct / total
@@ -205,9 +210,13 @@ if __name__ == '__main__':
                 loss = loss_func(outputs, yb)
                 
                 total_val_loss += loss.item() * len(xb)
-                predicted = torch.round(outputs).squeeze() 
+                predicted = (outputs > .5).float()
                 total += yb.size(0)
-                correct += predicted.eq(yb.squeeze()).sum().item()
+                
+                if len(label_columns) == 1:  # Binary or single-label classification
+                    correct += (predicted == yb).sum().item()
+                else:  # Multi-label classification
+                    correct += ((predicted == yb).sum(dim=1) == len(label_columns)).sum().item()
                 
                 # Confusion Matrix data
                 all_targs.extend(yb.cpu().numpy())

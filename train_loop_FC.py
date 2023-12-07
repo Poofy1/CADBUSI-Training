@@ -42,16 +42,18 @@ def collate_custom(batch):
     batch_ids = []  # List to store bag IDs
 
     for sample in batch:
-        image_data, label, bag_id = sample
+        image_data, labels, bag_id = sample
         batch_data.append(image_data)
-        batch_labels.append(label)
+        batch_labels.append(labels)  # labels are already tensors
         batch_ids.append(bag_id)  # Append the bag ID
 
-    out_labels = torch.tensor(batch_labels).cuda()
-    out_ids = torch.tensor(batch_ids).cuda()  # Convert bag IDs to a tensor
-    
-    return batch_data, out_labels, out_ids
+    # Using torch.stack for labels to handle multiple labels per bag
+    out_labels = torch.stack(batch_labels).cuda()
 
+    # Converting to a tensor
+    out_ids = torch.tensor(batch_ids, dtype=torch.long).cuda()
+
+    return batch_data, out_labels, out_ids
 
 
 class EmbeddingBagModel(nn.Module):
@@ -77,10 +79,7 @@ class EmbeddingBagModel(nn.Module):
         logits = torch.empty(num_bags, self.num_classes).cuda()
         yhat_instances, attention_scores = [], []
         
-        print(h_per_bag.shape)
-        
         for i, h in enumerate(h_per_bag):
-            print(h.shape)
             # Receive values from the aggregator
             yhat_bag, yhat_ins, att_sc = self.aggregator(h)
             
@@ -88,15 +87,15 @@ class EmbeddingBagModel(nn.Module):
             yhat_instances.append(yhat_ins)
             attention_scores.append(att_sc)
         
-        return logits.squeeze(1), yhat_instances, attention_scores
+        return logits, yhat_instances, attention_scores
 
 
 if __name__ == '__main__':
 
     # Config
-    pretrained_head = None
-    model_name = 'test'
+    model_name = 'FC_2Class_01'
     encoder_arch = 'resnet18'
+    label_columns = ['Has_Malignant', 'Has_Benign']
     img_size = 350
     batch_size = 5
     min_bag_size = 2
@@ -109,12 +108,9 @@ if __name__ == '__main__':
     cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
     #export_location = '/home/paperspace/cadbusi-LFS/export_09_28_2023/'
     #cropped_images = f"/home/paperspace/Temp_Data/{img_size}_images/"
-    case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
-    breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
-    image_data = pd.read_csv(f'{export_location}/ImageData.csv')
     
-    
-    bags_train, bags_val = prepare_all_data(export_location, case_study_data, breast_data, image_data, cropped_images, img_size, min_bag_size, max_bag_size)
+    # Get Training Data
+    bags_train, bags_val = prepare_all_data(export_location, label_columns, cropped_images, img_size, min_bag_size, max_bag_size)
 
 
     print("Training Data...")
@@ -132,32 +128,30 @@ if __name__ == '__main__':
     # Check if the model already exists
     model_folder = f"{env}/models/{model_name}/"
     model_path = f"{model_folder}/{model_name}.pth"
-    pretrained_path = f"{env}/models/{pretrained_head}/{pretrained_head}.pth"
     optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
     stats_path = f"{model_folder}/{model_name}_stats.pkl"
-    
-    model_exists = os.path.exists(model_path)
-    
+
     encoder = create_timm_body(encoder_arch)
     nf = num_features_model( nn.Sequential(*encoder.children()))
     
     # bag aggregator
-    aggregator = FC_aggregate( nf = nf, num_classes = 1, L = 128, fc_layers=[256, 64], dropout = .5)
+    aggregator = FC_aggregate( nf = nf, num_classes = len(label_columns), L = 128, fc_layers=[256, 64], dropout = .5)
 
     # total model
-    bagmodel = EmbeddingBagModel(encoder, aggregator).cuda()
+    bagmodel = EmbeddingBagModel(encoder, aggregator, num_classes = len(label_columns)).cuda()
     total_params = sum(p.numel() for p in bagmodel.parameters())
     print(f"Total Parameters: {total_params}")
         
         
     optimizer = Adam(bagmodel.parameters(), lr=lr)
+    
+    # Use BCE since we are doing multi label instead of multi class
     loss_func = nn.BCELoss()
+
     train_losses_over_epochs = []
     valid_losses_over_epochs = []
+    num_labels = len(label_columns)
     epoch_start = 0
-    
-    
-    
     
     if os.path.exists(model_path):
         bagmodel.load_state_dict(torch.load(model_path))
@@ -169,20 +163,13 @@ if __name__ == '__main__':
             train_losses_over_epochs = saved_stats['train_losses']
             valid_losses_over_epochs = saved_stats['valid_losses']
             epoch_start = saved_stats['epoch']
-            val_acc_best = saved_stats.get('val_acc', -1)  # If 'val_acc' does not exist, default to -1
+            val_loss_best = saved_stats['val_loss']
     else:
         print(f"{model_name} does not exist, creating new instance")
         os.makedirs(model_folder, exist_ok=True)
-        val_acc_best = -1 
-        
-        """if pretrained_head is not None and os.path.exists(pretrained_path):
-            print(f"Using pretrained head: {pretrained_head}")
-            #bagmodel.load_state_dict(torch.load(pretrained_path))
-            #encoder = create_custom_body(bagmodel)
-            bagmodel = EmbeddingBagModel(encoder, aggregator).cuda()"""
+        val_loss_best = 99999
     
-    
-    
+
     # Training loop
     for epoch in range(epoch_start, epochs):
         # Training phase
@@ -190,26 +177,29 @@ if __name__ == '__main__':
         total_loss = 0.0
         total_acc = 0
         total = 0
-        correct = 0
+        correct = [0] * num_labels
         for (data, yb, _) in tqdm(train_dl, total=len(train_dl)): 
             xb, yb = data, yb.cuda()
             
+            # Train
             optimizer.zero_grad()
-            
             outputs, _, _ = bagmodel(xb)
-
             loss = loss_func(outputs, yb)
-
             loss.backward()
             optimizer.step()
 
+            # Accuracy 
             total_loss += loss.item() * len(xb)
-            predicted = torch.round(outputs).squeeze()
+            predicted = (outputs > .5).float()
             total += yb.size(0)
-            correct += predicted.eq(yb.squeeze()).sum().item()
+            
+            # Calculate correct predictions for each label
+            for label_idx in range(num_labels):
+                correct[label_idx] += (predicted[:, label_idx] == yb[:, label_idx]).sum().item()
+            
 
         train_loss = total_loss / total
-        train_acc = correct / total
+        train_acc = [total_correct / total for total_correct in correct]
 
 
         # Evaluation phase
@@ -217,7 +207,7 @@ if __name__ == '__main__':
         total_val_loss = 0.0
         total_val_acc = 0.0
         total = 0
-        correct = 0
+        correct = [0] * num_labels
         all_targs = []
         all_preds = []
         with torch.no_grad():
@@ -228,9 +218,13 @@ if __name__ == '__main__':
                 loss = loss_func(outputs, yb)
                 
                 total_val_loss += loss.item() * len(xb)
-                predicted = torch.round(outputs).squeeze() 
+                
+                total_loss += loss.item() * len(xb)
+                predicted = (outputs > .5).float()
                 total += yb.size(0)
-                correct += predicted.eq(yb.squeeze()).sum().item()
+                
+                for label_idx in range(num_labels):
+                    correct[label_idx] += (predicted[:, label_idx] == yb[:, label_idx]).sum().item()
                 
                 # Confusion Matrix data
                 all_targs.extend(yb.cpu().numpy())
@@ -239,17 +233,27 @@ if __name__ == '__main__':
                 all_preds.extend(predicted.cpu().detach().numpy())
 
         val_loss = total_val_loss / total
-        val_acc = correct / total
+        val_acc = [total_correct / total for total_correct in correct]
         
         train_losses_over_epochs.append(train_loss)
         valid_losses_over_epochs.append(val_loss)
         
-        print(f"Epoch {epoch+1} | Acc   | Loss")
-        print(f"Train   | {train_acc:.4f} | {train_loss:.4f}")
-        print(f"Val     | {val_acc:.4f} | {val_loss:.4f}")
+        # Constructing header with label names
+        acc_headers = " | ".join(f"Acc ({name})" for name in label_columns)
+        header = f"Epoch {epoch+1} | {acc_headers} | Loss"
+
+        # Constructing training and validation accuracy strings
+        train_acc_str = " | ".join(f"{acc:.4f}" for acc in train_acc)
+        val_acc_str = " | ".join(f"{acc:.4f}" for acc in val_acc)
+
+        # Printing epoch summary
+        print(header)
+        print(f"Train   | {train_acc_str} | {train_loss:.4f}")
+        print(f"Val     | {val_acc_str} | {val_loss:.4f}")
+        
         
         # Save the model
-        if val_acc > val_acc_best:
-            val_acc_best = val_acc  # Update the best validation accuracy
-            save_state(epoch, train_acc, val_acc, model_folder, model_name, bagmodel, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs)
-            print("Saved checkpoint due to improved val_acc")
+        if val_loss < val_loss_best:
+            val_loss_best = val_loss  # Update the best validation accuracy
+            save_state(epoch, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, bagmodel, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs)
+            print("Saved checkpoint due to improved val_loss")

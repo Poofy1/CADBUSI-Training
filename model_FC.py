@@ -52,6 +52,6 @@ class FC_aggregate(nn.Module):
         # Aggregate instance predictions to get the final bag prediction
         yhat_bag = (attention_scores * yhat_instance).sum(dim=0)
         
-        yhat_bag = torch.sigmoid(yhat_bag) # only works with one class currently
+        yhat_bag = torch.sigmoid(yhat_bag)
 
         return yhat_bag, yhat_instance, attention_scores

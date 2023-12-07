@@ -7,6 +7,7 @@ from tqdm import tqdm
 from torch import nn
 from training_eval import *
 from torch.optim import Adam
+from torch.cuda.amp import autocast
 from data_prep import *
 from model_FC import *
 env = os.path.dirname(os.path.abspath(__file__))
@@ -21,60 +22,6 @@ class TwoCropTransform:
     def __call__(self, x):
         return [self.transform(x), self.transform(x)]
     
-
-class ContrastiveLoader(TUD.Dataset):
-
-    def __init__(self, bags_dict, train=True, save_processed=False):
-        self.bags_dict = bags_dict
-        self.unique_bag_ids = list(bags_dict.keys())
-        self.save_processed = save_processed
-        self.train = train
-
-        if train:
-            self.tsfms = TwoCropTransform(T.Compose([
-                T.RandomVerticalFlip(),
-                T.RandomHorizontalFlip(),
-                T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
-                #HistogramEqualization(),
-                #T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
-                #GaussianNoise(mean=0, std=0.015),
-                CLAHETransform(),
-                T.ToTensor(),
-                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            ]))
-        else:
-            self.tsfms = TwoCropTransform(T.Compose([
-                CLAHETransform(),
-                T.ToTensor(),
-                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            ]))
-
-    def __getitem__(self, index):
-        actual_id = self.unique_bag_ids[index]
-        label, files_this_bag = self.bags_dict[actual_id]
-        
-        im_q_list = []
-        im_k_list = []
-
-        for fn in files_this_bag:
-            img = Image.open(fn).convert("RGB")
-            im_q, im_k = self.tsfms(img)  # Apply two-crop transform
-            im_q_list.append(im_q)
-            im_k_list.append(im_k)
-
-        # Stack the images to create batches
-        im_q = torch.stack(im_q_list).cuda() 
-        im_k = torch.stack(im_k_list).cuda() 
-
-        label = torch.tensor(label, dtype=torch.float32)
-
-        return (im_q, im_k), label, actual_id
-
-    def __len__(self):
-        return len(self.unique_bag_ids)
-    
-    def n_features(self):
-        return self.data.size(1)
     
     
 # this function is used to cut off the head of a pretrained timm model and return the body
@@ -92,25 +39,23 @@ def create_timm_body(arch:str, pretrained=True, cut=None, n_in=3):
     
     
 def collate_custom(batch):
-    batch_im_q = []
-    batch_im_k = []
+    batch_data = []
     batch_labels = []
     batch_ids = []  # List to store bag IDs
 
-    for (im_q, im_k), label, bag_id in batch:
-        batch_im_q.append(im_q)
-        batch_im_k.append(im_k)
-        batch_labels.append(label)
+    for sample in batch:
+        image_data, labels, bag_id = sample
+        batch_data.append(image_data)
+        batch_labels.append(labels)  # labels are already tensors
         batch_ids.append(bag_id)  # Append the bag ID
 
-    # Stack images from all bags for im_q and im_k
-    batch_im_q = torch.cat(batch_im_q, dim=0).cuda()
-    batch_im_k = torch.cat(batch_im_k, dim=0).cuda()
+    # Using torch.stack for labels to handle multiple labels per bag
+    out_labels = torch.stack(batch_labels).cuda()
 
-    out_labels = torch.tensor(batch_labels).cuda()
-    out_ids = torch.tensor(batch_ids).cuda()  # Convert bag IDs to a tensor
+    # Converting to a tensor
+    out_ids = torch.tensor(batch_ids, dtype=torch.long).cuda()
 
-    return (batch_im_q, batch_im_k), out_labels, out_ids
+    return batch_data, out_labels, out_ids
 
 
 
@@ -146,7 +91,7 @@ class EmbeddingBagModel(nn.Module):
             yhat_instances.append(yhat_ins)
             attention_scores.append(att_sc)
         
-        return logits.squeeze(1), yhat_instances, attention_scores
+        return logits, yhat_instances, attention_scores
 
 
 
@@ -225,23 +170,23 @@ def mix_fn(x, y, alpha, kind):
 
 def mix_target(y_a, y_b, lam, num_classes):
     # Debug: Print shapes and types of y_a, y_b, and lam
-    print("y_a original:", y_a, "Shape:", y_a.shape, "Type:", y_a.dtype)
-    print("y_b original:", y_b, "Shape:", y_b.shape, "Type:", y_b.dtype)
-    print("lam:", lam, "Type:", lam.dtype)
+    #print("y_a original:", y_a, "Shape:", y_a.shape, "Type:", y_a.dtype)
+    #print("y_b original:", y_b, "Shape:", y_b.shape, "Type:", y_b.dtype)
+    #print("lam:", lam, "Type:", lam.dtype)
 
     # Ensure y_a and y_b are tensors with at least 1 dimension
     y_a = y_a if y_a.dim() > 0 else y_a.unsqueeze(0)
     y_b = y_b if y_b.dim() > 0 else y_b.unsqueeze(0)
 
     # Debug: Print shapes after potential unsqueeze operation
-    print("y_a adjusted:", y_a.shape)
-    print("y_b adjusted:", y_b.shape)
+    #print("y_a adjusted:", y_a.shape)
+    #print("y_b adjusted:", y_b.shape)
 
     # Mix the labels based on lambda
     mixed_labels = lam * y_a + (1 - lam) * y_b
 
     # Debug: Print the mixed labels
-    print("Mixed labels:", mixed_labels, "Shape:", mixed_labels.shape)
+    #print("Mixed labels:", mixed_labels, "Shape:", mixed_labels.shape)
 
     return mixed_labels
 
@@ -320,9 +265,10 @@ def _rand_bbox(size, lam):
 if __name__ == '__main__':
 
     # Config
-    pretrained_head = None
+    teacher_name = 'FC_test_2'
     model_name = 'test'
     encoder_arch = 'resnet18'
+    label_columns = ['Has_Malignant', 'Has_Benign']
     img_size = 350
     batch_size = 5
     min_bag_size = 2
@@ -330,6 +276,8 @@ if __name__ == '__main__':
     tempurature = 0.07
     epochs = 500
     class_num = 1
+    KD_alpha = .5 # ratio of training from the teacher model
+    KD_temp = 1 # Smoothing (Tempurature) 
     lr = 0.001
 
     # Paths
@@ -337,12 +285,9 @@ if __name__ == '__main__':
     cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
     #export_location = '/home/paperspace/cadbusi-LFS/export_09_28_2023/'
     #cropped_images = f"/home/paperspace/Temp_Data/{img_size}_images/"
-    case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
-    breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
-    image_data = pd.read_csv(f'{export_location}/ImageData.csv')
     
-    
-    bags_train, bags_val = prepare_all_data(export_location, case_study_data, breast_data, image_data, cropped_images, img_size, min_bag_size, max_bag_size)
+    # Get Training Data
+    bags_train, bags_val = prepare_all_data(export_location, label_columns, cropped_images, img_size, min_bag_size, max_bag_size)
 
 
     print("Training Data...")
@@ -360,12 +305,10 @@ if __name__ == '__main__':
     # Check if the model already exists
     model_folder = f"{env}/models/{model_name}/"
     model_path = f"{model_folder}/{model_name}.pth"
-    pretrained_path = f"{env}/models/{pretrained_head}/{pretrained_head}.pth"
+    teacher_path = f"{model_folder}/{teacher_name}.pth"
     optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
     stats_path = f"{model_folder}/{model_name}_stats.pkl"
-    
-    model_exists = os.path.exists(model_path)
-    
+
     encoder = create_timm_body(encoder_arch)
     nf = num_features_model( nn.Sequential(*encoder.children()))
     criterion = GenSupConLoss(temperature=tempurature)
@@ -375,6 +318,7 @@ if __name__ == '__main__':
 
     # total model
     bagmodel = EmbeddingBagModel(encoder, aggregator).cuda()
+    teacher_model = EmbeddingBagModel(encoder, aggregator).cuda()
     total_params = sum(p.numel() for p in bagmodel.parameters())
     print(f"Total Parameters: {total_params}")
         
@@ -384,7 +328,10 @@ if __name__ == '__main__':
     valid_losses_over_epochs = []
     epoch_start = 0
     
-    
+    if os.path.exists(teacher_path):
+        teacher_model.load_state_dict(torch.load(teacher_path))
+        teacher_model.eval()
+        print(f"Loaded pre-existing teacher model from {model_name}")
     
     
     if os.path.exists(model_path):
@@ -402,12 +349,7 @@ if __name__ == '__main__':
         print(f"{model_name} does not exist, creating new instance")
         os.makedirs(model_folder, exist_ok=True)
         val_acc_best = -1 
-        
-        """if pretrained_head is not None and os.path.exists(pretrained_path):
-            print(f"Using pretrained head: {pretrained_head}")
-            #bagmodel.load_state_dict(torch.load(pretrained_path))
-            #encoder = create_custom_body(bagmodel)
-            bagmodel = EmbeddingBagModel(encoder, aggregator).cuda()"""
+
     
     
     
@@ -432,11 +374,12 @@ if __name__ == '__main__':
             l_q = mix_target(y0a, y0b, lam0, class_num)
             l_k = mix_target(y1a, y1b, lam1, class_num)
             
-            if False: # KD (Teacher)
-                with torch.no_grad():
-                    with autocast():
-                        preds = F.softmax(teacher(images) / args.KD_temp, dim=1)
-                        teacher_q, teacher_k = torch.split(preds, [bsz, bsz], dim=0)
+            # Get teacher results
+            with torch.no_grad():
+                with autocast():
+                    teacher_logits, _, _ = teacher_model(xb)
+                    preds = F.softmax(teacher_logits / KD_temp, dim=1)
+                    teacher_q, teacher_k = torch.split(preds, [bsz, bsz], dim=0)
 
             
 
@@ -446,21 +389,23 @@ if __name__ == '__main__':
             
             optimizer.zero_grad()
             
-            if False: # (Teacher)
-                if args.KD_alpha == float('inf'): # only learn from teacher's prediction
-                    loss = criterion(features, [teacher_q, teacher_k])
-                else:
-                    loss = criterion(features, [l_q, l_k]) + args.KD_alpha * criterion(features, [teacher_q, teacher_k])
-            else: # no KD
-                loss = criterion(features, l_q)
+            if KD_alpha == float('inf'): # only learn from teacher's prediction
+                loss = criterion(features, [teacher_q, teacher_k])
+            else:
+                loss = criterion(features, [l_q, l_k]) + KD_alpha * criterion(features, [teacher_q, teacher_k])
+                
+            print(loss)
             
             loss.backward()
             optimizer.step()
 
             total_loss += loss.item() * len(xb)
-            predicted = torch.round(outputs).squeeze()
+            predicted = (outputs > .5).float()
             total += yb.size(0)
-            correct += predicted.eq(yb.squeeze()).sum().item()
+            if len(label_columns) == 1:  # Binary or single-label classification
+                correct += (predicted == yb).sum().item()
+            else:  # Multi-label classification
+                correct += ((predicted == yb).sum(dim=1) == len(label_columns)).sum().item()
 
         train_loss = total_loss / total
         train_acc = correct / total
@@ -482,9 +427,12 @@ if __name__ == '__main__':
                 loss = nn.BCELoss(outputs, yb)
                 
                 total_val_loss += loss.item() * len(xb)
-                predicted = torch.round(outputs).squeeze() 
+                predicted = (outputs > .5).float()
                 total += yb.size(0)
-                correct += predicted.eq(yb.squeeze()).sum().item()
+                if len(label_columns) == 1:  # Binary or single-label classification
+                    correct += (predicted == yb).sum().item()
+                else:  # Multi-label classification
+                    correct += ((predicted == yb).sum(dim=1) == len(label_columns)).sum().item()
                 
                 # Confusion Matrix data
                 all_targs.extend(yb.cpu().numpy())
