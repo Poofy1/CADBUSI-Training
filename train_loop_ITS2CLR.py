@@ -353,8 +353,8 @@ def default_train():
 if __name__ == '__main__':
 
     # Config
-    model_name = 'testing'
-    label_columns = ['Has_Malignant', 'Has_Benign']
+    model_name = 'testing2'
+    label_columns = ['Has_Malignant']
     encoder_arch = 'resnet18'
     img_size = 350
     batch_size = 5
@@ -475,6 +475,10 @@ if __name__ == '__main__':
                     bag_features = bag_features.to(device)
                     bag_pseudo_labels_tensor = bag_pseudo_labels_list.to(device)
                     #bag_pseudo_labels_tensor = torch.tensor(bag_pseudo_labels_list, dtype=torch.float32).to(device)
+                    
+                    zjs = F.normalize(bag_features, dim=1)
+
+                    bag_features = torch.cat([zjs.unsqueeze(1), zjs.unsqueeze(1)], dim=1)
                     
                     print("final: ", bag_pseudo_labels_tensor)
                     print("bag_features: ", bag_features.shape)

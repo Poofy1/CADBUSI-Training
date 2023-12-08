@@ -93,7 +93,7 @@ class EmbeddingBagModel(nn.Module):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'FC_2Class_01'
+    model_name = 'test'
     encoder_arch = 'resnet18'
     label_columns = ['Has_Malignant', 'Has_Benign']
     img_size = 350
@@ -135,7 +135,7 @@ if __name__ == '__main__':
     nf = num_features_model( nn.Sequential(*encoder.children()))
     
     # bag aggregator
-    aggregator = FC_aggregate( nf = nf, num_classes = len(label_columns), L = 128, fc_layers=[256, 64], dropout = .5)
+    aggregator = FC_aggregate( nf = nf, num_classes = len(label_columns), L = 128, fc_layers=[256, 64], dropout = .6)
 
     # total model
     bagmodel = EmbeddingBagModel(encoder, aggregator, num_classes = len(label_columns)).cuda()
