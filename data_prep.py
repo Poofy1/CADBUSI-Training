@@ -8,6 +8,7 @@ from tqdm import tqdm
 import torchvision.transforms as T
 import numpy as np
 import cv2
+import ast
 from PIL import ImageOps
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -159,7 +160,7 @@ class BagOfImagesDataset(TUD.Dataset):
                 #HistogramEqualization(),
                 CLAHETransform(),
                 T.ToTensor(),
-                #GaussianNoise(mean=0, std=0.015),  # Add slight noise
+                GaussianNoise(mean=0, std=0.015),  # Add slight noise
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
         else:
@@ -200,71 +201,50 @@ class BagOfImagesDataset(TUD.Dataset):
 
 
 
-
-def filter_raw_data(breast_data, image_data):
-
-    # Join dataframes on PatientID
-    data = pd.merge(breast_data, image_data, left_on=['Accession_Number', 'Breast'], right_on=['Accession_Number', 'laterality'], suffixes=('', '_image_data'))
-
-    # Remove columns from image_data that also exist in breast_data
-    for col in breast_data.columns:
-        if col + '_image_data' in data.columns:
-            data.drop(col + '_image_data', axis=1, inplace=True)
-    
-    
-    data = data[data['Has_Unknown'] == False]
-
-    # Reset the index
-    data.reset_index(drop=True, inplace=True)
-    
-    data.to_csv(f'D:/DATA/CASBUSI/exports/export_10_31_2023/testing.csv')
-    
-    return data
-
-
 def create_bags(data, min_size, max_size, root_dir, label_columns):
-    unique_patient_ids = data['Accession_Number'].unique()
+    bags_dict = {}  # This will be indexed by ID
+    
+    total_rows = len(data)
 
-    bags_dict = {}  # This will be indexed by bag_id
-
-    for patient_id in tqdm(unique_patient_ids):
-        patient_data = data[data['Accession_Number'] == patient_id]
+    for _, row in tqdm(data.iterrows(), total = total_rows):
+        # Parse the 'Images' column to get the list of images
+        image_files = ast.literal_eval(row['Images'])
 
         # Exclude bags that are outside the size range
-        if not (min_size <= len(patient_data) <= max_size):
+        if not (min_size <= len(image_files) <= max_size):
             continue
 
-        # Initialize the list of file names for this bag
-        bag_files = [os.path.join(root_dir, row['ImageName']) for _, row in patient_data.iterrows()]
-        
+        # Create the full path for each image file
+        bag_files = [os.path.join(root_dir, img_name) for img_name in image_files]
+
         # Extract labels from the specified columns
-        bag_labels = [int(patient_data.iloc[0][label]) for label in label_columns]
+        bag_labels = [int(row[label]) for label in label_columns]
 
         # Add to dictionary
-        bags_dict[patient_id] = [bag_labels, bag_files]
+        bags_dict[row['ID']] = [bag_labels, bag_files]
 
-    return bags_dict # bag_id : [[labels], [image_files]]
-
+    return bags_dict  # ID : [[labels], [image_files]]
 
 
 
 def count_bag_labels(bags_dict):
-    positive_bag_count = 0
-    negative_bag_count = 0
+    label_combinations_count = {}
 
     for bag_id, bag_contents in bags_dict.items():
-        label = bag_contents[0]  # The label is the first element in the list
-        if label == 1:
-            positive_bag_count += 1
-        else:
-            negative_bag_count += 1
+        # Convert the label list to a tuple so it can be used as a dictionary key
+        label_tuple = tuple(bag_contents[0])
 
-    return positive_bag_count, negative_bag_count
+        if label_tuple not in label_combinations_count:
+            label_combinations_count[label_tuple] = 0
+        label_combinations_count[label_tuple] += 1
+
+    # Print counts for each label combination
+    for label_combination, count in label_combinations_count.items():
+        print(f"Label combination {label_combination}: {count} bags")
 
 
-def process_single_image(row, root_dir, output_dir, resize_and_pad):
+def process_single_image(img_name, root_dir, output_dir, resize_and_pad):
     try:
-        img_name = row['ImageName']
         input_path = os.path.join(f'{root_dir}images/', img_name)
         output_path = os.path.join(output_dir, img_name)
 
@@ -282,38 +262,40 @@ def preprocess_and_save_images(data, root_dir, output_dir, image_size, fill=0):
         os.makedirs(output_dir)
 
     resize_and_pad = ResizeAndPad(image_size, fill=fill)
-    data_rows = [row for _, row in data.iterrows()]  # Convert the DataFrame to a list of rows
+
+    # Flatten the data to have a list of image names with their corresponding row data
+    flattened_data = [(img_name, row) for _, row in data.iterrows() for img_name in ast.literal_eval(row['Images'])]
 
     with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
-        futures = {executor.submit(process_single_image, row, root_dir, output_dir, resize_and_pad): row for row in data_rows}
+        futures = {executor.submit(process_single_image, img_name, root_dir, output_dir, resize_and_pad): (img_name, row) for img_name, row in flattened_data}
 
         with tqdm(total=len(futures)) as pbar:
             for future in as_completed(futures):
-                future.result()  # We don't actually use the result, but this will raise any exceptions
+                future.result()  # This will raise any exceptions
                 pbar.update()
 
 
 def upsample_minority_class(bags_dict, seed=0):
     np.random.seed(seed)  # for reproducibility
-    
+
     # Convert dict to list of tuples for easy processing
     bags_list = [(bag_id, info) for bag_id, info in bags_dict.items()]
 
-    # Separate bags by class
-    class_0_bags = [bag for bag in bags_list if bag[1][0] == 0]
-    class_1_bags = [bag for bag in bags_list if bag[1][0] == 1]
-    
+    # Extract the first label from the label list for each bag
+    class_0_bags = [bag for bag in bags_list if bag[1][0][0] == 0]
+    class_1_bags = [bag for bag in bags_list if bag[1][0][0] == 1]
+
     # Identify the minority class
     minority_bags = class_0_bags if len(class_0_bags) < len(class_1_bags) else class_1_bags
     majority_bags = class_1_bags if len(class_0_bags) < len(class_1_bags) else class_0_bags
-    
+
     # Calculate how many duplicates are needed
     num_to_oversample = len(majority_bags) - len(minority_bags)
-    
-    # Randomly duplicate minority class bags and assign new unique ids
+
+    # Randomly duplicate minority class bags
     oversampled_bags = resample(minority_bags, n_samples=num_to_oversample, random_state=seed)
     max_existing_id = max(bags_dict.keys())
-    
+
     # Add the oversampled bags to the bags_dict with new IDs
     for bag in oversampled_bags:
         max_existing_id += 1  # increment to get a new unique ID
@@ -321,24 +303,34 @@ def upsample_minority_class(bags_dict, seed=0):
 
     return bags_dict
     
-    
+
+def save_bags_to_csv(bags_dict, file_path):
+    with open(file_path, mode='w', newline='', encoding='utf-8') as file:
+        writer = csv.writer(file)
+        # Write header
+        writer.writerow(['Bag_ID', 'Labels', 'Image_Files'])
+
+        for bag_id, bag_contents in bags_dict.items():
+            # Flatten image file paths into a single string
+            images_str = ';'.join(bag_contents[1])
+            # Convert labels list to string
+            labels_str = ','.join(map(str, bag_contents[0]))
+            # Write row
+            writer.writerow([bag_id, labels_str, images_str])
+
 def prepare_all_data(export_location, label_columns, cropped_images, img_size, min_bag_size, max_bag_size):
     
-    case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
-    breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
-    image_data = pd.read_csv(f'{export_location}/ImageData.csv')
-    
     print("Preprocessing Data...")
-    data = filter_raw_data(breast_data, image_data)
+    data = pd.read_csv(f'{export_location}/TrainData.csv')
        
     #Cropping images
     preprocess_and_save_images(data, export_location, cropped_images, img_size)
     
     # Split the data into training and validation sets
-    train_patient_ids = case_study_data[case_study_data['valid'] == 0]['Patient_ID']
-    val_patient_ids = case_study_data[case_study_data['valid'] == 1]['Patient_ID']
-    train_data = data[data['Patient_ID'].isin(train_patient_ids)].reset_index(drop=True)
-    val_data = data[data['Patient_ID'].isin(val_patient_ids)].reset_index(drop=True)
+    train_patient_ids = data[data['Valid'] == 0]['ID']
+    val_patient_ids = data[data['Valid'] == 1]['ID']
+    train_data = data[data['ID'].isin(train_patient_ids)].reset_index(drop=True)
+    val_data = data[data['ID'].isin(val_patient_ids)].reset_index(drop=True)
     
     bags_train = create_bags(train_data, min_bag_size, max_bag_size, cropped_images, label_columns)
     bags_val = create_bags(val_data, min_bag_size, max_bag_size, cropped_images, label_columns)
@@ -347,8 +339,6 @@ def prepare_all_data(export_location, label_columns, cropped_images, img_size, m
     
     print(f'There are {len(bags_train)} files in the training data')
     print(f'There are {len(bags_val)} files in the validation data')
-    malignant_count, non_malignant_count = count_bag_labels(bags_train)
-    print(f"Number of Malignant Bags: {malignant_count}")
-    print(f"Number of Non-Malignant Bags: {non_malignant_count}")
-    
+    count_bag_labels(bags_train)
+    save_bags_to_csv(bags_train, 'F:/Temp_SSD_Data/bags_train.csv')
     return bags_train, bags_val
