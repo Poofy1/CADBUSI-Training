@@ -1,31 +1,15 @@
 import os, pickle
-from timm import create_model
 from fastai.vision.all import *
 import torch.utils.data as TUD
-from fastai.vision.learner import _update_first_layer
 from tqdm import tqdm
 from torch import nn
-from training_eval import *
+from archs.save_arch import *
 from torch.optim import Adam
-from data_prep import *
-from model_ABMIL import *
-from model_TransMIL import *
+from data.format_data import *
+from archs.model_ABMIL import *
+from archs.backbone import create_timm_body
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
-os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
-
-
-# this function is used to cut off the head of a pretrained timm model and return the body
-def create_timm_body(arch:str, pretrained=True, cut=None, n_in=3):
-    "Creates a body from any model in the `timm` library."
-    model = create_model(arch, pretrained=pretrained, num_classes=0, global_pool='')
-    _update_first_layer(model, n_in, pretrained)
-    if cut is None:
-        ll = list(enumerate(model.children()))
-        cut = next(i for i,o in reversed(ll) if has_pool_type(o))
-    if isinstance(cut, int): return nn.Sequential(*list(model.children())[:cut])
-    elif callable(cut): return cut(model)
-    else: raise NameError("cut must be either integer or function")
 
 
 def collate_custom(batch):
@@ -34,19 +18,15 @@ def collate_custom(batch):
     batch_ids = []  # List to store bag IDs
 
     for sample in batch:
-        image_data, labels, bag_id = sample
+        image_data, label, bag_id = sample
         batch_data.append(image_data)
-        batch_labels.append(labels)  # labels are already tensors
+        batch_labels.append(label)
         batch_ids.append(bag_id)  # Append the bag ID
 
-    # Using torch.stack for labels to handle multiple labels per bag
-    out_labels = torch.stack(batch_labels).cuda()
-
-    # Converting to a tensor
-    out_ids = torch.tensor(batch_ids, dtype=torch.long).cuda()
-
+    out_labels = torch.tensor(batch_labels).cuda()
+    out_ids = torch.tensor(batch_ids).cuda()  # Convert bag IDs to a tensor
+    
     return batch_data, out_labels, out_ids
-
 
 class EmbeddingBagModel(nn.Module):
     
@@ -55,7 +35,8 @@ class EmbeddingBagModel(nn.Module):
         self.encoder = encoder
         self.aggregator = aggregator
         self.num_classes = num_classes
-
+                    
+                
     def forward(self, input):
         num_bags = len(input) # input = [bag #, image #, channel, height, width]
         
@@ -64,6 +45,7 @@ class EmbeddingBagModel(nn.Module):
         
         # Calculate the embeddings for all images in one go
         h_all = self.encoder(all_images)
+
         
         # Split the embeddings back into per-bag embeddings
         split_sizes = [bag.size(0) for bag in input]
@@ -72,6 +54,7 @@ class EmbeddingBagModel(nn.Module):
         saliency_maps, yhat_instances, attention_scores = [], [], []
         
         for i, h in enumerate(h_per_bag):
+            
             # Receive four values from the aggregator
             yhat_bag, sm, yhat_ins, att_sc = self.aggregator(h)
             
@@ -80,25 +63,89 @@ class EmbeddingBagModel(nn.Module):
             yhat_instances.append(yhat_ins)
             attention_scores.append(att_sc)
         
-        return logits, saliency_maps, yhat_instances, attention_scores
+        return logits.squeeze(1), saliency_maps, yhat_instances, attention_scores
+
+
+
+def split_bag_fixed_size(x, sub_bag_size):
+    """Split a bag into smaller bags with sub_bag_size images, filling the last sub-bag if necessary."""
+    # Randomly shuffle the images
+    indices = torch.randperm(x.size(0))
+    x = x[indices]
+    
+    # Calculate the number of sub-bags
+    num_sub_bags = (x.size(0) + sub_bag_size - 1) // sub_bag_size  # Ceiling division
+    
+    sub_bags = []
+    for i in range(num_sub_bags):
+        start_idx = i * sub_bag_size
+        end_idx = min(start_idx + sub_bag_size, x.size(0))  # Avoid going out of bounds
+
+        # If this is the last sub-bag and it's smaller than sub_bag_size, fill it with random samples
+        if i == num_sub_bags - 1 and end_idx - start_idx < sub_bag_size:
+            size_diff = sub_bag_size - (end_idx - start_idx)
+            padding_indices = torch.randint(low=0, high=x.size(0), size=(size_diff,))
+            sub_bag = torch.cat([x[start_idx:end_idx], x[padding_indices]], dim=0)
+        else:
+            sub_bag = x[start_idx:end_idx]
+
+        sub_bags.append(sub_bag)
+
+    return sub_bags
+
+def mixup_subbags(x, y, alpha, sub_bag_size=4):
+    '''Returns mixed inputs, pairs of targets, and lambda'''
+    if alpha > 0:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1
+
+    batch_size = len(x)
+    index = torch.randperm(batch_size)
+
+    mixed_x = []
+    for i in range(batch_size):
+        # Split bags into sub-bags of fixed size
+        sub_bags_x1 = split_bag_fixed_size(x[i], sub_bag_size)
+        sub_bags_x2 = split_bag_fixed_size(x[index[i]], sub_bag_size)
+
+        mixed_sub_bags = []
+        min_len = min(len(sub_bags_x1), len(sub_bags_x2))  # Get minimum length to avoid index out of range
+        for j in range(min_len):
+            sub_x1, sub_x2 = sub_bags_x1[j], sub_bags_x2[j]
+
+            # Perform mixup on sub-bags
+            mixed_sub_bag = lam * sub_x1 + (1 - lam) * sub_x2
+            mixed_sub_bags.append(mixed_sub_bag)
+
+        # Recombine into a single bag
+        mixed_x.append(torch.cat(mixed_sub_bags))
+
+    # Mixing up the labels
+    y_a, y_b = y, y[index]
+    mixed_y = lam * y_a + (1 - lam) * y_b
+
+    return mixed_x, mixed_y, lam, index
 
 
 if __name__ == '__main__':
 
     # Config
-    model_name = 'test2'
-    label_columns = ['Has_Malignant', 'Has_Benign']
+    model_name = 'test'
     encoder_arch = 'resnet18'
+    dataset_name = 'export_11_11_2023'
+    label_columns = ['Has_Malignant', 'Has_Benign']
     img_size = 350
     batch_size = 5
     min_bag_size = 2
     max_bag_size = 20
-    epochs = 500
+    epochs = 10000
+    alpha = .4
     lr = 0.001
 
     # Paths
-    export_location = 'D:/DATA/CASBUSI/exports/export_11_11_2023/'
-    cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
+    export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
+    cropped_images = f"F:/Temp_SSD_Data/{dataset_name}_{img_size}_images/"
     #export_location = '/home/paperspace/cadbusi-LFS/export_09_28_2023/'
     #cropped_images = f"/home/paperspace/Temp_Data/{img_size}_images/"
 
@@ -108,21 +155,24 @@ if __name__ == '__main__':
 
     print("Training Data...")
     # Create datasets
-    #dataset_train = TUD.Subset(BagOfImagesDataset(bags_train),list(range(0,100)))
-    #dataset_val = TUD.Subset(BagOfImagesDataset(bags_val),list(range(0,100)))
+    #dataset_train = TUD.Subset(BagOfImagesDataset( files_train, ids_train, labels_train),list(range(0,100)))
+    #dataset_val = TUD.Subset(BagOfImagesDataset( files_val, ids_val, labels_val),list(range(0,100)))
     dataset_train = BagOfImagesDataset(bags_train, save_processed=False)
     dataset_val = BagOfImagesDataset(bags_val, train=False)
 
-            
+
+        
     # Create data loaders
     train_dl =  TUD.DataLoader(dataset_train, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
     val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
 
-    encoder = create_timm_body(encoder_arch)
+
+    encoder = create_timm_body('resnet50')
     nf = num_features_model( nn.Sequential(*encoder.children()))
     
     # bag aggregator
-    aggregator = ABMIL_aggregate( nf = nf, num_classes = 1, pool_patches = 6, L = 128)
+    aggregator = ABMIL_aggregate( nf = nf, num_classes = 1, pool_patches = 3, L = 128)
+    #aggregator = TransMIL(dim_in=nf, dim_hid=512, n_classes=1)
 
     # total model
     bagmodel = EmbeddingBagModel(encoder, aggregator).cuda()
@@ -172,23 +222,32 @@ if __name__ == '__main__':
         for (data, yb, _) in tqdm(train_dl, total=len(train_dl)): 
             xb, yb = data, yb.cuda()
             
+            mixed_x, mixed_y, lam, index = mixup_subbags(xb, yb, alpha=alpha, sub_bag_size=3)
+            
             optimizer.zero_grad()
             
-            outputs, _, _, _ = bagmodel(xb)
+            outputs, _, _, _ = bagmodel(mixed_x)
 
-            loss = loss_func(outputs, yb)
-
+            loss = loss_func(outputs, mixed_y)
+            
             loss.backward()
             optimizer.step()
 
             total_loss += loss.item() * len(xb)
-            predicted = (outputs > .5).float()
-            total += yb.size(0)
             
-            if len(label_columns) == 1:  # Binary or single-label classification
-                correct += (predicted == yb).sum().item()
-            else:  # Multi-label classification
-                correct += ((predicted == yb).sum(dim=1) == len(label_columns)).sum().item()
+            # Calculate accuracy taking mixup into account
+            with torch.no_grad():
+                predicted = torch.round(outputs).squeeze()
+                # split mixed labels back into the original labels
+                orig_labels_1, orig_labels_2 = yb, yb[index]
+                # calculate accuracy for each set of labels
+                correct_label_1 = (predicted == orig_labels_1).float()
+                correct_label_2 = (predicted == orig_labels_2).float()
+                # mixup accuracy: weighted average of the accuracy for each set of labels
+                mixup_acc = lam * correct_label_1 + (1 - lam) * correct_label_2
+
+            total += mixed_y.size(0)
+            correct += mixup_acc.sum().item()
 
         train_loss = total_loss / total
         train_acc = correct / total
@@ -206,17 +265,14 @@ if __name__ == '__main__':
             for (data, yb, _) in tqdm(val_dl, total=len(val_dl)): 
                 xb, yb = data, yb.cuda()
 
+
                 outputs, _, _, _ = bagmodel(xb)
                 loss = loss_func(outputs, yb)
                 
                 total_val_loss += loss.item() * len(xb)
-                predicted = (outputs > .5).float()
+                predicted = torch.round(outputs).squeeze() 
                 total += yb.size(0)
-                
-                if len(label_columns) == 1:  # Binary or single-label classification
-                    correct += (predicted == yb).sum().item()
-                else:  # Multi-label classification
-                    correct += ((predicted == yb).sum(dim=1) == len(label_columns)).sum().item()
+                correct += predicted.eq(yb.squeeze()).sum().item()
                 
                 # Confusion Matrix data
                 all_targs.extend(yb.cpu().numpy())

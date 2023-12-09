@@ -1,41 +1,17 @@
 import os, pickle
-from timm import create_model
 from fastai.vision.all import *
 import torch.utils.data as TUD
-from fastai.vision.learner import _update_first_layer
 from tqdm import tqdm
 from torch import nn
-from training_eval import *
+from archs.save_arch import *
 from torch.optim import Adam
-from data_prep import *
-from model_ABMIL import *
-from model_TransMIL import *
+from data.format_data import *
+from archs.model_ABMIL import *
+from archs.backbone import create_timm_body
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
-
-
-# this function is used to cut off the head of a pretrained timm model and return the body
-def create_timm_body(arch:str, pretrained=True, cut=None, n_in=3):
-    "Creates a body from any model in the `timm` library."
-    model = create_model(arch, pretrained=pretrained, num_classes=0, global_pool='')
-    _update_first_layer(model, n_in, pretrained)
-    if cut is None:
-        ll = list(enumerate(model.children()))
-        cut = next(i for i,o in reversed(ll) if has_pool_type(o))
-    if isinstance(cut, int): return nn.Sequential(*list(model.children())[:cut])
-    elif callable(cut): return cut(model)
-    else: raise NameError("cut must be either integer or function")
-
-def create_custom_body(model, pretrained=True, cut=None, n_in=3):
-    _update_first_layer(model, n_in, pretrained)
-    if cut is None:
-        ll = list(enumerate(model.children()))
-        cut = next(i for i,o in reversed(ll) if has_pool_type(o))
-    if isinstance(cut, int): return nn.Sequential(*list(model.children())[:cut])
-    elif callable(cut): return cut(model)
-    else: raise NameError("cut must be either integer or function")
     
     
 def collate_custom(batch):
@@ -353,20 +329,21 @@ def default_train():
 if __name__ == '__main__':
 
     # Config
-    model_name = 'testing2'
-    label_columns = ['Has_Malignant']
+    # Config
+    model_name = 'test'
     encoder_arch = 'resnet18'
+    dataset_name = 'export_11_11_2023'
+    label_columns = ['Has_Malignant']
     img_size = 350
     batch_size = 5
-    feature_extractor_train_count = 1
     min_bag_size = 2
-    max_bag_size = 18
+    max_bag_size = 20
     epochs = 500
     lr = 0.001
 
     # Paths
-    export_location = 'D:/DATA/CASBUSI/exports/export_11_11_2023/'
-    cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
+    export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
+    cropped_images = f"F:/Temp_SSD_Data/{dataset_name}_{img_size}_images/"
     #export_location = '/home/paperspace/cadbusi-LFS/export_09_28_2023/'
     #cropped_images = f"/home/paperspace/Temp_Data/{img_size}_images/"
     

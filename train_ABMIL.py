@@ -1,41 +1,18 @@
 import os, pickle
-from timm import create_model
 from fastai.vision.all import *
 import torch.utils.data as TUD
-from fastai.vision.learner import _update_first_layer
 from tqdm import tqdm
 from torch import nn
-from training_eval import *
+from archs.save_arch import *
 from torch.optim import Adam
-from data_prep import *
-from model_FC import *
+from data.format_data import *
+from archs.model_ABMIL import *
+from archs.backbone import create_timm_body
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 
 
-# this function is used to cut off the head of a pretrained timm model and return the body
-def create_timm_body(arch:str, pretrained=True, cut=None, n_in=3):
-    "Creates a body from any model in the `timm` library."
-    model = create_model(arch, pretrained=pretrained, num_classes=0, global_pool='')
-    _update_first_layer(model, n_in, pretrained)
-    if cut is None:
-        ll = list(enumerate(model.children()))
-        cut = next(i for i,o in reversed(ll) if has_pool_type(o))
-    if isinstance(cut, int): return nn.Sequential(*list(model.children())[:cut])
-    elif callable(cut): return cut(model)
-    else: raise NameError("cut must be either integer or function")
-
-def create_custom_body(model, pretrained=True, cut=None, n_in=3):
-    if cut is None:
-        ll = list(enumerate(model.children()))
-        cut = next(i for i,o in reversed(ll) if has_pool_type(o))
-    if isinstance(cut, int): return nn.Sequential(*list(model.children())[:cut])
-    elif callable(cut): return cut(model)
-    else: raise NameError("cut must be either integer or function")
-    
-    
-    
 def collate_custom(batch):
     batch_data = []
     batch_labels = []
@@ -65,7 +42,7 @@ class EmbeddingBagModel(nn.Module):
         self.num_classes = num_classes
 
     def forward(self, input):
-        num_bags = len(input)  # input = [bag #, image #, channel, height, width]
+        num_bags = len(input) # input = [bag #, image #, channel, height, width]
         
         # Concatenate all bags into a single tensor for batch processing
         all_images = torch.cat(input, dim=0)  # Shape: [Total images in all bags, channel, height, width]
@@ -77,26 +54,28 @@ class EmbeddingBagModel(nn.Module):
         split_sizes = [bag.size(0) for bag in input]
         h_per_bag = torch.split(h_all, split_sizes, dim=0)
         logits = torch.empty(num_bags, self.num_classes).cuda()
-        yhat_instances, attention_scores = [], []
+        saliency_maps, yhat_instances, attention_scores = [], [], []
         
         for i, h in enumerate(h_per_bag):
-            # Receive values from the aggregator
-            yhat_bag, yhat_ins, att_sc = self.aggregator(h)
+            # Receive four values from the aggregator
+            yhat_bag, sm, yhat_ins, att_sc = self.aggregator(h)
             
             logits[i] = yhat_bag
+            saliency_maps.append(sm)
             yhat_instances.append(yhat_ins)
             attention_scores.append(att_sc)
         
-        return logits, yhat_instances, attention_scores
+        return logits, saliency_maps, yhat_instances, attention_scores
 
 
 if __name__ == '__main__':
 
     # Config
-    model_name = 'test'
+    model_name = 'test3'
     encoder_arch = 'resnet18'
-    label_columns = ['Has_Malignant', 'Has_Benign']
-    img_size = 350
+    dataset_name = 'imagenette2-160'
+    label_columns = ['Has_Label']
+    img_size = 160
     batch_size = 5
     min_bag_size = 2
     max_bag_size = 20
@@ -104,54 +83,51 @@ if __name__ == '__main__':
     lr = 0.001
 
     # Paths
-    export_location = 'D:/DATA/CASBUSI/exports/export_11_11_2023/'
-    cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
+    export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
+    cropped_images = f"F:/Temp_SSD_Data/{dataset_name}_{img_size}_images/"
     #export_location = '/home/paperspace/cadbusi-LFS/export_09_28_2023/'
     #cropped_images = f"/home/paperspace/Temp_Data/{img_size}_images/"
-    
+
     # Get Training Data
     bags_train, bags_val = prepare_all_data(export_location, label_columns, cropped_images, img_size, min_bag_size, max_bag_size)
 
 
     print("Training Data...")
     # Create datasets
-    #dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, save_processed=False),list(range(0,100)))
-    #dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, save_processed=False),list(range(0,100)))
+    #dataset_train = TUD.Subset(BagOfImagesDataset(bags_train),list(range(0,100)))
+    #dataset_val = TUD.Subset(BagOfImagesDataset(bags_val),list(range(0,100)))
     dataset_train = BagOfImagesDataset(bags_train, save_processed=False)
     dataset_val = BagOfImagesDataset(bags_val, train=False)
+
             
     # Create data loaders
     train_dl =  TUD.DataLoader(dataset_train, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
     val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
 
+    encoder = create_timm_body(encoder_arch)
+    nf = num_features_model( nn.Sequential(*encoder.children()))
+    
+    # bag aggregator
+    aggregator = ABMIL_aggregate( nf = nf, num_classes = 1, pool_patches = 6, L = 128)
+
+    # total model
+    bagmodel = EmbeddingBagModel(encoder, aggregator).cuda()
+    total_params = sum(p.numel() for p in bagmodel.parameters())
+    print(f"Total Parameters: {total_params}")
+        
+        
+    optimizer = Adam(bagmodel.parameters(), lr=lr)
+    loss_func = nn.BCELoss()
+    train_losses_over_epochs = []
+    valid_losses_over_epochs = []
+    epoch_start = 0
+    
     
     # Check if the model already exists
     model_folder = f"{env}/models/{model_name}/"
     model_path = f"{model_folder}/{model_name}.pth"
     optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
     stats_path = f"{model_folder}/{model_name}_stats.pkl"
-
-    encoder = create_timm_body(encoder_arch)
-    nf = num_features_model( nn.Sequential(*encoder.children()))
-    
-    # bag aggregator
-    aggregator = FC_aggregate( nf = nf, num_classes = len(label_columns), L = 128, fc_layers=[256, 64], dropout = .6)
-
-    # total model
-    bagmodel = EmbeddingBagModel(encoder, aggregator, num_classes = len(label_columns)).cuda()
-    total_params = sum(p.numel() for p in bagmodel.parameters())
-    print(f"Total Parameters: {total_params}")
-        
-        
-    optimizer = Adam(bagmodel.parameters(), lr=lr)
-    
-    # Use BCE since we are doing multi label instead of multi class
-    loss_func = nn.BCELoss()
-
-    train_losses_over_epochs = []
-    valid_losses_over_epochs = []
-    num_labels = len(label_columns)
-    epoch_start = 0
     
     if os.path.exists(model_path):
         bagmodel.load_state_dict(torch.load(model_path))
@@ -163,13 +139,14 @@ if __name__ == '__main__':
             train_losses_over_epochs = saved_stats['train_losses']
             valid_losses_over_epochs = saved_stats['valid_losses']
             epoch_start = saved_stats['epoch']
-            val_loss_best = saved_stats['val_loss']
+            val_acc_best = saved_stats.get('val_acc', -1)  # If 'val_acc' does not exist, default to -1
     else:
         print(f"{model_name} does not exist, creating new instance")
         os.makedirs(model_folder, exist_ok=True)
-        val_loss_best = 99999
+        val_acc_best = -1 
     
-
+    
+    
     # Training loop
     for epoch in range(epoch_start, epochs):
         # Training phase
@@ -177,29 +154,30 @@ if __name__ == '__main__':
         total_loss = 0.0
         total_acc = 0
         total = 0
-        correct = [0] * num_labels
+        correct = 0
         for (data, yb, _) in tqdm(train_dl, total=len(train_dl)): 
             xb, yb = data, yb.cuda()
             
-            # Train
             optimizer.zero_grad()
-            outputs, _, _ = bagmodel(xb)
+            
+            outputs, _, _, _ = bagmodel(xb)
+
             loss = loss_func(outputs, yb)
+
             loss.backward()
             optimizer.step()
 
-            # Accuracy 
             total_loss += loss.item() * len(xb)
             predicted = (outputs > .5).float()
             total += yb.size(0)
             
-            # Calculate correct predictions for each label
-            for label_idx in range(num_labels):
-                correct[label_idx] += (predicted[:, label_idx] == yb[:, label_idx]).sum().item()
-            
+            if len(label_columns) == 1:  # Binary or single-label classification
+                correct += (predicted == yb).sum().item()
+            else:  # Multi-label classification
+                correct += ((predicted == yb).sum(dim=1) == len(label_columns)).sum().item()
 
         train_loss = total_loss / total
-        train_acc = [total_correct / total for total_correct in correct]
+        train_acc = correct / total
 
 
         # Evaluation phase
@@ -207,24 +185,24 @@ if __name__ == '__main__':
         total_val_loss = 0.0
         total_val_acc = 0.0
         total = 0
-        correct = [0] * num_labels
+        correct = 0
         all_targs = []
         all_preds = []
         with torch.no_grad():
             for (data, yb, _) in tqdm(val_dl, total=len(val_dl)): 
                 xb, yb = data, yb.cuda()
 
-                outputs, _, _ = bagmodel(xb)
+                outputs, _, _, _ = bagmodel(xb)
                 loss = loss_func(outputs, yb)
                 
                 total_val_loss += loss.item() * len(xb)
-                
-                total_loss += loss.item() * len(xb)
                 predicted = (outputs > .5).float()
                 total += yb.size(0)
                 
-                for label_idx in range(num_labels):
-                    correct[label_idx] += (predicted[:, label_idx] == yb[:, label_idx]).sum().item()
+                if len(label_columns) == 1:  # Binary or single-label classification
+                    correct += (predicted == yb).sum().item()
+                else:  # Multi-label classification
+                    correct += ((predicted == yb).sum(dim=1) == len(label_columns)).sum().item()
                 
                 # Confusion Matrix data
                 all_targs.extend(yb.cpu().numpy())
@@ -233,27 +211,17 @@ if __name__ == '__main__':
                 all_preds.extend(predicted.cpu().detach().numpy())
 
         val_loss = total_val_loss / total
-        val_acc = [total_correct / total for total_correct in correct]
+        val_acc = correct / total
         
         train_losses_over_epochs.append(train_loss)
         valid_losses_over_epochs.append(val_loss)
         
-        # Constructing header with label names
-        acc_headers = " | ".join(f"Acc ({name})" for name in label_columns)
-        header = f"Epoch {epoch+1} | {acc_headers} | Loss"
-
-        # Constructing training and validation accuracy strings
-        train_acc_str = " | ".join(f"{acc:.4f}" for acc in train_acc)
-        val_acc_str = " | ".join(f"{acc:.4f}" for acc in val_acc)
-
-        # Printing epoch summary
-        print(header)
-        print(f"Train   | {train_acc_str} | {train_loss:.4f}")
-        print(f"Val     | {val_acc_str} | {val_loss:.4f}")
-        
+        print(f"Epoch {epoch+1} | Acc   | Loss")
+        print(f"Train   | {train_acc:.4f} | {train_loss:.4f}")
+        print(f"Val     | {val_acc:.4f} | {val_loss:.4f}")
         
         # Save the model
-        if val_loss < val_loss_best:
-            val_loss_best = val_loss  # Update the best validation accuracy
+        if val_acc > val_acc_best:
+            val_acc_best = val_acc  # Update the best validation accuracy
             save_state(epoch, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, bagmodel, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs)
-            print("Saved checkpoint due to improved val_loss")
+            print("Saved checkpoint due to improved val_acc")

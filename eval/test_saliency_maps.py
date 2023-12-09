@@ -1,21 +1,13 @@
-import os
+import os, sys
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
+
 from fastai.vision.all import *
-from torch.nn.functional import binary_cross_entropy
-from model_ABMIL import *
-from train_loop import *
-from data_prep import *
-import matplotlib.pyplot as plt
-env = os.path.dirname(os.path.abspath(__file__))
-
-
-def load_trained_model(model_path, encoder_arch):
-    encoder = create_timm_body(encoder_arch)
-    nf = num_features_model(nn.Sequential(*encoder.children()))
-    aggregator = ABMIL_aggregate(nf=nf, num_classes=1, pool_patches=6, L=128)
-    bagmodel = EmbeddingBagModel(encoder, aggregator).cuda()
-    bagmodel.load_state_dict(torch.load(model_path))
-    bagmodel.eval()
-    return bagmodel
+from archs.model_ABMIL import *
+from train_ABMIL import *
+from data.format_data import *
 
             
 def predict_on_test_set(model, test_dl, save_path):
@@ -80,11 +72,11 @@ def predict_on_test_set(model, test_dl, save_path):
 
 
 def test_dataset():
-    test_location = f"{env}/tests/{model_name}/"
+    test_location = f"{parent_dir}/results/{model_name}/"
     os.makedirs(test_location, exist_ok=True)
 
     # Load data
-    bags_train, bags_val = prepare_all_data(export_location, case_study_data, breast_data, image_data, cropped_images, img_size, min_bag_size, max_bag_size)
+    bags_train, bags_val = prepare_all_data(export_location, label_columns, cropped_images, img_size, min_bag_size, max_bag_size)
 
     # Now use the combined data for the dataset
     #dataset_combined = TUD.Subset(BagOfImagesDataset( combined_files, combined_ids, combined_labels),list(range(0,100)))
@@ -110,20 +102,27 @@ def test_dataset():
 # Config
 model_name = 'NoMixup_11_16_Pool6'
 encoder_arch = 'resnet18'
+dataset_name = 'export_11_11_2023'
+label_columns = ['Has_Malignant']
 img_size = 350
 min_bag_size = 2
 max_bag_size = 20
-export_location = 'D:/DATA/CASBUSI/exports/export_11_11_2023/'
 
 # Paths
 case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
 breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
 image_data = pd.read_csv(f'{export_location}/ImageData.csv')
-cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
+export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
+cropped_images = f"F:/Temp_SSD_Data/{dataset_name}_{img_size}_images/"
 
 # Load the trained model
-model_path = f'{env}/models/{model_name}/{model_name}.pth'
-model = load_trained_model(model_path, encoder_arch)
+model_path = f'{parent_dir}/models/{model_name}/{model_name}.pth'
+encoder = create_timm_body(encoder_arch)
+nf = num_features_model(nn.Sequential(*encoder.children()))
+aggregator = ABMIL_aggregate(nf=nf, num_classes=1, pool_patches=6, L=128)
+bagmodel = EmbeddingBagModel(encoder, aggregator).cuda()
+bagmodel.load_state_dict(torch.load(model_path))
+bagmodel.eval()
 
 # Test a validation cases
 results = test_dataset()

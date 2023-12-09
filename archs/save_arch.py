@@ -1,5 +1,5 @@
 import matplotlib.pyplot as plt
-from sklearn.metrics import roc_auc_score, recall_score, confusion_matrix, roc_curve, auc
+from sklearn.metrics import confusion_matrix, roc_curve
 import numpy as np
 from fastai.vision.all import *
 import seaborn as sns
@@ -26,15 +26,25 @@ def save_accuracy_to_file(epoch, train_acc, val_acc, label_columns, file_path):
         # Write the epoch number
         file.write(f"Epoch {epoch + 1}\n")
 
-        # Write training accuracies
-        file.write("Training Accuracies:\n")
-        for idx, acc in enumerate(train_acc):
-            file.write(f"  {label_columns[idx]}: {acc:.4f}\n")
+        # Check if train_acc is a single float or an iterable of floats
+        if isinstance(train_acc, float):
+            # If train_acc is a single float, write it directly
+            file.write("Training Accuracy:\n")
+            file.write(f"  Overall: {train_acc:.4f}\n")
+        else:
+            # If train_acc is an iterable, write each accuracy
+            file.write("Training Accuracies:\n")
+            for idx, acc in enumerate(train_acc):
+                file.write(f"  {label_columns[idx]}: {acc:.4f}\n")
 
-        # Write validation accuracies
-        file.write("Validation Accuracies:\n")
-        for idx, acc in enumerate(val_acc):
-            file.write(f"  {label_columns[idx]}: {acc:.4f}\n")
+        # Do the same check for val_acc
+        if isinstance(val_acc, float):
+            file.write("Validation Accuracy:\n")
+            file.write(f"  Overall: {val_acc:.4f}\n")
+        else:
+            file.write("Validation Accuracies:\n")
+            for idx, acc in enumerate(val_acc):
+                file.write(f"  {label_columns[idx]}: {acc:.4f}\n")
 
         file.write("\n")  # Add a newline for separation between epochs
 
@@ -81,6 +91,28 @@ def plot_multi_roc_curve(all_fpr, all_tpr, n_classes, save_path):
     plt.close()
     
     
+def plot_Confusion(all_targs, all_preds, vocab, file_path):
+    # Compute the confusion matrix
+    cm = confusion_matrix(all_targs, all_preds)
+    
+    # Create a new figure
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    # Plot the confusion matrix
+    sns.heatmap(cm, annot=True, fmt="d", cmap='Blues', xticklabels=vocab, yticklabels=vocab, ax=ax)
+    
+    # Invert the y-axis to make it display correctly
+    ax.invert_yaxis()
+
+    # Set labels and title
+    ax.set_xlabel('Predicted labels')
+    ax.set_ylabel('True labels')
+    ax.set_title('Validation Confusion Matrix')
+
+    # Save the figure
+    fig.savefig(file_path)
+    plt.close(fig)
+
 
 def save_state(e, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, bagmodel, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs):
     
@@ -141,24 +173,3 @@ def save_state(e, label_columns, train_acc, val_loss, val_acc, model_folder, mod
     
     
 
-def plot_Confusion(all_targs, all_preds, vocab, file_path):
-    # Compute the confusion matrix
-    cm = confusion_matrix(all_targs, all_preds)
-    
-    # Create a new figure
-    fig, ax = plt.subplots(figsize=(8, 6))
-
-    # Plot the confusion matrix
-    sns.heatmap(cm, annot=True, fmt="d", cmap='Blues', xticklabels=vocab, yticklabels=vocab, ax=ax)
-    
-    # Invert the y-axis to make it display correctly
-    ax.invert_yaxis()
-
-    # Set labels and title
-    ax.set_xlabel('Predicted labels')
-    ax.set_ylabel('True labels')
-    ax.set_title('Validation Confusion Matrix')
-
-    # Save the figure
-    fig.savefig(file_path)
-    plt.close(fig)

@@ -1,21 +1,15 @@
-import os
+import os, sys
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
+
 from fastai.vision.all import *
-from torch.nn.functional import binary_cross_entropy
-from model_ABMIL import *
-from train_loop import *
-from data_prep import *
+from archs.model_ABMIL import *
+from train_ABMIL import *
+from data.format_data import *
 import matplotlib.pyplot as plt
-env = os.path.dirname(os.path.abspath(__file__))
 
-
-def load_trained_model(model_path, encoder_arch):
-    encoder = create_timm_body(encoder_arch)
-    nf = num_features_model(nn.Sequential(*encoder.children()))
-    aggregator = ABMIL_aggregate(nf=nf, num_classes=1, pool_patches=3, L=128)
-    bagmodel = EmbeddingBagModel(encoder, aggregator).cuda()
-    bagmodel.load_state_dict(torch.load(model_path))
-    bagmodel.eval()
-    return bagmodel
 
 def generate_test_filenames_from_folders(test_root_path):
     bag_files = []
@@ -35,7 +29,7 @@ def generate_test_filenames_from_folders(test_root_path):
     return bag_files, bag_ids
 
 
-def predict_on_test_set(model, test_dl):
+def predict_on_test_set(bagmodel, test_dl):
     loss_func = nn.BCELoss()
     
     bag_predictions = []
@@ -47,7 +41,7 @@ def predict_on_test_set(model, test_dl):
         for (data, yb, bag_id) in tqdm(test_dl, total=len(test_dl)): 
             xb, yb = data, yb.cuda()
             
-            outputs, _, _, _  = model(xb)
+            outputs, _, _, _  = bagmodel(xb)
             loss = loss_func(outputs, yb)
 
             bag_predictions.append(round(outputs.cpu().item(), 4))
@@ -58,9 +52,9 @@ def predict_on_test_set(model, test_dl):
     return bag_predictions, bag_losses, bag_ids, bag_labels
 
 
-def test_dataset():
+def test_dataset(output_path):
     # Load data
-    bags_train, bags_val = prepare_all_data(export_location, case_study_data, breast_data, image_data, cropped_images, img_size, min_bag_size, max_bag_size)
+    bags_train, bags_val = prepare_all_data(export_location, label_columns, cropped_images, img_size, min_bag_size, max_bag_size)
 
     # Combine training and validation data
     combined_dict = bags_train
@@ -72,7 +66,7 @@ def test_dataset():
     combined_dl = TUD.DataLoader(dataset_combined, batch_size=1, collate_fn=collate_custom, drop_last=True)
 
     # Make predictions on test set
-    predictions, losses, bag_ids, bag_labels = predict_on_test_set(model, combined_dl)
+    predictions, losses, bag_ids, bag_labels = predict_on_test_set(bagmodel, combined_dl)
     
     # Create a DataFrame to save the results
     results_df = pd.DataFrame({
@@ -86,36 +80,60 @@ def test_dataset():
     results_df = results_df.sort_values(by="Loss", ascending=False)
 
     # Save the DataFrame to a CSV file
-    mkdir(f"{env}/tests/", exist_ok=True)
-    output_path = f"{env}/tests/failed_cases.csv"
-    results_df.to_csv(output_path, index=False)
+    
+    results_df.to_csv(f'{output_path}/failed_cases.csv', index=False)
     print(f"Saved failed cases")
     
     return results_df
 
 
+def plot_and_save_average_errors(average_errors, title, xlabel, ylabel, save_path):
+    plt.figure(figsize=(12, 8))
+    average_errors.plot(kind='bar', color='skyblue', edgecolor='black')
+    plt.title(title)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.xticks(rotation=45)
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.savefig(save_path)
+    print(f"Saved the plot to {save_path}")
+    
+    
 # Config
-model_name = 'NoMixup_11_14_2'
+model_name = 'FC_2Class_01'
+dataset_name = 'export_11_11_2023'
+label_columns = ['Has_Malignant']
 encoder_arch = 'resnet18'
 img_size = 350
 min_bag_size = 2
 max_bag_size = 20
 
 # Paths
-export_location = 'D:/DATA/CASBUSI/exports/export_11_11_2023/'
+export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
+cropped_images = f"F:/Temp_SSD_Data/{dataset_name}_{img_size}_images/"
+output_path = f"{parent_dir}/results/{model_name}/"
 case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
 breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
 image_data = pd.read_csv(f'{export_location}/ImageData.csv')
 
+mkdir(output_path, exist_ok=True)
 
 # Load the trained model
-model_path = f'{env}/models/{model_name}/{model_name}.pth'
-model = load_trained_model(model_path, encoder_arch)
+model_path = f'{parent_dir}/models/{model_name}/{model_name}.pth'
+encoder = create_timm_body(encoder_arch)
+nf = num_features_model(nn.Sequential(*encoder.children()))
+aggregator = ABMIL_aggregate(nf=nf, num_classes=1, pool_patches=3, L=128)
+bagmodel = EmbeddingBagModel(encoder, aggregator).cuda()
+bagmodel.load_state_dict(torch.load(model_path))
+bagmodel.eval()
+
+
 
 if True:
-    df_failed_cases = test_dataset()
+    df_failed_cases = test_dataset(output_path)
 else:
-    df_failed_cases = pd.read_csv(f"{env}/tests/failed_cases.csv")
+    df_failed_cases = pd.read_csv(f"{output_path}/failed_cases.csv")
 
 
 # Merge df_failed_cases with case_study_data to get the BI-RADS scores
@@ -127,21 +145,11 @@ average_errors = merged_data.groupby('BI-RADS')['Loss'].mean()
 # Sort by BI-RADS score (which is the index after grouping)
 average_errors = average_errors.sort_index()
 
-# Plot the average errors for each BI-RADS score
-plt.figure(figsize=(12, 8))
-average_errors.plot(kind='bar', color='skyblue', edgecolor='black')
-plt.title('Average Loss by BI-RADS Score')
-plt.xlabel('BI-RADS Score')
-plt.ylabel('Average Loss')
-plt.xticks(rotation=45)
-plt.grid(axis='y', linestyle='--', alpha=0.7)
-plt.tight_layout()
+plot_and_save_average_errors(average_errors, 'Average Loss by BI-RADS Score', 'BI-RADS Score', 'Average Loss', f"{parent_dir}/results/BI-RADS_average_loss.png")
 
 # Save the plot as an image
-image_save_path = f"{env}/tests/BI-RADS_average_loss.png"
+image_save_path = f"{parent_dir}/results/BI-RADS_average_loss.png"
 plt.savefig(image_save_path)
-
-print(f"Saved the plot to {image_save_path}")
 
 
 
@@ -157,18 +165,4 @@ average_errors_images = merged_data_images.groupby('Image_Count')['Loss'].mean()
 # Sort by Image_Count (which is the index after grouping)
 average_errors_images = average_errors_images.sort_index()
 
-# Plot the average errors against number of images
-plt.figure(figsize=(12, 8))
-average_errors_images.plot(kind='bar', color='lightcoral', edgecolor='black')
-plt.title('Average Loss by Number of Images per Accession_Number')
-plt.xlabel('Number of Images')
-plt.ylabel('Average Loss')
-plt.xticks(rotation=45)
-plt.grid(axis='y', linestyle='--', alpha=0.7)
-plt.tight_layout()
-
-# Save the plot as an image
-image_save_path_images = f"{env}/tests/Average_Loss_by_Image_Count.png"
-plt.savefig(image_save_path_images)
-
-print(f"Saved the plot to {image_save_path_images}")
+plot_and_save_average_errors(average_errors_images, 'Average Loss by Number of Images per Accession_Number', 'Number of Images', 'Average Loss', f"{parent_dir}/results/Average_Loss_by_Image_Count.png")
