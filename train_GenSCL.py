@@ -1,43 +1,19 @@
 import os, pickle
-from timm import create_model
 from fastai.vision.all import *
 import torch.utils.data as TUD
-from fastai.vision.learner import _update_first_layer
 from tqdm import tqdm
 from torch import nn
-from training_eval import *
+from archs.save_arch import *
 from torch.optim import Adam
 from torch.cuda.amp import autocast
-from data_prep import *
-from model_FC import *
+from data.format_data import *
+from archs.model_FC import *
+from archs.backbone import create_timm_body
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 
-class TwoCropTransform:
-    """Create two crops of the same image"""
-    def __init__(self, transform):
-        self.transform = transform
 
-    def __call__(self, x):
-        return [self.transform(x), self.transform(x)]
-    
-    
-    
-# this function is used to cut off the head of a pretrained timm model and return the body
-def create_timm_body(arch:str, pretrained=True, cut=None, n_in=3):
-    "Creates a body from any model in the `timm` library."
-    model = create_model(arch, pretrained=pretrained, num_classes=0, global_pool='')
-    _update_first_layer(model, n_in, pretrained)
-    if cut is None:
-        ll = list(enumerate(model.children()))
-        cut = next(i for i,o in reversed(ll) if has_pool_type(o))
-    if isinstance(cut, int): return nn.Sequential(*list(model.children())[:cut])
-    elif callable(cut): return cut(model)
-    else: raise NameError("cut must be either integer or function")
-    
-    
-    
 def collate_custom(batch):
     batch_data = []
     batch_labels = []
@@ -56,8 +32,6 @@ def collate_custom(batch):
     out_ids = torch.tensor(batch_ids, dtype=torch.long).cuda()
 
     return batch_data, out_labels, out_ids
-
-
 
 
 class EmbeddingBagModel(nn.Module):
@@ -268,6 +242,7 @@ if __name__ == '__main__':
     teacher_name = 'FC_test_2'
     model_name = 'test'
     encoder_arch = 'resnet18'
+    dataset_name = 'export_11_11_2023'
     label_columns = ['Has_Malignant', 'Has_Benign']
     img_size = 350
     batch_size = 5
@@ -281,8 +256,8 @@ if __name__ == '__main__':
     lr = 0.001
 
     # Paths
-    export_location = 'D:/DATA/CASBUSI/exports/export_11_11_2023/'
-    cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
+    export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
+    cropped_images = f"F:/Temp_SSD_Data/{dataset_name}_{img_size}_images/"
     #export_location = '/home/paperspace/cadbusi-LFS/export_09_28_2023/'
     #cropped_images = f"/home/paperspace/Temp_Data/{img_size}_images/"
     

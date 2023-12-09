@@ -1,27 +1,20 @@
-import os
+import os, sys
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
+
 from fastai.vision.all import *
-from torch.nn.functional import binary_cross_entropy
-from model_FC import *
-from train_loop_FC import *
-from data_prep import *
-from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad
+from archs.model_FC import *
+from train_FC import *
+from data.format_data import *
+from pytorch_grad_cam import GradCAMPlusPlus
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 from pytorch_grad_cam.utils.image import show_cam_on_image
 import matplotlib.pyplot as plt
-env = os.path.dirname(os.path.abspath(__file__))
-
-
-def load_trained_model(model_path, encoder_arch):
-    encoder = create_timm_body(encoder_arch)
-    nf = num_features_model(nn.Sequential(*encoder.children()))
-    aggregator = FC_aggregate(nf=nf, num_classes=1, L=128, fc_layers=[256, 128], dropout = .5)
-    bagmodel = EmbeddingBagModel(encoder, aggregator).cuda()
-    bagmodel.load_state_dict(torch.load(model_path))
-    bagmodel.eval()
-    return bagmodel
 
             
-def predict_on_test_set(model, test_dl, save_path):
+def predict_on_test_set(bagmodel, test_dl, save_path):
     loss_func = nn.BCELoss()
     
     bag_predictions = []
@@ -29,16 +22,16 @@ def predict_on_test_set(model, test_dl, save_path):
     bag_ids = [] 
     bag_labels = []
     
-    target_layer = [model.encoder[7][1].conv2]
+    target_layer = [bagmodel.encoder[7][1].conv2]
     
-    grad_cam = GradCAMPlusPlus(model, target_layers=target_layer)
+    grad_cam = GradCAMPlusPlus(bagmodel, target_layers=target_layer)
     
     torch.set_grad_enabled(True)
     
     for (data, yb, bag_id) in tqdm(test_dl, total=len(test_dl)): 
         xb, yb = data, yb.cuda()
 
-        outputs, _, _ = model(xb)
+        outputs, _, _ = bagmodel(xb)
         loss = loss_func(outputs, yb)
         
         bag_predictions.append(round(outputs.cpu().item(), 4))
@@ -73,11 +66,11 @@ def predict_on_test_set(model, test_dl, save_path):
 
 
 def test_dataset():
-    test_location = f"{env}/tests/{model_name}/"
+    test_location = f"{parent_dir}/results/{model_name}/"
     os.makedirs(test_location, exist_ok=True)
 
     # Load data
-    bags_train, bags_val = prepare_all_data(export_location, case_study_data, breast_data, image_data, cropped_images, img_size, min_bag_size, max_bag_size)
+    bags_train, bags_val = prepare_all_data(export_location, label_columns, cropped_images, img_size, min_bag_size, max_bag_size)
 
     # Now use the combined data for the dataset
     #dataset_combined = TUD.Subset(BagOfImagesDataset( combined_files, combined_ids, combined_labels),list(range(0,100)))
@@ -85,7 +78,7 @@ def test_dataset():
     combined_dl = TUD.DataLoader(dataset_val, batch_size=1, collate_fn=collate_custom, drop_last=True)
 
     # Make predictions on test set
-    predictions, losses, bag_ids, bag_labels = predict_on_test_set(model, combined_dl, test_location)
+    predictions, losses, bag_ids, bag_labels = predict_on_test_set(bagmodel, combined_dl, test_location)
     
     
     
@@ -103,20 +96,27 @@ def test_dataset():
 # Config
 model_name = 'FC_test'
 encoder_arch = 'resnet18'
+dataset_name = 'export_11_11_2023'
+label_columns = ['Has_Label']
 img_size = 350
 min_bag_size = 2
 max_bag_size = 20
-export_location = 'D:/DATA/CASBUSI/exports/export_11_11_2023/'
 
 # Paths
 case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
 breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
 image_data = pd.read_csv(f'{export_location}/ImageData.csv')
-cropped_images = f"F:/Temp_SSD_Data/{img_size}_images/"
+export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
+cropped_images = f"F:/Temp_SSD_Data/{dataset_name}_{img_size}_images/"
 
 # Load the trained model
-model_path = f'{env}/models/{model_name}/{model_name}.pth'
-model = load_trained_model(model_path, encoder_arch)
+model_path = f'{parent_dir}/models/{model_name}/{model_name}.pth'
+encoder = create_timm_body(encoder_arch)
+nf = num_features_model(nn.Sequential(*encoder.children()))
+aggregator = FC_aggregate(nf=nf, num_classes=1, L=128, fc_layers=[256, 128], dropout = .5)
+bagmodel = EmbeddingBagModel(encoder, aggregator).cuda()
+bagmodel.load_state_dict(torch.load(model_path))
+bagmodel.eval()
 
 # Test a validation cases
 results = test_dataset()
