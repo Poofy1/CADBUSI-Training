@@ -263,7 +263,7 @@ if __name__ == '__main__':
     
     # Get Training Data
     bags_train, bags_val = prepare_all_data(export_location, label_columns, cropped_images, img_size, min_bag_size, max_bag_size)
-
+    num_labels = len(label_columns)
 
     print("Training Data...")
     # Create datasets
@@ -289,10 +289,10 @@ if __name__ == '__main__':
     criterion = GenSupConLoss(temperature=tempurature)
     
     # bag aggregator
-    aggregator = FC_aggregate( nf = nf, num_classes = 1, L = 128, fc_layers=[256, 64], dropout = .5)
+    aggregator = FC_aggregate( nf = nf, num_classes = num_labels, L = 128, fc_layers=[256, 64], dropout = .5)
 
     # total model
-    bagmodel = EmbeddingBagModel(encoder, aggregator).cuda()
+    bagmodel = EmbeddingBagModel(encoder, aggregator, num_classes = num_labels).cuda()
     teacher_model = EmbeddingBagModel(encoder, aggregator).cuda()
     total_params = sum(p.numel() for p in bagmodel.parameters())
     print(f"Total Parameters: {total_params}")

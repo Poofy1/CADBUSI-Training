@@ -42,17 +42,20 @@ def predict_on_test_set(bagmodel, test_dl):
             xb, yb = data, yb.cuda()
             
             outputs, _, _, _  = bagmodel(xb)
-            loss = loss_func(outputs, yb)
+            outputs = outputs[0][0]
+            loss = loss_func(outputs, yb[0][0])
 
             bag_predictions.append(round(outputs.cpu().item(), 4))
             bag_losses.append(round(loss.cpu().item(), 4))
             bag_ids.append(bag_id.cpu().item())
-            bag_labels.append(yb.cpu().item())
-    
+            
+            # Convert yb to a list of labels
+            bag_labels.append(yb[0].cpu().numpy().tolist())
+
     return bag_predictions, bag_losses, bag_ids, bag_labels
 
 
-def test_dataset(output_path):
+def test_dataset(output_path, label_columns):
     # Load data
     bags_train, bags_val = prepare_all_data(export_location, label_columns, cropped_images, img_size, min_bag_size, max_bag_size)
 
@@ -61,28 +64,28 @@ def test_dataset(output_path):
     combined_dict.update(bags_val)
 
     # Now use the combined data for the dataset
-    #dataset_combined = TUD.Subset(BagOfImagesDataset( combined_files, combined_ids, combined_labels),list(range(0,100)))
+    #dataset_combined = TUD.Subset(BagOfImagesDataset(combined_dict, train=False),list(range(0,100)))
     dataset_combined = BagOfImagesDataset(combined_dict, train=False)
     combined_dl = TUD.DataLoader(dataset_combined, batch_size=1, collate_fn=collate_custom, drop_last=True)
 
     # Make predictions on test set
     predictions, losses, bag_ids, bag_labels = predict_on_test_set(bagmodel, combined_dl)
     
-    # Create a DataFrame to save the results
-    results_df = pd.DataFrame({
-        "Accession_Number": bag_ids,
-        "Prediction": predictions,
-        "True_Label": bag_labels,
-        "Loss": losses
-    })
+    # Convert bag_labels to a DataFrame with separate columns
+    labels_df = pd.DataFrame(bag_labels, columns=label_columns)
+
+    # Combine the labels DataFrame with the other data
+    results_df = pd.concat([
+        pd.DataFrame({"Accession_Number": bag_ids, "Prediction": predictions, "Loss": losses}),
+        labels_df
+    ], axis=1)
     
-    # Sort the DataFrame by Loss column in descending order (highest loss first)
+    # Sort the DataFrame by Loss column in descending order
     results_df = results_df.sort_values(by="Loss", ascending=False)
 
     # Save the DataFrame to a CSV file
-    
     results_df.to_csv(f'{output_path}/failed_cases.csv', index=False)
-    print(f"Saved failed cases")
+    print("Saved failed cases")
     
     return results_df
 
@@ -101,9 +104,9 @@ def plot_and_save_average_errors(average_errors, title, xlabel, ylabel, save_pat
     
     
 # Config
-model_name = 'FC_2Class_01'
+model_name = 'NoMixup_11_14_2'
 dataset_name = 'export_11_11_2023'
-label_columns = ['Has_Malignant']
+label_columns = ['Has_Malignant', 'Has_Benign']
 encoder_arch = 'resnet18'
 img_size = 350
 min_bag_size = 2
@@ -112,7 +115,7 @@ max_bag_size = 20
 # Paths
 export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
 cropped_images = f"F:/Temp_SSD_Data/{dataset_name}_{img_size}_images/"
-output_path = f"{parent_dir}/results/{model_name}/"
+output_path = f"{parent_dir}/results/{model_name}_DatasetTest/"
 case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
 breast_data = pd.read_csv(f'{export_location}/BreastData.csv')
 image_data = pd.read_csv(f'{export_location}/ImageData.csv')
@@ -131,7 +134,7 @@ bagmodel.eval()
 
 
 if True:
-    df_failed_cases = test_dataset(output_path)
+    df_failed_cases = test_dataset(output_path, label_columns)
 else:
     df_failed_cases = pd.read_csv(f"{output_path}/failed_cases.csv")
 
@@ -145,7 +148,7 @@ average_errors = merged_data.groupby('BI-RADS')['Loss'].mean()
 # Sort by BI-RADS score (which is the index after grouping)
 average_errors = average_errors.sort_index()
 
-plot_and_save_average_errors(average_errors, 'Average Loss by BI-RADS Score', 'BI-RADS Score', 'Average Loss', f"{parent_dir}/results/BI-RADS_average_loss.png")
+plot_and_save_average_errors(average_errors, 'Average Loss by BI-RADS Score', 'BI-RADS Score', 'Average Loss', f"{output_path}/BI-RADS_average_loss.png")
 
 # Save the plot as an image
 image_save_path = f"{parent_dir}/results/BI-RADS_average_loss.png"
@@ -165,4 +168,4 @@ average_errors_images = merged_data_images.groupby('Image_Count')['Loss'].mean()
 # Sort by Image_Count (which is the index after grouping)
 average_errors_images = average_errors_images.sort_index()
 
-plot_and_save_average_errors(average_errors_images, 'Average Loss by Number of Images per Accession_Number', 'Number of Images', 'Average Loss', f"{parent_dir}/results/Average_Loss_by_Image_Count.png")
+plot_and_save_average_errors(average_errors_images, 'Average Loss by Number of Images per Accession_Number', 'Number of Images', 'Average Loss', f"{output_path}/Average_Loss_by_Image_Count.png")
