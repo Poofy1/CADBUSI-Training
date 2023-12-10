@@ -90,7 +90,7 @@ if __name__ == '__main__':
 
     # Get Training Data
     bags_train, bags_val = prepare_all_data(export_location, label_columns, cropped_images, img_size, min_bag_size, max_bag_size)
-
+    num_labels = len(label_columns)
 
     print("Training Data...")
     # Create datasets
@@ -108,10 +108,10 @@ if __name__ == '__main__':
     nf = num_features_model( nn.Sequential(*encoder.children()))
     
     # bag aggregator
-    aggregator = ABMIL_aggregate( nf = nf, num_classes = 1, pool_patches = 6, L = 128)
+    aggregator = ABMIL_aggregate( nf = nf, num_classes = num_labels, pool_patches = 6, L = 128)
 
     # total model
-    bagmodel = EmbeddingBagModel(encoder, aggregator).cuda()
+    bagmodel = EmbeddingBagModel(encoder, aggregator, num_classes = num_labels).cuda()
     total_params = sum(p.numel() for p in bagmodel.parameters())
     print(f"Total Parameters: {total_params}")
         

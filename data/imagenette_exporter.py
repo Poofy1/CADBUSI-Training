@@ -35,7 +35,7 @@ def Move_Images(source_folder1, source_folder2, destination_folder):
 
 
 
-def Export_Database(export_location, min_per_bag, max_per_bag, target_label):
+def Export_Database(export_location, min_per_bag, max_per_bag, target_label, test_count):
     print("Reformatting Data:")
 
     # Directories
@@ -49,7 +49,7 @@ def Export_Database(export_location, min_per_bag, max_per_bag, target_label):
     val_data = original_data[original_data['is_valid'] == True]
 
     # Function to create bags
-    def create_bags(data, is_valid):
+    def create_bags(data, is_valid, extra_count = 0):
         bags = []
         while not data.empty:
             bag_size = random.randint(min_per_bag, max_per_bag)
@@ -59,11 +59,16 @@ def Export_Database(export_location, min_per_bag, max_per_bag, target_label):
 
             has_label = target_label in sampled_data['noisy_labels_0'].values
             image_names = [os.path.basename(path) for path in sampled_data['path']]
-            bags.append({'ID': len(bags) + 1, 'Images': str(image_names), 'Has_Label': has_label, 'Valid': is_valid})
+            bags.append({'ID': len(bags) + 1, 'Images': str(image_names), 'Labels': has_label, 'Valid': is_valid})
+
+        # Convert specified number of bags to Valid = 2
+        for i in random.sample(range(len(bags)), min(extra_count, len(bags))):
+            bags[i]['Valid'] = 2
+
         return bags
 
     # Create bags for train and validation
-    train_bags = create_bags(train_data, 0)
+    train_bags = create_bags(train_data, 0, test_count)
     val_bags = create_bags(val_data, 1)
 
     # Combine bags and create DataFrame
@@ -107,4 +112,4 @@ path_val = path/'val'
 
 Move_Images(f'{export_location}/train', f'{export_location}/val', f'{export_location}/images')
 
-Export_Database(export_location, 3, 7, 'n01440764')
+Export_Database(export_location, 3, 7, 'n01440764', 10)
