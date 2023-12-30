@@ -71,11 +71,11 @@ class EmbeddingBagModel(nn.Module):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'test3'
+    model_name = 'ABMIL_12_26_1'
     encoder_arch = 'resnet18'
-    dataset_name = 'imagenette2-160'
-    label_columns = ['Has_Label']
-    img_size = 160
+    dataset_name = 'export_12_26_2023'
+    label_columns = ['Has_Malignant', 'Has_Benign']
+    img_size = 350
     batch_size = 5
     min_bag_size = 2
     max_bag_size = 20
@@ -139,11 +139,11 @@ if __name__ == '__main__':
             train_losses_over_epochs = saved_stats['train_losses']
             valid_losses_over_epochs = saved_stats['valid_losses']
             epoch_start = saved_stats['epoch']
-            val_acc_best = saved_stats.get('val_acc', -1)  # If 'val_acc' does not exist, default to -1
+            val_loss_best = saved_stats['val_loss']
     else:
         print(f"{model_name} does not exist, creating new instance")
         os.makedirs(model_folder, exist_ok=True)
-        val_acc_best = -1 
+        val_loss_best = 99999
     
     
     
@@ -154,13 +154,19 @@ if __name__ == '__main__':
         total_loss = 0.0
         total_acc = 0
         total = 0
-        correct = 0
+        correct = [0] * num_labels
         for (data, yb, _) in tqdm(train_dl, total=len(train_dl)): 
             xb, yb = data, yb.cuda()
             
             optimizer.zero_grad()
             
             outputs, _, _, _ = bagmodel(xb)
+            
+            # TEMP DEBUG
+            if not torch.all(outputs.ge(0) & outputs.le(1)):
+                print(f"Invalid output detected: {outputs[~(outputs.ge(0) & outputs.le(1))]}")
+            if not torch.all(yb.ge(0) & yb.le(1)):
+                print(f"Invalid label detected: {yb[~(yb.ge(0) & yb.le(1))]}")
 
             loss = loss_func(outputs, yb)
 
@@ -171,13 +177,11 @@ if __name__ == '__main__':
             predicted = (outputs > .5).float()
             total += yb.size(0)
             
-            if len(label_columns) == 1:  # Binary or single-label classification
-                correct += (predicted == yb).sum().item()
-            else:  # Multi-label classification
-                correct += ((predicted == yb).sum(dim=1) == len(label_columns)).sum().item()
-
+            for label_idx in range(num_labels):
+                correct[label_idx] += (predicted[:, label_idx] == yb[:, label_idx]).sum().item()
+            
         train_loss = total_loss / total
-        train_acc = correct / total
+        train_acc = [total_correct / total for total_correct in correct]
 
 
         # Evaluation phase
@@ -185,7 +189,7 @@ if __name__ == '__main__':
         total_val_loss = 0.0
         total_val_acc = 0.0
         total = 0
-        correct = 0
+        correct = [0] * num_labels
         all_targs = []
         all_preds = []
         with torch.no_grad():
@@ -193,16 +197,21 @@ if __name__ == '__main__':
                 xb, yb = data, yb.cuda()
 
                 outputs, _, _, _ = bagmodel(xb)
+                
+                # TEMP DEBUG
+                if not torch.all(outputs.ge(0) & outputs.le(1)):
+                    print(f"Invalid output detected: {outputs[~(outputs.ge(0) & outputs.le(1))]}")
+                if not torch.all(yb.ge(0) & yb.le(1)):
+                    print(f"Invalid label detected: {yb[~(yb.ge(0) & yb.le(1))]}")
+                
                 loss = loss_func(outputs, yb)
                 
                 total_val_loss += loss.item() * len(xb)
                 predicted = (outputs > .5).float()
                 total += yb.size(0)
                 
-                if len(label_columns) == 1:  # Binary or single-label classification
-                    correct += (predicted == yb).sum().item()
-                else:  # Multi-label classification
-                    correct += ((predicted == yb).sum(dim=1) == len(label_columns)).sum().item()
+                for label_idx in range(num_labels):
+                    correct[label_idx] += (predicted[:, label_idx] == yb[:, label_idx]).sum().item()
                 
                 # Confusion Matrix data
                 all_targs.extend(yb.cpu().numpy())
@@ -211,17 +220,27 @@ if __name__ == '__main__':
                 all_preds.extend(predicted.cpu().detach().numpy())
 
         val_loss = total_val_loss / total
-        val_acc = correct / total
+        val_acc = [total_correct / total for total_correct in correct]
         
         train_losses_over_epochs.append(train_loss)
         valid_losses_over_epochs.append(val_loss)
         
-        print(f"Epoch {epoch+1} | Acc   | Loss")
-        print(f"Train   | {train_acc:.4f} | {train_loss:.4f}")
-        print(f"Val     | {val_acc:.4f} | {val_loss:.4f}")
+        # Constructing header with label names
+        acc_headers = " | ".join(f"Acc ({name})" for name in label_columns)
+        header = f"Epoch {epoch+1} | {acc_headers} | Loss"
+
+        # Constructing training and validation accuracy strings
+        train_acc_str = " | ".join(f"{acc:.4f}" for acc in train_acc)
+        val_acc_str = " | ".join(f"{acc:.4f}" for acc in val_acc)
+
+        # Printing epoch summary
+        print(header)
+        print(f"Train   | {train_acc_str} | {train_loss:.4f}")
+        print(f"Val     | {val_acc_str} | {val_loss:.4f}")
+        
         
         # Save the model
-        if val_acc > val_acc_best:
-            val_acc_best = val_acc  # Update the best validation accuracy
+        if val_loss < val_loss_best:
+            val_loss_best = val_loss  # Update the best validation accuracy
             save_state(epoch, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, bagmodel, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs)
-            print("Saved checkpoint due to improved val_acc")
+            print("Saved checkpoint due to improved val_loss")

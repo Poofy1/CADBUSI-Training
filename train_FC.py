@@ -202,8 +202,10 @@ if __name__ == '__main__':
                 predicted = (outputs > .5).float()
                 total += yb.size(0)
                 
-                for label_idx in range(num_labels):
-                    correct[label_idx] += (predicted[:, label_idx] == yb[:, label_idx]).sum().item()
+                if len(label_columns) == 1:  # Binary or single-label classification
+                    correct += (predicted == yb).sum().item()
+                else:  # Multi-label classification
+                    correct += ((predicted == yb).sum(dim=1) == len(label_columns)).sum().item()
                 
                 # Confusion Matrix data
                 all_targs.extend(yb.cpu().numpy())
