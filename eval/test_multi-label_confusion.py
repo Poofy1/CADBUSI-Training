@@ -15,21 +15,21 @@ import seaborn as sns
 
 # Calculate confusion matrix for a single label
 def calculate_single_label_conf_matrix(labels, predictions):
-    """
-    Create a 2x2 confusion matrix for a single label.
-    """
     conf_matrix = confusion_matrix(labels, predictions)
-    return pd.DataFrame(conf_matrix, index=["Actual Negative", "Actual Positive"],
-                        columns=["Predicted Negative", "Predicted Positive"])
+    # Swap columns when creating the DataFrame
+    df = pd.DataFrame(conf_matrix, index=["Actual Negative", "Actual Positive"],
+                      columns=["Predicted Negative", "Predicted Positive"])
+    # Reorder columns to desired order
+    return df[["Predicted Positive", "Predicted Negative"]]
 
     
-def plot_confusion_matrix(conf_matrix, output_file):
+def plot_confusion_matrix(conf_matrix, label, output_path):
     plt.figure(figsize=(10, 8))
     sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues')
-    plt.title('Confusion Matrix')
+    plt.title(f'{label} Confusion Matrix')
     plt.ylabel('True label')
     plt.xlabel('Predicted label')
-    plt.savefig(output_file)
+    plt.savefig(output_path)
     plt.close()
     
     
@@ -57,8 +57,8 @@ if __name__ == '__main__':
     num_labels = len(label_columns)
 
     # Create datasets
-    dataset_val = TUD.Subset(BagOfImagesDataset(bags_val),list(range(0,100)))
-    #dataset_val = BagOfImagesDataset(bags_val, train=False)
+    #dataset_val = TUD.Subset(BagOfImagesDataset(bags_val),list(range(0,100)))
+    dataset_val = BagOfImagesDataset(bags_val, train=False)
 
     val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
 
@@ -105,5 +105,4 @@ if __name__ == '__main__':
         conf_matrix_image_path = os.path.join(output_path, f'confusion_matrix_{label}.png')
 
         # Plot and save the confusion matrix
-        plot_confusion_matrix(label_conf_matrix, conf_matrix_image_path)
-        print(f"Confusion matrix for {label} saved as {conf_matrix_image_path}")
+        plot_confusion_matrix(label_conf_matrix, label, conf_matrix_image_path)
