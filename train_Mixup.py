@@ -135,6 +135,7 @@ if __name__ == '__main__':
     encoder_arch = 'resnet18'
     dataset_name = 'export_11_11_2023'
     label_columns = ['Has_Malignant', 'Has_Benign']
+    instance_columns = ['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
     img_size = 350
     batch_size = 5
     min_bag_size = 2
@@ -150,7 +151,7 @@ if __name__ == '__main__':
     #cropped_images = f"/home/paperspace/Temp_Data/{img_size}_images/"
 
     # Get Training Data
-    bags_train, bags_val = prepare_all_data(export_location, label_columns, cropped_images, img_size, min_bag_size, max_bag_size)
+    bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
     num_labels = len(label_columns)
 
     print("Training Data...")

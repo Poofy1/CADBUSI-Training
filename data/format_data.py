@@ -173,25 +173,35 @@ class BagOfImagesDataset(TUD.Dataset):
     
     def __getitem__(self, index):
         actual_id = self.unique_bag_ids[index]
-        labels, files_this_bag = self.bags_dict[actual_id]
-        data = torch.stack([
-            self.tsfms(Image.open(fn).convert("RGB")) for fn in files_this_bag
-        ])
-        data = data.cuda() 
+        bag_info = self.bags_dict[actual_id]
+
+        # Extract labels, image file paths, and instance-level labels
+        bag_labels = bag_info['bag_labels']
+        files_this_bag = bag_info['images']
+        instance_labels = bag_info['image_labels']
+
+        # Process images
+        image_data = torch.stack([self.tsfms(Image.open(fn).convert("RGB")) for fn in files_this_bag])
+        image_data = image_data.cuda()  # Move to GPU if CUDA is available
         
+        # Save processed images if required
         if self.save_processed:
             save_folder = os.path.join(env, 'processed_images')  
             os.makedirs(save_folder, exist_ok=True)
-            for idx, img_tensor in enumerate(data):
+            for idx, img_tensor in enumerate(image_data):
                 img_save_path = os.path.join(save_folder, f'bag_{actual_id}_img_{idx}.png')
                 img_tensor = unnormalize(img_tensor)
                 img = TF.to_pil_image(img_tensor.cpu().detach())
                 img.save(img_save_path)
-                
-        # Convert labels list to a tensor
-        label_tensor = torch.tensor(labels, dtype=torch.float32)
+
+        # Convert bag labels list to a tensor
+        bag_labels_tensor = torch.tensor(bag_labels, dtype=torch.float32)
+
+        # Convert instance labels to a tensor or a list of tensors
+        instance_labels_tensors = [torch.tensor(labels, dtype=torch.float32) if labels != [None] else torch.tensor([0], dtype=torch.float32) for labels in instance_labels]
         
-        return data, label_tensor, actual_id
+        return image_data, bag_labels_tensor, instance_labels_tensors, actual_id
+
     
     def __len__(self):
         return len(self.unique_bag_ids)
@@ -201,7 +211,7 @@ class BagOfImagesDataset(TUD.Dataset):
 
 
 
-def create_bags(data, min_size, max_size, root_dir, label_columns):
+def create_bags_old(data, min_size, max_size, root_dir, label_columns):
     bags_dict = {}  # This will be indexed by ID
     
     total_rows = len(data)
@@ -226,13 +236,73 @@ def create_bags(data, min_size, max_size, root_dir, label_columns):
     return bags_dict  # ID : [[labels], [image_files]]
 
 
+def create_bags(data, min_size, max_size, root_dir, label_columns, instance_columns=None, instance_data=None):
+    bags_dict = {}  # Indexed by ID
+    
+    image_label_map = {}
+
+    # Check if instance_data and instance_columns are provided and valid
+    if instance_data is not None and instance_columns is not None:
+        # Process instance_data only if it's a valid DataFrame
+        if isinstance(instance_data, pd.DataFrame):
+            for _, row in instance_data.iterrows():
+                image_name = row['ImageName']
+                # Exclude 'Reject Image' from the labels list if present
+                labels = [row[col] for col in instance_columns if col != 'Reject Image' and col in instance_data.columns]
+                
+                # Store the labels along with a flag indicating whether to reject the image
+                image_label_map[image_name] = {
+                    'labels': labels,
+                    'reject_image': row['Reject Image'] if 'Reject Image' in instance_columns else False
+                }
+
+    total_rows = len(data)
+
+    for _, row in tqdm(data.iterrows(), total=total_rows):
+        image_files = ast.literal_eval(row['Images'])
+
+        bag_files = []
+        image_labels = []
+
+        for img_name in image_files:
+            # Default labels and rejection status if image_label_map is not used
+            default_labels = [False] * (len(instance_columns) - 1 if instance_columns else 0)
+            image_info = image_label_map.get(img_name, {'labels': default_labels, 'reject_image': False})
+
+            # Skip image if marked for rejection
+            if image_info['reject_image']:
+                continue
+
+            full_path = os.path.join(root_dir, img_name)
+            bag_files.append(full_path)
+
+            # Append either [None] or the labels based on content
+            image_labels.append(image_info['labels'] if any(image_info['labels']) else [None])
+
+        # Skip bags outside the size range
+        if not (min_size <= len(bag_files) <= max_size):
+            continue
+
+        # Extract labels from data
+        bag_labels = [int(row[label]) for label in label_columns if label in data.columns]
+
+        bags_dict[row['ID']] = {
+            'bag_labels': bag_labels, 
+            'images': bag_files,
+            'image_labels': image_labels
+        }
+
+    return bags_dict  # ID : {'bag_labels': [...], 'images': [...], 'image_labels': [...]}
+
+
+
 
 def count_bag_labels(bags_dict):
     label_combinations_count = {}
 
     for bag_id, bag_contents in bags_dict.items():
-        # Convert the label list to a tuple so it can be used as a dictionary key
-        label_tuple = tuple(bag_contents[0])
+        # Access the 'bag_labels' key of the dictionary
+        label_tuple = tuple(bag_contents['bag_labels'])
 
         if label_tuple not in label_combinations_count:
             label_combinations_count[label_tuple] = 0
@@ -282,8 +352,9 @@ def upsample_minority_class(bags_dict, seed=0):
     bags_list = [(bag_id, info) for bag_id, info in bags_dict.items()]
 
     # Extract the first label from the label list for each bag
-    class_0_bags = [bag for bag in bags_list if bag[1][0][0] == 0]
-    class_1_bags = [bag for bag in bags_list if bag[1][0][0] == 1]
+    class_0_bags = [bag for bag in bags_list if bag[1]['bag_labels'][0] == 0]
+    class_1_bags = [bag for bag in bags_list if bag[1]['bag_labels'][0] == 1]
+
 
     # Identify the minority class
     minority_bags = class_0_bags if len(class_0_bags) < len(class_1_bags) else class_1_bags
@@ -308,20 +379,30 @@ def save_bags_to_csv(bags_dict, file_path):
     with open(file_path, mode='w', newline='', encoding='utf-8') as file:
         writer = csv.writer(file)
         # Write header
-        writer.writerow(['Bag_ID', 'Labels', 'Image_Files'])
+        writer.writerow(['Bag_ID', 'Labels', 'Image_Files', 'Image_Labels'])
 
         for bag_id, bag_contents in bags_dict.items():
             # Flatten image file paths into a single string
-            images_str = ';'.join(bag_contents[1])
-            # Convert labels list to string
-            labels_str = ','.join(map(str, bag_contents[0]))
+            images_str = ';'.join(bag_contents['images'])
+            # Convert bag labels list to string
+            labels_str = ','.join(map(str, bag_contents['bag_labels']))
+            # Serialize image-level labels to a JSON string
+            image_labels_str = json.dumps(bag_contents['image_labels'])
             # Write row
-            writer.writerow([bag_id, labels_str, images_str])
+            writer.writerow([bag_id, labels_str, images_str, image_labels_str])
 
-def prepare_all_data(export_location, label_columns, cropped_images, img_size, min_bag_size, max_bag_size):
+
+def prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size):
     
     print("Preprocessing Data...")
     data = pd.read_csv(f'{export_location}/TrainData.csv')
+    
+    instance_data_file = f'{export_location}/InstanceData.csv'
+    
+    if os.path.exists(instance_data_file):
+        instance_data = pd.read_csv(instance_data_file)
+    else:
+        instance_data = None
        
     #Cropping images
     preprocess_and_save_images(data, export_location, cropped_images, img_size)
@@ -332,13 +413,13 @@ def prepare_all_data(export_location, label_columns, cropped_images, img_size, m
     train_data = data[data['ID'].isin(train_patient_ids)].reset_index(drop=True)
     val_data = data[data['ID'].isin(val_patient_ids)].reset_index(drop=True)
     
-    bags_train = create_bags(train_data, min_bag_size, max_bag_size, cropped_images, label_columns)
-    bags_val = create_bags(val_data, min_bag_size, max_bag_size, cropped_images, label_columns)
+    bags_train = create_bags(train_data, min_bag_size, max_bag_size, cropped_images, label_columns, instance_columns, instance_data)
+    bags_val = create_bags(val_data, min_bag_size, max_bag_size, cropped_images, label_columns, instance_columns, instance_data)
     
     bags_train = upsample_minority_class(bags_train)  # Upsample the minority class in the training set
     
     print(f'There are {len(bags_train)} files in the training data')
     print(f'There are {len(bags_val)} files in the validation data')
     count_bag_labels(bags_train)
-    save_bags_to_csv(bags_train, 'F:/Temp_SSD_Data/bags_train.csv')
+    #save_bags_to_csv(bags_train, 'F:/Temp_SSD_Data/bags_testing.csv')
     return bags_train, bags_val
