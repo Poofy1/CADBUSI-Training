@@ -31,7 +31,7 @@ def draw_legend(image, label_columns, true_labels, pred_labels):
     pred_labels_str = '\n'.join([f"{label_columns[i]}: {pred_labels[i].item():.2f}" for i in range(len(label_columns))])
     draw.multiline_text((10, text_start + 20 + 20 * len(label_columns)), f"Predicted Labels:\n{pred_labels_str}", fill=(255, 255, 255), font=font)
     
-    
+
     
 if __name__ == '__main__':
 
@@ -40,6 +40,7 @@ if __name__ == '__main__':
     encoder_arch = 'resnet18'
     dataset_name = 'export_12_26_2023'
     label_columns = ['Has_Malignant', 'Has_Benign']
+    instance_columns = ['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present'] # 'Reject Image' is used to remove images and is not trained on
     img_size = 350
     batch_size = 1
     min_bag_size = 2
@@ -53,7 +54,7 @@ if __name__ == '__main__':
     mkdir(output_path, exist_ok=True)
 
     # Get Training Data
-    bags_train, bags_val = prepare_all_data(export_location, label_columns, cropped_images, img_size, min_bag_size, max_bag_size)
+    bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
     num_labels = len(label_columns)
 
     # Create datasets
