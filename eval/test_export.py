@@ -129,7 +129,7 @@ def plot_size_vs_malignant_biopsies(df, export_name):
     full_path = f"{env}/results/PatientSize_vs_Malignant_Biopsies_{export_name}.png"
     plt.savefig(full_path, format='png')
     
-    
+
 
 #export_name = 'export_11_11_2023'
 export_name = 'export_12_26_2023'

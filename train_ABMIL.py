@@ -15,22 +15,25 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 
 def collate_custom(batch):
     batch_data = []
-    batch_labels = []
+    batch_bag_labels = []
+    batch_instance_labels = []
     batch_ids = []  # List to store bag IDs
 
     for sample in batch:
-        image_data, labels, bag_id = sample
+        image_data, bag_labels, instance_labels, bag_id = sample  # Updated to unpack four items
         batch_data.append(image_data)
-        batch_labels.append(labels)  # labels are already tensors
-        batch_ids.append(bag_id)  # Append the bag ID
+        batch_bag_labels.append(bag_labels)
+        batch_instance_labels.append(instance_labels)
+        batch_ids.append(bag_id)
 
-    # Using torch.stack for labels to handle multiple labels per bag
-    out_labels = torch.stack(batch_labels).cuda()
+    # Use torch.stack for bag labels to handle multiple labels per bag
+    out_bag_labels = torch.stack(batch_bag_labels).cuda()
 
     # Converting to a tensor
     out_ids = torch.tensor(batch_ids, dtype=torch.long).cuda()
 
-    return batch_data, out_labels, out_ids
+    return batch_data, out_bag_labels, batch_instance_labels, out_ids
+
 
 
 class EmbeddingBagModel(nn.Module):
@@ -71,7 +74,7 @@ class EmbeddingBagModel(nn.Module):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'ABMIL_12_26_2_test'
+    model_name = 'ABMIL_12_26_1'
     encoder_arch = 'resnet18'
     dataset_name = 'export_12_26_2023'
     label_columns = ['Has_Malignant', 'Has_Benign']
@@ -156,7 +159,7 @@ if __name__ == '__main__':
         total_acc = 0
         total = 0
         correct = [0] * num_labels
-        for (data, yb, _) in tqdm(train_dl, total=len(train_dl)): 
+        for (data, yb, instance_yb, id) in tqdm(train_dl, total=len(train_dl)): 
             xb, yb = data, yb.cuda()
             
             optimizer.zero_grad()
@@ -194,7 +197,7 @@ if __name__ == '__main__':
         all_targs = []
         all_preds = []
         with torch.no_grad():
-            for (data, yb, _) in tqdm(val_dl, total=len(val_dl)): 
+            for (data, yb, instance_yb, id) in tqdm(val_dl, total=len(val_dl)): 
                 xb, yb = data, yb.cuda()
 
                 outputs, _, _, _ = bagmodel(xb)

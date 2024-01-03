@@ -194,7 +194,7 @@ if __name__ == '__main__':
         all_targs = []
         all_preds = []
         with torch.no_grad():
-            for (data, yb, id) in tqdm(val_dl, total=len(val_dl)): 
+            for (data, yb, instance_yb, id) in tqdm(val_dl, total=len(val_dl)): 
                 xb, yb = data, yb.cuda()
 
                 outputs, _, _ = bagmodel(xb)
