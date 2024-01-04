@@ -10,7 +10,7 @@ from train_ABMIL import *
 from data.format_data import *
 import matplotlib.pyplot as plt
 import seaborn as sns
-
+from sklearn.metrics import confusion_matrix, recall_score, precision_score, f1_score, roc_auc_score
 
 
 # Calculate confusion matrix for a single label
@@ -22,6 +22,21 @@ def calculate_single_label_conf_matrix(labels, predictions):
     # Reorder columns to desired order
     return df[["Predicted Positive", "Predicted Negative"]]
 
+
+def compute_metrics(labels, predictions):
+    # Calculate the confusion matrix and extract components
+    conf_matrix = confusion_matrix(labels, predictions)
+    TN, FP, FN, TP = conf_matrix.ravel()
+    
+    # Calculate metrics
+    sensitivity = TP / (TP + FN)
+    specificity = TN / (TN + FP)
+    precision = precision_score(labels, predictions)
+    recall = recall_score(labels, predictions)
+    f1 = f1_score(labels, predictions)
+    
+    return sensitivity, specificity, precision, recall, f1
+    
     
 def plot_confusion_matrix(conf_matrix, label, output_path):
     plt.figure(figsize=(10, 8))
@@ -40,6 +55,7 @@ if __name__ == '__main__':
     encoder_arch = 'resnet18'
     dataset_name = 'export_12_26_2023'
     label_columns = ['Has_Malignant', 'Has_Benign']
+    instance_columns = ['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
     img_size = 350
     batch_size = 5
     min_bag_size = 2
@@ -53,7 +69,7 @@ if __name__ == '__main__':
     mkdir(output_path, exist_ok=True)
 
     # Get Training Data
-    bags_train, bags_val = prepare_all_data(export_location, label_columns, cropped_images, img_size, min_bag_size, max_bag_size)
+    bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
     num_labels = len(label_columns)
 
     # Create datasets
@@ -82,7 +98,7 @@ if __name__ == '__main__':
     bag_predictions = []
     bag_labels = []
     with torch.no_grad():
-        for (data, yb, _) in tqdm(val_dl, total=len(val_dl)): 
+        for (data, yb, instance_yb, _) in tqdm(val_dl, total=len(val_dl)): 
             xb, yb = data, yb.cuda()
             outputs, _, _, _ = bagmodel(xb)
             predicted = (outputs > .5).float()
@@ -91,18 +107,24 @@ if __name__ == '__main__':
             bag_predictions.extend(predicted.cpu().numpy())
             bag_labels.extend(yb.cpu().numpy())
             
-    
-    # Creating separate confusion matrices for each label
+    # Creating separate confusion matrices for each label and printing metrics
     for label_idx, label in enumerate(label_columns):
         # Extracting individual label predictions and ground truths
-        label_predictions = [pred[label_idx] for pred in bag_predictions]
+        label_predictions = [int(pred[label_idx] > 0.5) for pred in bag_predictions]
         label_labels = [lbl[label_idx] for lbl in bag_labels]
 
-        # Calculate confusion matrix for the current label
-        label_conf_matrix = calculate_single_label_conf_matrix(label_labels, label_predictions)
+        # Compute metrics
+        sensitivity, specificity, precision, recall, f1 = compute_metrics(label_labels, label_predictions)
+
+        # Print out the metrics
+        print(f"Metrics for {label}:")
+        print(f"  Sensitivity (Recall): {sensitivity:.3f}")
+        print(f"  Specificity: {specificity:.3f}")
+        print(f"  Precision: {precision:.3f}")
+        print(f"  F1 Score: {f1:.3f}")
 
         # Path to save the confusion matrix image
         conf_matrix_image_path = os.path.join(output_path, f'confusion_matrix_{label}.png')
 
         # Plot and save the confusion matrix
-        plot_confusion_matrix(label_conf_matrix, label, conf_matrix_image_path)
+        plot_confusion_matrix(confusion_matrix(label_labels, label_predictions), label, conf_matrix_image_path)
