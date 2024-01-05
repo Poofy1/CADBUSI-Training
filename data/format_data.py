@@ -197,9 +197,9 @@ class BagOfImagesDataset(TUD.Dataset):
         # Convert bag labels list to a tensor
         bag_labels_tensor = torch.tensor(bag_labels, dtype=torch.float32)
 
-        # Convert instance labels to a tensor or a list of tensors
-        instance_labels_tensors = [torch.tensor(labels, dtype=torch.float32) if labels != [None] else torch.tensor([0], dtype=torch.float32) for labels in instance_labels]
-        
+        # Convert instance labels to a tensor, using -1 for None
+        instance_labels_tensors = [torch.tensor(labels, dtype=torch.float32) if labels != [None] else torch.tensor([-1], dtype=torch.float32) for labels in instance_labels]
+
         return image_data, bag_labels_tensor, instance_labels_tensors, actual_id
 
     

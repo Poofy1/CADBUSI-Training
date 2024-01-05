@@ -63,13 +63,12 @@ class EmbeddingBagModel(nn.Module):
         
         for i, h in enumerate(h_per_bag):
             # Receive values from the aggregator
-            yhat_bag, yhat_ins, att_sc = self.aggregator(h)
+            yhat_bag, yhat_ins = self.aggregator(h)
             
             logits[i] = yhat_bag
             yhat_instances.append(yhat_ins)
-            attention_scores.append(att_sc)
         
-        return logits, yhat_instances, attention_scores
+        return logits, yhat_instances
 
 
 if __name__ == '__main__':
@@ -95,7 +94,8 @@ if __name__ == '__main__':
     
     # Get Training Data
     bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
-    num_labels = len(label_columns)
+    num_bag_classes = len(label_columns)
+    num_instance_classes = len(instance_columns) - 1
 
     print("Training Data...")
     # Create datasets
@@ -119,10 +119,10 @@ if __name__ == '__main__':
     nf = num_features_model( nn.Sequential(*encoder.children()))
     
     # bag aggregator
-    aggregator = FC_aggregate( nf = nf, num_classes = num_labels, L = 128, fc_layers=[256, 64], dropout = .6)
+    aggregator = FC_aggregate( nf = nf, num_bag_classes = num_bag_classes, num_instance_classes = num_instance_classes, L = 128, fc_layers=[256, 64], dropout = .6)
 
     # total model
-    bagmodel = EmbeddingBagModel(encoder, aggregator, num_classes = num_labels).cuda()
+    bagmodel = EmbeddingBagModel(encoder, aggregator, num_classes = num_bag_classes).cuda()
     total_params = sum(p.numel() for p in bagmodel.parameters())
     print(f"Total Parameters: {total_params}")
         
@@ -131,6 +131,7 @@ if __name__ == '__main__':
     
     # Use BCE since we are doing multi label instead of multi class
     loss_func = nn.BCELoss()
+    instance_loss_func = nn.BCELoss()
     train_losses_over_epochs = []
     valid_losses_over_epochs = []
     
@@ -159,38 +160,61 @@ if __name__ == '__main__':
         bagmodel.train()
         total_loss = 0.0
         total_acc = 0
-        total = 0
-        correct = [0] * num_labels
+        total_bag_loss, total_instance_loss = 0.0, 0.0
+        total_bag_correct, total_instance_correct = 0, 0
+        total_bags, total_instances = 0, 0
+
         for (data, yb, instance_yb, id) in tqdm(train_dl, total=len(train_dl)): 
             xb, yb = data, yb.cuda()
             
-            # Train
+            # Forward pass
+            yhat_bag, yhat_instance = bagmodel(xb)
+
+            # Bag-level loss and accuracy
+            bag_loss = loss_func(yhat_bag, yb)
+            total_bag_loss += bag_loss.item() * len(xb) 
+            bag_pred = (yhat_bag > 0.5).float()
+            total_bag_correct += (bag_pred == yb).sum().item()
+            total_bags += len(xb)
+
+            # Instance-level loss and accuracy
+            instance_loss = 0.0
+            instance_correct = 0
+            valid_instance_count = 0
+            for i, instance_labels in enumerate(instance_yb):
+                for j, label in enumerate(instance_labels):
+                    if label.numel() == 1 and label.item() != -1:  # Check if label is a single-element tensor and not -1
+                        inst_loss = instance_loss_func(yhat_instance[i][j].unsqueeze(0), label.unsqueeze(0).cuda())
+                        instance_loss += inst_loss.item()
+                        instance_pred = (yhat_instance[i][j] > 0.5).float()
+                        instance_correct += (instance_pred == label.cuda()).sum().item()
+                        valid_instance_count += 1
+
+            total_instance_loss += instance_loss
+            total_instance_correct += instance_correct
+            total_instances += valid_instance_count
+
+            # Combine losses and backward pass
+            total_loss = bag_loss + instance_loss  # Optionally, use weighted sum
             optimizer.zero_grad()
-            outputs, _, _ = bagmodel(xb)
-            loss = loss_func(outputs, yb)
-            loss.backward()
+            total_loss.backward()
             optimizer.step()
 
-            # Accuracy 
-            total_loss += loss.item() * len(xb)
-            predicted = (outputs > .5).float()
-            total += yb.size(0)
-            
-            # Calculate correct predictions for each label
-            for label_idx in range(num_labels):
-                correct[label_idx] += (predicted[:, label_idx] == yb[:, label_idx]).sum().item()
-            
+        # Calculate average losses and accuracies
+        avg_bag_loss = total_bag_loss / total_bags
+        avg_instance_loss = total_instance_loss / total_instances if total_instances > 0 else 0
+        bag_accuracy = total_bag_correct / total_bags
+        instance_accuracy = total_instance_correct / total_instances if total_instances > 0 else 0
 
-        train_loss = total_loss / total
-        train_acc = [total_correct / total for total_correct in correct]
+        print(f"\nEpoch {epoch}: \nBag Loss = {avg_bag_loss:.2f}, \nInstance Loss = {avg_instance_loss:.2f}, \nBag Accuracy = {bag_accuracy:.2f}, \nInstance Accuracy = {instance_accuracy:.2f}")
 
-
+"""
         # Evaluation phase
         bagmodel.eval()
         total_val_loss = 0.0
         total_val_acc = 0.0
         total = 0
-        correct = [0] * num_labels
+        correct = [0] * num_bag_classes
         all_targs = []
         all_preds = []
         with torch.no_grad():
@@ -241,4 +265,4 @@ if __name__ == '__main__':
         if val_loss < val_loss_best:
             val_loss_best = val_loss  # Update the best validation accuracy
             save_state(epoch, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, bagmodel, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs)
-            print("Saved checkpoint due to improved val_loss")
+            print("Saved checkpoint due to improved val_loss")"""
