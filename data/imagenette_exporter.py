@@ -35,7 +35,7 @@ def Move_Images(source_folder1, source_folder2, destination_folder):
 
 
 
-def Export_Database(export_location, min_per_bag, max_per_bag, target_label, test_count):
+def Export_Database(export_location, min_per_bag, max_per_bag, target_labels, test_count):
     print("Reformatting Data:")
 
     # Directories
@@ -49,7 +49,7 @@ def Export_Database(export_location, min_per_bag, max_per_bag, target_label, tes
     val_data = original_data[original_data['is_valid'] == True]
 
     # Function to create bags
-    def create_bags(data, is_valid, extra_count = 0):
+    def create_bags(data, is_valid, extra_count=0):
         bags = []
         while not data.empty:
             bag_size = random.randint(min_per_bag, max_per_bag)
@@ -57,9 +57,13 @@ def Export_Database(export_location, min_per_bag, max_per_bag, target_label, tes
             sampled_data = data.sample(n=bag_size)
             data = data.drop(sampled_data.index)  # Remove selected images from the dataset
 
-            has_label = target_label in sampled_data['noisy_labels_0'].values
+            # Check for each target label in the bag
+            labels_presence = {label: label in sampled_data['noisy_labels_0'].values for label in target_labels}
             image_names = [os.path.basename(path) for path in sampled_data['path']]
-            bags.append({'ID': len(bags) + 1, 'Images': str(image_names), 'Labels': has_label, 'Valid': is_valid})
+            bag_info = {'ID': len(bags) + 1, 'Images': str(image_names), 'Valid': is_valid}
+            bag_info.update(labels_presence)  # Add label presence information
+
+            bags.append(bag_info)
 
         # Convert specified number of bags to Valid = 2
         for i in random.sample(range(len(bags)), min(extra_count, len(bags))):
@@ -80,6 +84,8 @@ def Export_Database(export_location, min_per_bag, max_per_bag, target_label, tes
     new_data.to_csv(new_csv_file, index=False)
 
     print(f"Data exported to {new_csv_file}")
+
+
 
 
 
@@ -112,4 +118,4 @@ path_val = path/'val'
 
 Move_Images(f'{export_location}/train', f'{export_location}/val', f'{export_location}/images')
 
-Export_Database(export_location, 3, 7, 'n01440764', 10)
+Export_Database(export_location, 3, 7, ['n01440764', 'n02102040'], 10)

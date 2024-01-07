@@ -74,15 +74,15 @@ class EmbeddingBagModel(nn.Module):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'ABMIL_12_26_1'
+    model_name = 'imagenette2-160-test2'
     encoder_arch = 'resnet18'
-    dataset_name = 'export_12_26_2023'
-    label_columns = ['Has_Malignant', 'Has_Benign']
-    instance_columns = ['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
-    img_size = 350
+    dataset_name = 'imagenette2-160'
+    label_columns = ['n01440764', 'n02102040']
+    instance_columns = []#['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
+    img_size = 160
     batch_size = 5
-    min_bag_size = 2
-    max_bag_size = 20
+    min_bag_size = 3
+    max_bag_size = 7
     epochs = 500
     lr = 0.001
 
