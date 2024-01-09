@@ -246,3 +246,43 @@ Validation Accuracies:
   n01440764: 0.9848
   n02102040: 0.9684
 
+Epoch 110
+Training Accuracies:
+  n01440764: 0.9563
+  n02102040: 0.9433
+Validation Accuracies:
+  n01440764: 0.9772
+  n02102040: 0.9722
+
+Epoch 123
+Training Accuracies:
+  n01440764: 0.9679
+  n02102040: 0.9513
+Validation Accuracies:
+  n01440764: 0.9873
+  n02102040: 0.9785
+
+Epoch 152
+Training Accuracies:
+  n01440764: 0.9723
+  n02102040: 0.9638
+Validation Accuracies:
+  n01440764: 0.9848
+  n02102040: 0.9835
+
+Epoch 169
+Training Accuracies:
+  n01440764: 0.9714
+  n02102040: 0.9585
+Validation Accuracies:
+  n01440764: 0.9924
+  n02102040: 0.9886
+
+Epoch 177
+Training Accuracies:
+  n01440764: 0.9714
+  n02102040: 0.9607
+Validation Accuracies:
+  n01440764: 0.9949
+  n02102040: 0.9835
+

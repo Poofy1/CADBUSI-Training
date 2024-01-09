@@ -126,7 +126,6 @@ if __name__ == '__main__':
     valid_losses_over_epochs = []
     epoch_start = 0
     
-    
     # Check if the model already exists
     model_folder = f"{env}/models/{model_name}/"
     model_path = f"{model_folder}/{model_name}.pth"

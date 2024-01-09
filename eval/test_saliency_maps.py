@@ -36,15 +36,15 @@ def draw_legend(image, label_columns, true_labels, pred_labels):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'ABMIL_12_26_1'
+    model_name = 'imagenette2-160-test2'
     encoder_arch = 'resnet18'
-    dataset_name = 'export_12_26_2023'
-    label_columns = ['Has_Malignant', 'Has_Benign']
-    instance_columns = ['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present'] # 'Reject Image' is used to remove images and is not trained on
-    img_size = 350
+    dataset_name = 'imagenette2-160'
+    label_columns = ['n01440764', 'n02102040']
+    instance_columns = [] #['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present'] # 'Reject Image' is used to remove images and is not trained on
+    img_size = 160
     batch_size = 1
-    min_bag_size = 2
-    max_bag_size = 20
+    min_bag_size = 3
+    max_bag_size = 7
     lr = 0.001
 
     # Paths
@@ -86,10 +86,12 @@ if __name__ == '__main__':
     saliency_maps_list = []
 
     with torch.no_grad():
-        for (data, yb, bag_id) in tqdm(val_dl, total=len(val_dl)): 
+        for (data, yb, instance_yb, bag_id) in tqdm(val_dl, total=len(val_dl)): 
             xb, yb = data, yb.cuda()
 
             outputs, saliency_maps, yhat, att = bagmodel(xb)
+            
+            print(f'{outputs} / {yb}')
 
             # Saving the images with saliency maps overlaid
             for bag_index, bag_saliency_maps in enumerate(saliency_maps):

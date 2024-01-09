@@ -16,22 +16,24 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
     
 def collate_custom(batch):
     batch_data = []
-    batch_labels = []
+    batch_bag_labels = []
+    batch_instance_labels = []
     batch_ids = []  # List to store bag IDs
 
     for sample in batch:
-        image_data, labels, bag_id = sample
+        image_data, bag_labels, instance_labels, bag_id = sample  # Updated to unpack four items
         batch_data.append(image_data)
-        batch_labels.append(labels)  # labels are already tensors
-        batch_ids.append(bag_id)  # Append the bag ID
+        batch_bag_labels.append(bag_labels)
+        batch_instance_labels.append(instance_labels)
+        batch_ids.append(bag_id)
 
-    # Using torch.stack for labels to handle multiple labels per bag
-    out_labels = torch.stack(batch_labels).cuda()
+    # Use torch.stack for bag labels to handle multiple labels per bag
+    out_bag_labels = torch.stack(batch_bag_labels).cuda()
 
     # Converting to a tensor
     out_ids = torch.tensor(batch_ids, dtype=torch.long).cuda()
 
-    return batch_data, out_labels, out_ids
+    return batch_data, out_bag_labels, batch_instance_labels, out_ids
 
 class EmbeddingBagModel(nn.Module):
     
@@ -72,17 +74,12 @@ def generate_pseudo_labels(inputs, threshold = .5):
     pseudo_labels = []
     for tensor in inputs:
         # Calculate the dynamic threshold for each tensor
-        """pseudo_labels_tensor = (tensor >= threshold).float()
-        pseudo_labels_list = pseudo_labels_tensor.tolist()
-        pseudo_labels.append(pseudo_labels_list)"""
-        
-        # Calculate the dynamic threshold for each tensor
         threshold = 1 / tensor.size(0)
         pseudo_labels_tensor = (tensor > threshold).float()
         pseudo_labels.append(pseudo_labels_tensor)
     
-    print("attention scores: ", inputs)    
-    print("pseudo_labels: ", pseudo_labels)
+    #print("input scores: ", inputs)    
+    #print("pseudo labels: ", pseudo_labels)
     return pseudo_labels
 
 # use raw output? still convert to 0 or 1 (Pseudo labels)
@@ -199,8 +196,7 @@ class SupConLoss(nn.Module):
 
 
         mask = mask * logits_mask
-        print("mask", mask)
-        
+    
         # compute log_prob
         exp_logits = torch.exp(logits) * logits_mask
         if self.mask_uncertain_neg:
@@ -211,54 +207,28 @@ class SupConLoss(nn.Module):
         # compute mean of log-likelihood over positive
         mean_log_prob_pos = (mask * log_prob).sum(1) / (mask.sum(1) + 1e-10)
         
-        
-        print("anchor_feature", anchor_feature)
-        print("anchor_dot_contrast", anchor_dot_contrast)
-        print("logits", logits)
-        print("torch.exp(logits)", torch.exp(logits))
-        print("mean_log_prob_pos", mean_log_prob_pos)
-
         # loss
         loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
+            
         
-        if torch.isinf(mask).any():
-            print("There are NaNs in the mask tensor.")
-        else:
-            print("No NaNs in the mask tensor.")
-            
-        if torch.isinf(log_prob).any():
-            print("There are NaNs in the log_prob tensor.")
-        else:
-            print("No NaNs in the log_prob tensor.")
-            
-        if torch.isnan(mean_log_prob_pos).any():
-            print("There are NaNs in the mean_log_prob_pos tensor.")
-        else:
-            print("No NaNs in the mean_log_prob_pos tensor.")
-            
-        print("LOSS", loss)
-        print("anchor_count", anchor_count)
-        print("batch_size", batch_size)
         loss = loss.view(anchor_count, batch_size).mean()
 
-        print("LOSS", loss)
+        #print("LOSS: ", loss)
+        #print("anchor_count: ", anchor_count)
+        #print("batch_size: ", batch_size)
 
         return loss
 
 
-
-# Training vars
-val_acc_best = -1 
-
 def default_train():
-    global val_acc_best
+    global val_loss_best
     
     # Training phase
     bagmodel.train()
     total_loss = 0.0
     total = 0
     correct = 0
-    for (data, yb, _) in tqdm(train_dl, total=len(train_dl)): 
+    for (data, yb, instance_yb, id) in tqdm(train_dl, total=len(train_dl)): 
         xb, yb = data, yb.cuda()
         
         optimizer.zero_grad()
@@ -289,7 +259,7 @@ def default_train():
     all_targs = []
     all_preds = []
     with torch.no_grad():
-        for (data, yb, _) in tqdm(val_dl, total=len(val_dl)): 
+        for (data, yb, instance_yb, id) in tqdm(val_dl, total=len(val_dl)): 
             xb, yb = data, yb.cuda()
 
             outputs, _, _, _ = bagmodel(xb)
@@ -320,21 +290,20 @@ def default_train():
     print(f"Val     | {val_acc:.4f} | {val_loss:.4f}")
         
     # Save the model
-    if val_acc > val_acc_best:
-        val_acc_best = val_acc  # Update the best validation accuracy
-        save_state(epoch, train_acc, val_acc, model_folder, model_name, bagmodel, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs)
-        print("Saved checkpoint due to improved val_acc")
+    if val_loss < val_loss_best:
+        val_loss_best = val_loss  # Update the best validation accuracy
+        save_state(epoch, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, bagmodel, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs)
+        print("Saved checkpoint due to improved val_loss")
 
 
 if __name__ == '__main__':
 
     # Config
-    # Config
-    model_name = 'test'
+    model_name = 'GenSCL-test'
     encoder_arch = 'resnet18'
-    dataset_name = 'export_11_11_2023'
+    dataset_name = 'export_12_26_2023'
     label_columns = ['Has_Malignant']
-    instance_columns = ['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
+    instance_columns = [] #['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
     feature_extractor_train_count = 5
     img_size = 350
     batch_size = 5
@@ -366,20 +335,12 @@ if __name__ == '__main__':
     train_dl =  TUD.DataLoader(dataset_train, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
     val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
 
-
-
-    # Check if the model already exists
-    model_folder = f"{env}/models/{model_name}/"
-    model_path = f"{model_folder}/{model_name}.pth"
-    optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
-    stats_path = f"{model_folder}/{model_name}_stats.pkl"
-
     
     encoder = create_timm_body(encoder_arch)
-
     nf = num_features_model(nn.Sequential(*encoder.children()))
+    
     # bag aggregator
-    aggregator = ABMIL_aggregate( nf = nf, num_classes = num_labels, pool_patches = 3, L = 128)
+    aggregator = ABMIL_aggregate( nf = nf, num_classes = num_labels, pool_patches = 6, L = 128)
 
     # total model
     bagmodel = EmbeddingBagModel(encoder, aggregator, num_classes = num_labels).cuda()
@@ -389,12 +350,19 @@ if __name__ == '__main__':
         
     optimizer = Adam(bagmodel.parameters(), lr=lr)
     loss_func = nn.BCELoss()
-    supcon_loss = SupConLoss(temperature=0.07, contrast_mode='all', base_temperature=0.07)
+    supcon_loss = SupConLoss(temperature=0.07, pair_mode = 2, contrast_mode='all', base_temperature=0.07)
+    #genSCL_loss = GeneralizedSupervisedContrastiveLoss(temperature=0.07)
     train_losses_over_epochs = []
     valid_losses_over_epochs = []
     epoch_start = 0
     
 
+    
+    # Check if the model already exists
+    model_folder = f"{env}/models/{model_name}/"
+    model_path = f"{model_folder}/{model_name}.pth"
+    optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
+    stats_path = f"{model_folder}/{model_name}_stats.pkl"
     
     if os.path.exists(model_path):
         bagmodel.load_state_dict(torch.load(model_path))
@@ -406,11 +374,11 @@ if __name__ == '__main__':
             train_losses_over_epochs = saved_stats['train_losses']
             valid_losses_over_epochs = saved_stats['valid_losses']
             epoch_start = saved_stats['epoch']
-            val_acc_best = saved_stats.get('val_acc', -1)  # If 'val_acc' does not exist, default to -1
+            val_loss_best = saved_stats['val_loss']
     else:
         print(f"{model_name} does not exist, creating new instance")
         os.makedirs(model_folder, exist_ok=True)
-        val_acc_best = -1 
+        val_loss_best = 99999
 
 
     # Training loop
@@ -421,16 +389,19 @@ if __name__ == '__main__':
             default_train()
         else:
             print('Training Feature Extractor')
-            # Supervised Contrastive Learning phase
+            # Generalized Supervised Contrastive Learning phase
             # Freeze the aggregator and unfreeze the encoder
             for param in aggregator.parameters():
                 param.requires_grad = False
             for param in encoder.parameters():
                 param.requires_grad = True
+                
+            epoch_loss = 0.0
 
             # Iterate over the training data
-            for (data, _, _) in tqdm(train_dl, total=len(train_dl)):
-                xb = data
+            for (data, yb, instance_yb, id) in tqdm(train_dl, total=len(train_dl)):
+                xb, yb = data, yb.cuda()
+                yb = yb.view(-1)
                 optimizer.zero_grad()
 
                 # Generate pseudo labels from attention scores
@@ -439,11 +410,11 @@ if __name__ == '__main__':
                 pseudo_labels = generate_pseudo_labels(att_sc)
 
                 # Forward pass through the encoder only
-                outputs = encoder(torch.cat(xb, dim=0))
+                encoder_outputs = encoder(torch.cat(xb, dim=0))
 
                 # Calculate the correct number of features per bag
                 split_sizes = [bag.size(0) for bag in xb]
-                features_per_bag = torch.split(outputs, split_sizes, dim=0)
+                features_per_bag = torch.split(encoder_outputs, split_sizes, dim=0)
 
                 # Initialize a list to hold losses for each bag
                 losses = []
@@ -453,15 +424,13 @@ if __name__ == '__main__':
                     # Ensure bag_features and bag_pseudo_labels are on the same device
                     bag_features = bag_features.to(device)
                     bag_pseudo_labels_tensor = bag_pseudo_labels_list.to(device)
-                    #bag_pseudo_labels_tensor = torch.tensor(bag_pseudo_labels_list, dtype=torch.float32).to(device)
-                    
-                    zjs = F.normalize(bag_features, dim=1)
 
-                    bag_features = torch.cat([zjs.unsqueeze(1), zjs.unsqueeze(1)], dim=1)
+                    bag_features = F.normalize(bag_features, dim=1)
+                    #bag_features = torch.cat([zjs.unsqueeze(1), zjs.unsqueeze(1)], dim=1)
                     
-                    print("final: ", bag_pseudo_labels_tensor)
-                    print("bag_features: ", bag_features.shape)
-                    
+                    #print("Shape of features:", bag_features.shape)
+                    #print("Shape of teacher_probs (pseudo labels):", bag_pseudo_labels_tensor.shape)
+
                     # Compute the loss for the current bag
                     bag_loss = supcon_loss(bag_features, bag_pseudo_labels_tensor)
                     
@@ -470,11 +439,16 @@ if __name__ == '__main__':
 
                 # Combine losses for all bags
                 total_loss = torch.mean(torch.stack(losses))
-                print(total_loss)
+                epoch_loss += total_loss.item()
+                #print("Batch Loss: ", total_loss)
 
                 # Backward pass
                 total_loss.backward()
                 optimizer.step()
+                
+            # Calculate the average loss for the epoch
+            epoch_loss /= batch_size
+            print(f'Loss: {epoch_loss:3f}')
 
             # After the contrastive update, unfreeze the aggregator and encoder
             for param in aggregator.parameters():
