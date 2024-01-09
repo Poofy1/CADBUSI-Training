@@ -288,7 +288,7 @@ class SupConLoss(nn.Module):
         
         loss = loss.view(anchor_count, batch_size).mean()
 
-        #print("LOSS: ", loss)
+        #print("Bag Loss: ", loss)
         #print("anchor_count: ", anchor_count)
         #print("batch_size: ", batch_size)
 
@@ -411,11 +411,11 @@ if __name__ == '__main__':
     lr = 0.001
     
     #ITS2CLR Config
-    feature_extractor_train_count = 5
-    initial_ratio = 0
-    final_ratio = .5
+    feature_extractor_train_count = 10
+    initial_ratio = 0.0  #100% negitive bags
+    final_ratio = 0.8  #20% negitive bags
     total_epochs = 200
-    warmup_epochs = 1
+    warmup_epochs = 5
 
     # Paths
     export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
@@ -430,16 +430,21 @@ if __name__ == '__main__':
 
     print("Training Data...")
     # Create datasets
-    #dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, save_processed=False),list(range(0,100)))
-    #dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, save_processed=False),list(range(0,100)))
-    positive_train_dataset = ITS2CLR_Dataset(bags_train, train=True, save_processed=False, bag_type='positive')
-    negative_train_dataset = ITS2CLR_Dataset(bags_train, train=True, save_processed=False, bag_type='negative')
-    dataset_val = BagOfImagesDataset(bags_val, train=False)
+    positive_train_dataset = TUD.Subset(ITS2CLR_Dataset(bags_train, train=True, save_processed=False, bag_type='positive'),list(range(0,100)))
+    negative_train_dataset = TUD.Subset(ITS2CLR_Dataset(bags_train, train=True, save_processed=False, bag_type='negative'),list(range(0,100)))
+    train_dataset = TUD.Subset(ITS2CLR_Dataset(bags_train, train=True, save_processed=False, bag_type='all'),list(range(0,100)))
+    dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, save_processed=False),list(range(0,100)))
+    
+    #positive_train_dataset = ITS2CLR_Dataset(bags_train, train=True, save_processed=False, bag_type='positive')
+    #negative_train_dataset = ITS2CLR_Dataset(bags_train, train=True, save_processed=False, bag_type='negative')
+    #train_dataset = ITS2CLR_Dataset(bags_train, train=True, save_processed=False, bag_type='all')
+    #dataset_val = BagOfImagesDataset(bags_val, train=False)
 
             
     # Create data loaders
     pos_train_dl =  TUD.DataLoader(positive_train_dataset, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
     neg_train_dl =  TUD.DataLoader(negative_train_dataset, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
+    train_dl =  TUD.DataLoader(train_dataset, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
     val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
 
     
@@ -505,6 +510,7 @@ if __name__ == '__main__':
 
             # Get difficualy ratio
             current_ratio = spl_scheduler(epoch, total_epochs, initial_ratio, final_ratio)
+            print(f'Current Bag Ratio: {current_ratio:.2f}')
             pos_batch_size = int(current_ratio * batch_size)
             neg_batch_size = batch_size - pos_batch_size
 
