@@ -2,71 +2,138 @@ import os, pickle
 from fastai.vision.all import *
 import torch.utils.data as TUD
 from tqdm import tqdm
+from torch.cuda.amp import autocast
+import timm
 from torch import nn
+from archs.model_ITS2CLR import *
+from data.ITS2CLR_util import *
+import wandb
 from archs.save_arch import *
 from torch.optim import Adam
-from torch.cuda.amp import autocast
 from data.format_data import *
-from archs.model_FC import *
-from archs.backbone import create_timm_body
+
+import sys
+import time
+from pathlib import Path
+
+import timm
+import torch
+import torch.nn.functional as F
+import torch.backends.cudnn as cudnn
+from torch.cuda.amp import autocast
+try:
+    import wandb
+except ImportError:
+    pass
+
+
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
+    
+    
+    
+class ITS2CLR_Dataset(TUD.Dataset):
+    def __init__(self, bags_dict, train=True, save_processed=False, bag_type='all'):
+        self.bags_dict = bags_dict
+        self.save_processed = save_processed
+        self.train = train
+        self.unique_bag_ids = list(bags_dict.keys())
 
+        # Filter bags based on bag_type
+        if bag_type != 'all':
+            self.unique_bag_ids = [bag_id for bag_id in self.unique_bag_ids
+                                if (self.bags_dict[bag_id]['bag_labels'][0] == 1 and bag_type == 'positive') or 
+                                    (self.bags_dict[bag_id]['bag_labels'][0] == 0 and bag_type == 'negative')]
+            
+        # Normalize
+        if train:
+            self.tsfms = T.Compose([
+                T.RandomVerticalFlip(),
+                T.RandomHorizontalFlip(),
+                #T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
+                T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
+                #HistogramEqualization(),
+                CLAHETransform(),
+                T.ToTensor(),
+                GaussianNoise(mean=0, std=0.015),  # Add slight noise
+                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
+        else:
+            self.tsfms = T.Compose([
+                #HistogramEqualization(),
+                CLAHETransform(),
+                T.ToTensor(),
+                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
+    
+    def __getitem__(self, index):
+        actual_id = self.unique_bag_ids[index]
+        bag_info = self.bags_dict[actual_id]
 
+        # Extract labels, image file paths, and instance-level labels
+        bag_labels = bag_info['bag_labels']
+        files_this_bag = bag_info['images']
+        instance_labels = bag_info['image_labels']
+        
+         # Process images for 'query' and 'key'
+        image_data_q = torch.stack([self.tsfms(Image.open(fn).convert("RGB")) for fn in files_this_bag])
+        image_data_k = torch.stack([self.tsfms(Image.open(fn).convert("RGB")) for fn in files_this_bag])
+
+           
+        # Save processed images if required
+        if self.save_processed:
+            
+            # Process images
+            image_data = torch.stack([self.tsfms(Image.open(fn).convert("RGB")) for fn in files_this_bag])
+            image_data = image_data.cuda()  # Move to GPU if CUDA is available
+        
+            save_folder = os.path.join(env, 'processed_images')  
+            os.makedirs(save_folder, exist_ok=True)
+            for idx, img_tensor in enumerate(image_data):
+                img_save_path = os.path.join(save_folder, f'bag_{actual_id}_img_{idx}.png')
+                img_tensor = unnormalize(img_tensor)
+                img = TF.to_pil_image(img_tensor.cpu().detach())
+                img.save(img_save_path)
+
+        # Create a tensor for bag-level labels for each image
+        num_images = len(files_this_bag)
+        bag_labels_per_image = torch.full((num_images,), bag_labels[0], dtype=torch.float32)
+
+        # Convert instance labels to a tensor, using -1 for None
+        instance_labels_tensors = [torch.tensor(labels, dtype=torch.float32) if labels != [None] else torch.tensor([-1], dtype=torch.float32) for labels in instance_labels]
+
+        return (image_data_q, image_data_k), bag_labels_per_image, instance_labels_tensors, actual_id
+
+    
+    def __len__(self):
+        return len(self.unique_bag_ids)
+    
+    def n_features(self):
+        return self.data.size(1)
+    
+    
 def collate_custom(batch):
     batch_data = []
-    batch_labels = []
+    batch_bag_labels = []
+    batch_instance_labels = []
     batch_ids = []  # List to store bag IDs
 
     for sample in batch:
-        image_data, labels, bag_id = sample
+        image_data, bag_labels, instance_labels, bag_id = sample  # Updated to unpack four items
         batch_data.append(image_data)
-        batch_labels.append(labels)  # labels are already tensors
-        batch_ids.append(bag_id)  # Append the bag ID
+        batch_bag_labels.append(bag_labels)
+        batch_instance_labels.append(instance_labels)
+        batch_ids.append(bag_id)
 
-    # Using torch.stack for labels to handle multiple labels per bag
-    out_labels = torch.stack(batch_labels).cuda()
+    # Use torch.stack for bag labels to handle multiple labels per bag
+    out_bag_labels = torch.stack(batch_bag_labels).cuda()
 
     # Converting to a tensor
     out_ids = torch.tensor(batch_ids, dtype=torch.long).cuda()
 
-    return batch_data, out_labels, out_ids
-
-
-class EmbeddingBagModel(nn.Module):
-    
-    def __init__(self, encoder, aggregator, num_classes=1):
-        super(EmbeddingBagModel,self).__init__()
-        self.encoder = encoder
-        self.aggregator = aggregator
-        self.num_classes = num_classes
-
-    def forward(self, input):
-        num_bags = len(input)  # input = [bag #, image #, channel, height, width]
-        
-        # Concatenate all bags into a single tensor for batch processing
-        all_images = torch.cat(input, dim=0)  # Shape: [Total images in all bags, channel, height, width]
-        
-        # Calculate the embeddings for all images in one go
-        h_all = self.encoder(all_images)
-        
-        # Split the embeddings back into per-bag embeddings
-        split_sizes = [bag.size(0) for bag in input]
-        h_per_bag = torch.split(h_all, split_sizes, dim=0)
-        logits = torch.empty(num_bags, self.num_classes).cuda()
-        yhat_instances, attention_scores = [], []
-        
-        for i, h in enumerate(h_per_bag):
-            # Receive values from the aggregator
-            yhat_bag, yhat_ins, att_sc = self.aggregator(h)
-            
-            logits[i] = yhat_bag
-            yhat_instances.append(yhat_ins)
-            attention_scores.append(att_sc)
-        
-        return logits, yhat_instances, attention_scores
-
+    return batch_data, out_bag_labels, batch_instance_labels, out_ids
 
 
 class GenSupConLoss(nn.Module):
@@ -127,134 +194,182 @@ class GenSupConLoss(nn.Module):
 
         return loss
     
+    
 
-def mix_fn(x, y, alpha, kind):
-    if kind == 'mixup':
-        return mixup_data_per_bag(x, y, alpha)
-    elif kind == 'cutmix':
-        return cutmix_data(x, y, alpha)
-    elif kind == 'mixup_cutmix':
-        if np.random.rand(1)[0] > 0.5:
-            return mixup_data_per_bag(x, y, alpha)
-        else:
-            return cutmix_data(x, y, alpha)
+def spl_scheduler(current_epoch, total_epochs, initial_ratio, final_ratio):
+    if current_epoch < warmup_epochs:
+        return initial_ratio
     else:
-        raise ValueError()
+        return initial_ratio + (final_ratio - initial_ratio) * (current_epoch - warmup_epochs) / (total_epochs - warmup_epochs)
+
+def combine_pos_neg_data(pos_data, neg_data, pos_batch_size, neg_batch_size):
+    if pos_batch_size == 0:
+        return neg_data
+    elif neg_batch_size == 0:
+        return pos_data
+    
+    # Unpack data from positive and negative batches
+    pos_xb, pos_yb, pos_instance_yb, pos_id = pos_data
+    neg_xb, neg_yb, neg_instance_yb, neg_id = neg_data
+
+    # Combine positive and negative data
+    combined_xb = pos_xb + neg_xb
+    combined_yb = torch.cat([pos_yb, neg_yb])
+    combined_instance_yb = pos_instance_yb + neg_instance_yb
+    combined_id = pos_id + neg_id
+
+    return combined_xb, combined_yb, combined_instance_yb, combined_id
+
+def generate_pseudo_labels(inputs, threshold = .5):
+    pseudo_labels = []
+    for tensor in inputs:
+        # Calculate the dynamic threshold for each tensor
+        threshold = 1 / tensor.size(0)
+        pseudo_labels_tensor = (tensor > threshold).float()
+        pseudo_labels.append(pseudo_labels_tensor)
+    
+    #print("input scores: ", inputs)    
+    #print("pseudo labels: ", pseudo_labels)
+    return pseudo_labels
 
 
-def mix_target(y_a, y_b, lam, num_classes):
-    # Debug: Print shapes and types of y_a, y_b, and lam
-    #print("y_a original:", y_a, "Shape:", y_a.shape, "Type:", y_a.dtype)
-    #print("y_b original:", y_b, "Shape:", y_b.shape, "Type:", y_b.dtype)
-    #print("lam:", lam, "Type:", lam.dtype)
 
-    # Ensure y_a and y_b are tensors with at least 1 dimension
-    y_a = y_a if y_a.dim() > 0 else y_a.unsqueeze(0)
-    y_b = y_b if y_b.dim() > 0 else y_b.unsqueeze(0)
-
-    # Debug: Print shapes after potential unsqueeze operation
-    #print("y_a adjusted:", y_a.shape)
-    #print("y_b adjusted:", y_b.shape)
-
-    # Mix the labels based on lambda
-    mixed_labels = lam * y_a + (1 - lam) * y_b
-
-    # Debug: Print the mixed labels
-    #print("Mixed labels:", mixed_labels, "Shape:", mixed_labels.shape)
-
-    return mixed_labels
-
-
-def mixup_data_per_bag(x, y, alpha=1.0):
-    '''Apply mixup to each bag separately'''
-    mixed_x_bags = []
-    y_a_list = []
-    y_b_list = []
-    lam_list = []
-
-    for bag_images, bag_labels in zip(x, y):
-        if alpha > 0:
-            lam = np.random.beta(alpha, alpha)
+def train(loader, model, teacher, criterion, optimizer, epoch, args):
+    model.train()
+    
+    batch_time = AverageMeter()
+    data_time = AverageMeter()
+    losses = AverageMeter()
+    
+    end = time.time()
+    
+    for idx, (images, targets, instance_yb, id) in enumerate(loader):
+        data_time.update(time.time() - end)
+        warmup_learning_rate(args, epoch, idx, len(loader), optimizer)
+        
+        bsz = targets.shape[0]
+        im_q, im_k = images[0]
+        if torch.cuda.is_available():
+            im_q = im_q.cuda(non_blocking=True)
+            im_k = im_k.cuda(non_blocking=True)
+            targets = targets.cuda(non_blocking=True)
+            
+        if args.mix: # image-based regularizations
+            im_q, y0a, y0b, lam0 = mix_fn(im_q, targets, args.mix_alpha, args.mix)
+            im_k, y1a, y1b, lam1 = mix_fn(im_k, targets, args.mix_alpha, args.mix)
+            images = torch.cat([im_q, im_k], dim=0)
+            l_q = mix_target(y0a, y0b, lam0, num_labels)
+            l_k = mix_target(y1a, y1b, lam1, num_labels)
         else:
-            lam = 1
+            images = torch.cat([im_q, im_k], dim=0)
+            l_q = F.one_hot(targets, num_labels)
+            l_k = l_q
+        
+        if teacher: # KD
+            with torch.no_grad():
+                with autocast():
+                    preds = F.softmax(teacher(images) / args.KD_temp, dim=1)
+                    teacher_q, teacher_k = torch.split(preds, [bsz, bsz], dim=0)
+                
+        # forward
+        features = model(images)
+        features = torch.split(features, [bsz, bsz], dim=0)
 
-        bag_size = bag_images.size(0)
-        index = torch.randperm(bag_size, device=bag_images.device)
+        if teacher:
+            if args.KD_alpha == float('inf'): # only learn from teacher's prediction
+                loss = criterion(features, [teacher_q, teacher_k])
+            else:
+                loss = criterion(features, [l_q, l_k]) + args.KD_alpha * criterion(features, [teacher_q, teacher_k])
+        else: # no KD
+            loss = criterion(features, [l_q, l_k])
 
-        mixed_bag_images = lam * bag_images + (1 - lam) * bag_images[index, :]
-        mixed_x_bags.append(mixed_bag_images)
+        
+        losses.update(loss.item(), bsz)
+        # backwaqrd
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
-        # Since bag_labels is a scalar, use it directly for y_a and y_b
-        y_a, y_b = bag_labels, bag_labels
+        # measure elapsed time
+        batch_time.update(time.time() - end)
+        end = time.time()
 
-        y_a_list.append(y_a.unsqueeze(0))  # Add a dimension
-        y_b_list.append(y_b.unsqueeze(0))  # Add a dimension
-        lam_list.append(torch.full((1,), lam, device=bag_images.device))
+        # print info
+        if (idx + 1) % args.print_freq == 0:
+            print('Train: [{0}][{1}/{2}]\t'
+                  'BT {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+                  'DT {data_time.val:.3f} ({data_time.avg:.3f})\t'
+                  'loss {loss.val:.3f} ({loss.avg:.3f})'.format(
+                   epoch, idx + 1, len(loader), batch_time=batch_time,
+                   data_time=data_time, loss=losses))
+            sys.stdout.flush()
+            
+    res = {
+        'trn_loss': losses.avg,
+        'learning_rate': get_learning_rate(optimizer)
+    }
+    return res
 
-    # Concatenate all bags back into a batch
-    mixed_x = torch.cat(mixed_x_bags, dim=0)
-    y_a_all = torch.cat(y_a_list, dim=0)
-    y_b_all = torch.cat(y_b_list, dim=0)
-    lam_all = torch.cat(lam_list, dim=0)
-
-    return mixed_x, y_a_all, y_b_all, lam_all
 
 
-def cutmix_data(x, y, alpha=1.0):
-    if alpha > 0:
-        lam = np.random.beta(alpha, alpha)
-    else:
-        lam = 1
-    
-    bsz = x.size()[0]
-    index = torch.randperm(bsz, device=x.device)
-    
-    bbx1, bby1, bbx2, bby2 = _rand_bbox(x.size(), lam)
-    mixed_x = x.detach().clone()
-    mixed_x[:, :, bbx1:bbx2, bby1:bby2] = mixed_x[index, :, bbx1:bbx2, bby1:bby2]
-    lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (x.size()[-1] * x.size()[-2]))
-
-    y_a, y_b = y, y[index]
-    
-    return mixed_x, y_a, y_b, lam
-
-def _rand_bbox(size, lam):
-    W = size[2]
-    H = size[3]
-    cut_rat = np.sqrt(1. - lam)
-    cut_w = np.int(W * cut_rat)
-    cut_h = np.int(H * cut_rat)
-
-    # uniform
-    cx = np.random.randint(W)
-    cy = np.random.randint(H)
-
-    bbx1 = np.clip(cx - cut_w // 2, 0, W)
-    bby1 = np.clip(cy - cut_h // 2, 0, H)
-    bbx2 = np.clip(cx + cut_w // 2, 0, W)
-    bby2 = np.clip(cy + cut_h // 2, 0, H)
-
-    return bbx1, bby1, bbx2, bby2
+class Args:
+    def __init__(self, warm, warm_epochs, learning_rate, lr_decay_rate, epochs, warmup_from, cosine, lr_decay_epochs, mix, mix_alpha, KD_temp, KD_alpha, print_freq, teacher_path, teacher_ckpt):
+        self.warm = warm
+        self.warm_epochs = warm_epochs
+        self.learning_rate = learning_rate
+        self.lr_decay_rate = lr_decay_rate
+        self.epochs = epochs
+        self.warmup_from = warmup_from
+        self.cosine = cosine
+        self.lr_decay_epochs = lr_decay_epochs
+        self.mix = mix
+        self.mix_alpha = mix_alpha
+        self.KD_temp = KD_temp
+        self.KD_alpha = KD_alpha
+        self.print_freq = print_freq
+        self.teacher_path = teacher_path
+        self.teacher_ckpt = teacher_ckpt
 
 if __name__ == '__main__':
 
     # Config
-    teacher_name = 'FC_test_2'
-    model_name = 'test'
+    model_name = 'GenSCL-test'
     encoder_arch = 'resnet18'
-    dataset_name = 'export_11_11_2023'
-    label_columns = ['Has_Malignant', 'Has_Benign']
-    instance_columns = ['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
+    dataset_name = 'export_12_26_2023'
+    label_columns = ['Has_Malignant']
+    instance_columns = [] #['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
     img_size = 350
     batch_size = 5
     min_bag_size = 2
     max_bag_size = 20
-    tempurature = 0.07
-    epochs = 500
-    class_num = 1
-    KD_alpha = .5 # ratio of training from the teacher model
-    KD_temp = 1 # Smoothing (Tempurature) 
-    lr = 0.001
+
+    model_folder = f"{env}/models/{model_name}/"
+    
+    args = Args(
+        warm=True,
+        warm_epochs=5,
+        learning_rate=0.01,
+        lr_decay_rate=0.1,
+        epochs=50,
+        warmup_from=0.001,
+        cosine=True,
+        lr_decay_epochs=[30, 40],
+        mix='mixup',
+        mix_alpha=0.2,
+        KD_temp=4,
+        KD_alpha=0.9,
+        print_freq=10,
+        teacher_path=model_folder,
+        teacher_ckpt='teacher_ITS2CLR.pth'
+    )
+    
+    
+    #ITS2CLR Config
+    feature_extractor_train_count = 10
+    initial_ratio = 0.0  #100% negitive bags
+    final_ratio = 0.8  #20% negitive bags
+    total_epochs = 200
+    warmup_epochs = 25
 
     # Paths
     export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
@@ -262,56 +377,69 @@ if __name__ == '__main__':
     #export_location = '/home/paperspace/cadbusi-LFS/export_09_28_2023/'
     #cropped_images = f"/home/paperspace/Temp_Data/{img_size}_images/"
     
+
     # Get Training Data
     bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
     num_labels = len(label_columns)
 
     print("Training Data...")
     # Create datasets
-    dataset_train = TUD.Subset(ContrastiveLoader(bags_train, save_processed=False),list(range(0,100)))
-    dataset_val = TUD.Subset(ContrastiveLoader(bags_val, save_processed=False),list(range(0,100)))
-    #dataset_train = ContrastiveLoader(bags_train, save_processed=False)
-    #dataset_val = ContrastiveLoader(bags_val, train=False)
+    #positive_train_dataset = TUD.Subset(ITS2CLR_Dataset(bags_train, train=True, save_processed=False, bag_type='positive'),list(range(0,100)))
+    #negative_train_dataset = TUD.Subset(ITS2CLR_Dataset(bags_train, train=True, save_processed=False, bag_type='negative'),list(range(0,100)))
+    #train_dataset = TUD.Subset(ITS2CLR_Dataset(bags_train, train=True, save_processed=False, bag_type='all'),list(range(0,100)))
+    #dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, save_processed=False),list(range(0,100)))
+    
+    train_dataset = ITS2CLR_Dataset(bags_train, train=True, save_processed=False, bag_type='all')
+    dataset_val = BagOfImagesDataset(bags_val, train=False)
+
             
     # Create data loaders
-    train_dl =  TUD.DataLoader(dataset_train, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
+    train_dl =  TUD.DataLoader(train_dataset, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
     val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
 
     
-    # Check if the model already exists
-    model_folder = f"{env}/models/{model_name}/"
-    model_path = f"{model_folder}/{model_name}.pth"
-    teacher_path = f"{model_folder}/{teacher_name}.pth"
-    optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
-    stats_path = f"{model_folder}/{model_name}_stats.pkl"
-
-    encoder = create_timm_body(encoder_arch)
-    nf = num_features_model( nn.Sequential(*encoder.children()))
-    criterion = GenSupConLoss(temperature=tempurature)
+    # Create model
+    model = SupConResNet(name='resnet18')
+    criterion = GenSupConLoss(temperature=0.07)
+    optimizer = Adam(model.parameters(), lr=args.learning_rate)
     
-    # bag aggregator
-    aggregator = FC_aggregate( nf = nf, num_classes = num_labels, L = 128, fc_layers=[256, 64], dropout = .5)
+    # Load teacher model
+    """teacher = timm.create_model('resnet18', pretrained=False)
+    teacher.reset_classifier(num_labels)
 
-    # total model
-    bagmodel = EmbeddingBagModel(encoder, aggregator, num_classes = num_labels).cuda()
-    teacher_model = EmbeddingBagModel(encoder, aggregator).cuda()
-    total_params = sum(p.numel() for p in bagmodel.parameters())
+    # Assuming the first convolutional layer is named 'conv1'
+    out_ch = teacher.conv1.out_channels
+    teacher.conv1 = torch.nn.Conv2d(3, out_ch, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+
+    teacher_ckpt = torch.load(Path(args.teacher_path) / args.teacher_ckpt, map_location='cpu')
+    teacher.load_state_dict(teacher_ckpt['state_dict'])
+    teacher.eval()"""
+    teacher = None
+    
+    # Resume
+    """load_fn = Path(args.save_root)/args.desc/f'ckpt_{args.resume}.pth'
+    ckpt = torch.load(load_fn, map_location='cpu')
+    model.load_state_dict(ckpt['state_dict'])
+    print(f'=> Successfully loading {load_fn}!')
+    args.start_epoch = ckpt['epoch'] + 1"""
+    
+    total_params = sum(p.numel() for p in model.parameters())
     print(f"Total Parameters: {total_params}")
         
-        
-    optimizer = Adam(bagmodel.parameters(), lr=lr)
     train_losses_over_epochs = []
     valid_losses_over_epochs = []
     epoch_start = 0
     
-    if os.path.exists(teacher_path):
-        teacher_model.load_state_dict(torch.load(teacher_path))
-        teacher_model.eval()
-        print(f"Loaded pre-existing teacher model from {model_name}")
+
     
+    # Check if the model already exists
+    """model_folder = f"{env}/models/{model_name}/"
+    model_path = f"{model_folder}/{model_name}.pth"
+    optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
+    stats_path = f"{model_folder}/{model_name}_stats.pkl"
     
     if os.path.exists(model_path):
-        bagmodel.load_state_dict(torch.load(model_path))
+        model.load_state_dict(torch.load(model_path))
         optimizer.load_state_dict(torch.load(optimizer_path))
         print(f"Loaded pre-existing model from {model_name}")
         
@@ -320,114 +448,25 @@ if __name__ == '__main__':
             train_losses_over_epochs = saved_stats['train_losses']
             valid_losses_over_epochs = saved_stats['valid_losses']
             epoch_start = saved_stats['epoch']
-            val_acc_best = saved_stats.get('val_acc', -1)  # If 'val_acc' does not exist, default to -1
+            val_loss_best = saved_stats['val_loss']
     else:
         print(f"{model_name} does not exist, creating new instance")
         os.makedirs(model_folder, exist_ok=True)
-        val_acc_best = -1 
+        val_loss_best = 99999"""
 
-    
-    
-    
-    
+
     # Training loop
-    for epoch in range(epoch_start, epochs):
-        bagmodel.train()
-        total_loss = 0.0
-        for (data, yb, _) in tqdm(train_dl, total=len(train_dl)):
-            xb, yb = data, yb.cuda()
-            bsz = yb.shape[0]
-            im_q, im_k = xb
-            
-            im_q = im_q.cuda(non_blocking=True)
-            im_k = im_k.cuda(non_blocking=True)
-            yb = yb.cuda(non_blocking=True)
+    for epoch in range(epoch_start, total_epochs):
+        adjust_learning_rate(args, optimizer, epoch)
 
-            # Apply Mixup/Cutmix Augmentation
-            im_q, y0a, y0b, lam0 = mix_fn(im_q, yb, alpha=1.0, kind='mixup_cutmix')
-            im_k, y1a, y1b, lam1 = mix_fn(im_k, yb, alpha=1.0, kind='mixup_cutmix')
-            images = torch.cat([im_q, im_k], dim=0)
-            l_q = mix_target(y0a, y0b, lam0, class_num)
-            l_k = mix_target(y1a, y1b, lam1, class_num)
-            
-            # Get teacher results
-            with torch.no_grad():
-                with autocast():
-                    teacher_logits, _, _ = teacher_model(xb)
-                    preds = F.softmax(teacher_logits / KD_temp, dim=1)
-                    teacher_q, teacher_k = torch.split(preds, [bsz, bsz], dim=0)
-
-            
-
-            # Extract features using your model
-            features, _, _ = bagmodel(images)
-            features = torch.split(features, [bsz, bsz], dim=0)
-            
-            optimizer.zero_grad()
-            
-            if KD_alpha == float('inf'): # only learn from teacher's prediction
-                loss = criterion(features, [teacher_q, teacher_k])
-            else:
-                loss = criterion(features, [l_q, l_k]) + KD_alpha * criterion(features, [teacher_q, teacher_k])
-                
-            print(loss)
-            
-            loss.backward()
-            optimizer.step()
-
-            total_loss += loss.item() * len(xb)
-            predicted = (outputs > .5).float()
-            total += yb.size(0)
-            if len(label_columns) == 1:  # Binary or single-label classification
-                correct += (predicted == yb).sum().item()
-            else:  # Multi-label classification
-                correct += ((predicted == yb).sum(dim=1) == len(label_columns)).sum().item()
-
-        train_loss = total_loss / total
-        train_acc = correct / total
-
-
-        # Evaluation phase
-        bagmodel.eval()
-        total_val_loss = 0.0
-        total_val_acc = 0.0
-        total = 0
-        correct = 0
-        all_targs = []
-        all_preds = []
-        with torch.no_grad():
-            for (data, yb, _) in tqdm(val_dl, total=len(val_dl)): 
-                xb, yb = data, yb.cuda()
-
-                outputs, _, _ = bagmodel(xb)
-                loss = nn.BCELoss(outputs, yb)
-                
-                total_val_loss += loss.item() * len(xb)
-                predicted = (outputs > .5).float()
-                total += yb.size(0)
-                if len(label_columns) == 1:  # Binary or single-label classification
-                    correct += (predicted == yb).sum().item()
-                else:  # Multi-label classification
-                    correct += ((predicted == yb).sum(dim=1) == len(label_columns)).sum().item()
-                
-                # Confusion Matrix data
-                all_targs.extend(yb.cpu().numpy())
-                if len(predicted.size()) == 0:
-                    predicted = predicted.view(1)
-                all_preds.extend(predicted.cpu().detach().numpy())
-
-        val_loss = total_val_loss / total
-        val_acc = correct / total
+        # train for one epoch
+        time1 = time.time()
+        res = train(train_dl, model, teacher, criterion, optimizer, epoch, args)
+        time2 = time.time()
+        print(f'epoch {epoch}, total time {format_time(time2 - time1)}')
         
-        train_losses_over_epochs.append(train_loss)
-        valid_losses_over_epochs.append(val_loss)
+        wandb.log(res, step=epoch)
         
-        print(f"Epoch {epoch+1} | Acc   | Loss")
-        print(f"Train   | {train_acc:.4f} | {train_loss:.4f}")
-        print(f"Val     | {val_acc:.4f} | {val_loss:.4f}")
-        
-        # Save the model
-        if val_acc > val_acc_best:
-            val_acc_best = val_acc  # Update the best validation accuracy
-            save_state(epoch, train_acc, val_acc, model_folder, model_name, bagmodel, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs)
-            print("Saved checkpoint due to improved val_acc")
+        """if (epoch % args.save_freq == 0) and not args.debug:
+            save_fn = save_dir/f'ckpt_{epoch}.pth'
+            save_model(model, optimizer, args, epoch, save_fn)"""
