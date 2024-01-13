@@ -293,14 +293,6 @@ if __name__ == '__main__':
         teacher_path=model_folder,
         teacher_ckpt='teacher_ITS2CLR.pth'
     )
-    
-    
-    #ITS2CLR Config
-    feature_extractor_train_count = 10
-    initial_ratio = 0.0  #100% negitive bags
-    final_ratio = 0.8  #20% negitive bags
-    total_epochs = 200
-    warmup_epochs = 25
 
     # Paths
     export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
@@ -314,10 +306,8 @@ if __name__ == '__main__':
     num_labels = len(label_columns)
 
     print("Training Data...")
-    # Create datasets
     #train_dataset = TUD.Subset(ITS2CLR_Dataset(bags_train, train=True, save_processed=False, bag_type='all'),list(range(0,100)))
     #dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, save_processed=False),list(range(0,100)))
-    
     train_dataset = ITS2CLR_Dataset(bags_train, train=True, save_processed=False, bag_type='all')
     dataset_val = BagOfImagesDataset(bags_val, train=False)
 
@@ -355,37 +345,10 @@ if __name__ == '__main__':
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total Parameters: {total_params}")
         
-    train_losses_over_epochs = []
-    valid_losses_over_epochs = []
+
     epoch_start = 0
-    
-
-    
-    # Check if the model already exists
-    """model_folder = f"{env}/models/{model_name}/"
-    model_path = f"{model_folder}/{model_name}.pth"
-    optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
-    stats_path = f"{model_folder}/{model_name}_stats.pkl"
-    
-    if os.path.exists(model_path):
-        model.load_state_dict(torch.load(model_path))
-        optimizer.load_state_dict(torch.load(optimizer_path))
-        print(f"Loaded pre-existing model from {model_name}")
-        
-        with open(stats_path, 'rb') as f:
-            saved_stats = pickle.load(f)
-            train_losses_over_epochs = saved_stats['train_losses']
-            valid_losses_over_epochs = saved_stats['valid_losses']
-            epoch_start = saved_stats['epoch']
-            val_loss_best = saved_stats['val_loss']
-    else:
-        print(f"{model_name} does not exist, creating new instance")
-        os.makedirs(model_folder, exist_ok=True)
-        val_loss_best = 99999"""
-
-
     # Training loop
-    for epoch in range(epoch_start, total_epochs):
+    for epoch in range(epoch_start, args.epochs):
         adjust_learning_rate(args, optimizer, epoch)
 
         # train for one epoch
@@ -396,6 +359,6 @@ if __name__ == '__main__':
         
         wandb.log(res, step=epoch)
         
-        """if (epoch % args.save_freq == 0) and not args.debug:
-            save_fn = save_dir/f'ckpt_{epoch}.pth'
-            save_model(model, optimizer, args, epoch, save_fn)"""
+        if (epoch % args.save_freq == 0):
+            save_fn = f'{model_folder}/ckpt_{epoch}.pth'
+            save_model(model, optimizer, args, epoch, save_fn)
