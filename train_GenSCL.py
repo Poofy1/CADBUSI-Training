@@ -1,9 +1,8 @@
-import os, pickle
+import os
 from fastai.vision.all import *
 import torch.utils.data as TUD
 from tqdm import tqdm
 from torch.cuda.amp import autocast
-import timm
 from torch import nn
 from archs.model_GenSCL import *
 from data.ITS2CLR_util import *
@@ -13,7 +12,6 @@ from torch.optim import Adam
 from data.format_data import *
 import sys
 import time
-from pathlib import Path
 
 
 env = os.path.dirname(os.path.abspath(__file__))
@@ -241,10 +239,60 @@ def train(loader, model, teacher, criterion, optimizer, epoch, args):
     return res
 
 
+def val_train(loader, model, criterion, args):
+    model.eval()  # Set the model to evaluation mode
+    
+    losses = AverageMeter()
+    accuracies = AverageMeter()
+
+    with torch.no_grad(): 
+        for idx, (images, targets) in enumerate(loader):
+            if torch.cuda.is_available():
+                images = images.cuda(non_blocking=True)
+                targets = targets.cuda(non_blocking=True)
+
+            # Forward pass
+            outputs = model(images)
+            loss = criterion(outputs, targets)
+
+            # Calculate accuracy
+            _, predicted = torch.max(outputs.data, 1)
+            correct = (predicted == targets).sum().item()
+            accuracy = correct / targets.size(0)
+
+            # Update meters
+            losses.update(loss.item(), targets.size(0))
+            accuracies.update(accuracy, targets.size(0))
+
+    # Print info
+    print('Validation:'
+            'loss {loss.val:.3f} ({loss.avg:.3f})\t'
+            'accuracy {acc.val:.3f} ({acc.avg:.3f})'.format(
+            idx + 1, len(loader), loss=losses, acc=accuracies))
+    sys.stdout.flush()
+
+    res = {
+        'val_loss': losses.avg,
+        'val_accuracy': accuracies.avg
+    }
+    return res
+
+
+def save_model(model, optimizer, args, epoch, save_path, val_loss_best):
+    state = {
+        'epoch': epoch,
+        'state_dict': model.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'val_loss_best': val_loss_best,
+        'args': args
+    }
+    torch.save(state, save_path)
+
 
 class Args:
-    def __init__(self, warm, warm_epochs, learning_rate, lr_decay_rate, num_classes, epochs, warmup_from, cosine, lr_decay_epochs, mix, mix_alpha, KD_temp, KD_alpha, print_freq, teacher_path, teacher_ckpt):
+    def __init__(self, warm, start_epoch, warm_epochs, learning_rate, lr_decay_rate, num_classes, epochs, warmup_from, cosine, lr_decay_epochs, mix, mix_alpha, KD_temp, KD_alpha, print_freq, teacher_path, teacher_ckpt):
         self.warm = warm
+        self.start_epoch = start_epoch
         self.warm_epochs = warm_epochs
         self.learning_rate = learning_rate
         self.lr_decay_rate = lr_decay_rate
@@ -277,6 +325,7 @@ if __name__ == '__main__':
     
     args = Args(
         warm=True,
+        start_epoch=0,
         warm_epochs=5,
         learning_rate=0.01,
         lr_decay_rate=0.1,
@@ -336,19 +385,32 @@ if __name__ == '__main__':
     teacher = None
     
     # Resume
-    """load_fn = Path(args.save_root)/args.desc/f'ckpt_{args.resume}.pth'
-    ckpt = torch.load(load_fn, map_location='cpu')
-    model.load_state_dict(ckpt['state_dict'])
-    print(f'=> Successfully loading {load_fn}!')
-    args.start_epoch = ckpt['epoch'] + 1"""
-    
+    os.makedirs(model_folder, exist_ok=True)
+    student_path = f'{model_folder}/{model_name}.pth'
+    if os.path.exists(student_path):
+        ckpt = torch.load(student_path, map_location='cpu')
+        model.load_state_dict(ckpt['state_dict'])
+
+        if 'optimizer' in ckpt and 'epoch' in ckpt:
+            optimizer.load_state_dict(ckpt['optimizer'])
+            args.start_epoch = ckpt['epoch'] + 1
+
+        if 'val_loss_best' in ckpt:
+            val_loss_best = ckpt['val_loss_best']
+        else:
+            val_loss_best = 99999  # Default value if not found in the checkpoint
+
+        print(f"=> Successfully loaded checkpoint '{student_path}' at epoch {args.start_epoch}")
+    else:
+        print(f"{model_name} does not exist, creating a new instance")
+        val_loss_best = 99999
+        
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total Parameters: {total_params}")
         
 
-    epoch_start = 0
     # Training loop
-    for epoch in range(epoch_start, args.epochs):
+    for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(args, optimizer, epoch)
 
         # train for one epoch
@@ -356,9 +418,12 @@ if __name__ == '__main__':
         res = train(train_dl, model, teacher, criterion, optimizer, epoch, args)
         time2 = time.time()
         print(f'epoch {epoch}, total time {format_time(time2 - time1)}')
-        
         wandb.log(res, step=epoch)
         
-        if (epoch % args.save_freq == 0):
-            save_fn = f'{model_folder}/ckpt_{epoch}.pth'
-            save_model(model, optimizer, args, epoch, save_fn)
+        val_res = val_train(val_dl, model, criterion, args)
+        val_loss = val_res['val_loss']
+        
+        if val_loss < val_loss_best:
+            val_loss_best = val_loss
+            save_model(model, optimizer, args, epoch, student_path, val_loss_best)
+            print("Saved checkpoint due to improved val_loss")
