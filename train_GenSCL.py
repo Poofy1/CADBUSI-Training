@@ -74,7 +74,6 @@ class ITS2CLR_Dataset(TUD.Dataset):
         image_data_q = self.tsfms(Image.open(img_path).convert("RGB"))
         image_data_k = self.tsfms(Image.open(img_path).convert("RGB"))
 
-
         return (image_data_q, image_data_k), bag_label
 
     
@@ -239,44 +238,6 @@ def train(loader, model, teacher, criterion, optimizer, epoch, args):
     return res
 
 
-def val_train(loader, model, criterion, args):
-    model.eval()  # Set the model to evaluation mode
-    
-    losses = AverageMeter()
-    accuracies = AverageMeter()
-
-    with torch.no_grad(): 
-        for idx, (images, targets) in enumerate(loader):
-            if torch.cuda.is_available():
-                images = images.cuda(non_blocking=True)
-                targets = targets.cuda(non_blocking=True)
-
-            # Forward pass
-            outputs = model(images)
-            loss = criterion(outputs, targets)
-
-            # Calculate accuracy
-            _, predicted = torch.max(outputs.data, 1)
-            correct = (predicted == targets).sum().item()
-            accuracy = correct / targets.size(0)
-
-            # Update meters
-            losses.update(loss.item(), targets.size(0))
-            accuracies.update(accuracy, targets.size(0))
-
-    # Print info
-    print('Validation:'
-            'loss {loss.val:.3f} ({loss.avg:.3f})\t'
-            'accuracy {acc.val:.3f} ({acc.avg:.3f})'.format(
-            idx + 1, len(loader), loss=losses, acc=accuracies))
-    sys.stdout.flush()
-
-    res = {
-        'val_loss': losses.avg,
-        'val_accuracy': accuracies.avg
-    }
-    return res
-
 
 def save_model(model, optimizer, args, epoch, save_path, val_loss_best):
     state = {
@@ -312,7 +273,7 @@ class Args:
 if __name__ == '__main__':
 
     # Config
-    model_name = 'GenSCL-test'
+    model_name = 'GenSCL_1'
     encoder_arch = 'resnet18'
     dataset_name = 'export_12_26_2023'
     label_columns = ['Has_Malignant']
@@ -338,7 +299,7 @@ if __name__ == '__main__':
         mix_alpha=0.2,
         KD_temp=4,
         KD_alpha=0.9,
-        print_freq=10,
+        print_freq=100,
         teacher_path=model_folder,
         teacher_ckpt='teacher_ITS2CLR.pth'
     )
@@ -356,9 +317,9 @@ if __name__ == '__main__':
 
     print("Training Data...")
     #train_dataset = TUD.Subset(ITS2CLR_Dataset(bags_train, train=True, save_processed=False, bag_type='all'),list(range(0,100)))
-    #dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, save_processed=False),list(range(0,100)))
+    #dataset_val = TUD.Subset(ITS2CLR_Dataset(bags_val, train=False, save_processed=False),list(range(0,100)))
     train_dataset = ITS2CLR_Dataset(bags_train, train=True, save_processed=False, bag_type='all')
-    dataset_val = BagOfImagesDataset(bags_val, train=False)
+    dataset_val = ITS2CLR_Dataset(bags_val, train=False)
 
             
     # Create data loaders
@@ -369,6 +330,7 @@ if __name__ == '__main__':
     # Create model
     model = SupConResNet(name='resnet18').cuda()
     criterion = GenSupConLoss(temperature=0.07)
+    val_criterion = nn.BCELoss()
     optimizer = Adam(model.parameters(), lr=args.learning_rate)
     
     # Load teacher model
@@ -395,21 +357,22 @@ if __name__ == '__main__':
             optimizer.load_state_dict(ckpt['optimizer'])
             args.start_epoch = ckpt['epoch'] + 1
 
-        if 'val_loss_best' in ckpt:
-            val_loss_best = ckpt['val_loss_best']
+        if 'loss_best' in ckpt:
+            loss_best = ckpt['loss_best']
         else:
-            val_loss_best = 99999  # Default value if not found in the checkpoint
+            loss_best = 99999  # Default value if not found in the checkpoint
 
         print(f"=> Successfully loaded checkpoint '{student_path}' at epoch {args.start_epoch}")
     else:
         print(f"{model_name} does not exist, creating a new instance")
-        val_loss_best = 99999
+        loss_best = 99999
         
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total Parameters: {total_params}")
         
 
     # Training loop
+    #init_wandb(args)
     for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(args, optimizer, epoch)
 
@@ -417,13 +380,12 @@ if __name__ == '__main__':
         time1 = time.time()
         res = train(train_dl, model, teacher, criterion, optimizer, epoch, args)
         time2 = time.time()
-        print(f'epoch {epoch}, total time {format_time(time2 - time1)}')
-        wandb.log(res, step=epoch)
+        #print(f'epoch {epoch}, total time {format_time(time2 - time1)}')
+        #wandb.log(res, step=epoch)
         
-        val_res = val_train(val_dl, model, criterion, args)
-        val_loss = val_res['val_loss']
+        loss = res['trn_loss']
         
-        if val_loss < val_loss_best:
-            val_loss_best = val_loss
-            save_model(model, optimizer, args, epoch, student_path, val_loss_best)
-            print("Saved checkpoint due to improved val_loss")
+        if loss < loss_best:
+            loss_best = loss
+            save_model(model, optimizer, args, epoch, student_path, loss_best)
+            print("Saved checkpoint due to improved loss")
