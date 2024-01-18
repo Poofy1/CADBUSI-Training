@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import math
+import wandb
 import datetime
 
 def mix_fn(x, y, alpha, kind):
@@ -98,6 +99,16 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
+        
+def init_wandb(args):
+    wandb.init(
+        entity=args.wandb_entity, 
+        project=args.wandb_project,
+        name=args.desc,
+        config=args,
+    )
+    wandb.run.save()
+    return wandb.config
         
         
 
