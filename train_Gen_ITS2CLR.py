@@ -15,7 +15,7 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
     
     
     
-class ITS2CLR_Dataset(TUD.Dataset):
+class Bag_Dataset(TUD.Dataset):
     def __init__(self, bags_dict, transform=None, save_processed=False, bag_type='all'):
         self.bags_dict = bags_dict
         self.save_processed = save_processed
@@ -150,19 +150,6 @@ def collate_bag(batch):
 
 
 
-def generate_pseudo_labels(inputs, threshold = .5):
-    pseudo_labels = []
-    for tensor in inputs:
-        # Calculate the dynamic threshold for each tensor
-        threshold = 1 / tensor.size(0)
-        pseudo_labels_tensor = (tensor > threshold).float()
-        pseudo_labels.append(pseudo_labels_tensor)
-    
-    #print("input scores: ", inputs)    
-    #print("pseudo labels: ", pseudo_labels)
-    return pseudo_labels
-
-
 class GenSupConLoss(nn.Module):
     def __init__(self, temperature=0.07, contrast_mode='all',
                  base_temperature=0.07):
@@ -222,30 +209,24 @@ class GenSupConLoss(nn.Module):
         return loss
     
 
+def generate_pseudo_labels(inputs, threshold = .5):
+    pseudo_labels = []
+    for tensor in inputs:
+        # Calculate the dynamic threshold for each tensor
+        threshold = 1 / tensor.size(0)
+        pseudo_labels_tensor = (tensor > threshold).float()
+        pseudo_labels.append(pseudo_labels_tensor)
+    
+    #print("input scores: ", inputs)    
+    #print("pseudo labels: ", pseudo_labels)
+    return pseudo_labels
+
+
 def spl_scheduler(current_epoch, total_epochs, initial_ratio, final_ratio):
     if current_epoch < warmup_epochs:
         return initial_ratio
     else:
         return initial_ratio + (final_ratio - initial_ratio) * (current_epoch - warmup_epochs) / (total_epochs - warmup_epochs)
-
-def combine_pos_neg_data(pos_data, neg_data, pos_batch_size, neg_batch_size):
-    if pos_batch_size == 0:
-        return neg_data
-    elif neg_batch_size == 0:
-        return pos_data
-    
-    # Unpack data from positive and negative batches
-    pos_xb, pos_yb, pos_instance_yb, pos_id = pos_data
-    neg_xb, neg_yb, neg_instance_yb, neg_id = neg_data
-
-    # Combine positive and negative data
-    combined_xb = pos_xb + neg_xb
-    combined_yb = torch.cat([pos_yb, neg_yb])
-    combined_instance_yb = pos_instance_yb + neg_instance_yb
-    combined_id = pos_id + neg_id
-
-    return combined_xb, combined_yb, combined_instance_yb, combined_id
-
 
 
 def default_train():
@@ -400,10 +381,10 @@ if __name__ == '__main__':
     
     #ITS2CLR Config
     feature_extractor_train_count = 10
-    initial_ratio = 0.0  #100% negitive bags
-    final_ratio = 0.8  #20% negitive bags
+    initial_ratio = 1 #100% negitive bags
+    final_ratio = 0.7  #20% negitive bags
     total_epochs = 200
-    warmup_epochs = 5
+    warmup_epochs = 25
 
     # Paths
     export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
@@ -437,8 +418,8 @@ if __name__ == '__main__':
 
     print("Training Data...")
     # Create datasets
-    bag_dataset_train = TUD.Subset(ITS2CLR_Dataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
-    bag_dataset_val = TUD.Subset(ITS2CLR_Dataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
+    bag_dataset_train = TUD.Subset(Bag_Dataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
+    bag_dataset_val = TUD.Subset(Bag_Dataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
     instance_dataset_train = TUD.Subset(Instance_Dataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
     instance_dataset_val = TUD.Subset(Instance_Dataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
     
