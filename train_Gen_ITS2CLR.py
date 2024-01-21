@@ -6,8 +6,7 @@ from torch import nn
 from archs.save_arch import *
 from torch.optim import Adam
 from data.format_data import *
-from archs.model_ABMIL import *
-from archs.backbone import create_timm_body
+from archs.model_GenSCL import *
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -16,10 +15,10 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
     
     
 class ITS2CLR_Dataset(TUD.Dataset):
-    def __init__(self, bags_dict, train=True, save_processed=False, bag_type='all'):
+    def __init__(self, bags_dict, transform=None, save_processed=False, bag_type='all'):
         self.bags_dict = bags_dict
         self.save_processed = save_processed
-        self.train = train
+        self.transform = transform
         self.unique_bag_ids = list(bags_dict.keys())
 
         # Filter bags based on bag_type
@@ -27,27 +26,6 @@ class ITS2CLR_Dataset(TUD.Dataset):
             self.unique_bag_ids = [bag_id for bag_id in self.unique_bag_ids
                                 if (self.bags_dict[bag_id]['bag_labels'][0] == 1 and bag_type == 'positive') or 
                                     (self.bags_dict[bag_id]['bag_labels'][0] == 0 and bag_type == 'negative')]
-            
-        # Normalize
-        if train:
-            self.tsfms = T.Compose([
-                T.RandomVerticalFlip(),
-                T.RandomHorizontalFlip(),
-                #T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
-                T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
-                #HistogramEqualization(),
-                CLAHETransform(),
-                T.ToTensor(),
-                GaussianNoise(mean=0, std=0.015),  # Add slight noise
-                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
-        else:
-            self.tsfms = T.Compose([
-                #HistogramEqualization(),
-                CLAHETransform(),
-                T.ToTensor(),
-                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
     
     def __getitem__(self, index):
         actual_id = self.unique_bag_ids[index]
@@ -59,7 +37,7 @@ class ITS2CLR_Dataset(TUD.Dataset):
         instance_labels = bag_info['image_labels']
 
         # Process images
-        image_data = torch.stack([self.tsfms(Image.open(fn).convert("RGB")) for fn in files_this_bag])
+        image_data = torch.stack([self.transform(Image.open(fn).convert("RGB")) for fn in files_this_bag])
         image_data = image_data.cuda()  # Move to GPU if CUDA is available
         
         # Save processed images if required
@@ -86,8 +64,69 @@ class ITS2CLR_Dataset(TUD.Dataset):
     
     def n_features(self):
         return self.data.size(1)
+
     
-def collate_custom(batch):
+class Instance_Dataset(TUD.Dataset):
+    def __init__(self, bags_dict, transform=None, save_processed=False):
+        self.bags_dict = bags_dict
+        self.save_processed = save_processed
+        self.transform = transform
+        self.unique_bag_ids = list(bags_dict.keys())
+        
+        self.images = []  # List to store individual images
+        self.bag_labels = []  # List to store corresponding bag labels for each image
+
+        # Iterate over each bag and add images and labels to the lists
+        for bag_id in self.unique_bag_ids:
+            bag_info = bags_dict[bag_id]
+            for img_path in bag_info['images']:
+                self.images.append(img_path)
+                self.bag_labels.append(bag_info['bag_labels'][0])
+
+    def __getitem__(self, index):
+        img_path = self.images[index]
+        bag_label = self.bag_labels[index]
+
+        # Process the image for 'query' and 'key'
+        image_data_q = self.transform(Image.open(img_path).convert("RGB"))
+        image_data_k = self.transform(Image.open(img_path).convert("RGB"))
+
+        # Create a boolean value that is True if bag_label is False, and vice versa
+        label_bool = not bool(bag_label)
+
+        return (image_data_q, image_data_k), bag_label, label_bool
+
+    
+    def __len__(self):
+        return len(self.unique_bag_ids)
+    
+    def n_features(self):
+        return self.data.size(1)
+    
+    
+    
+def collate_instance(batch):
+    batch_data_q = []  # List to store query images
+    batch_data_k = []  # List to store key images
+    batch_labels = []  # List to store bag labels
+    batch_label_bools = []  # List to store the boolean values
+
+    for (image_data_q, image_data_k), bag_label, label_bool in batch:
+        batch_data_q.append(image_data_q)
+        batch_data_k.append(image_data_k)
+        batch_labels.append(bag_label)
+        batch_label_bools.append(label_bool)
+
+    # Stack the images and labels
+    batch_data_q = torch.stack(batch_data_q).cuda()
+    batch_data_k = torch.stack(batch_data_k).cuda()
+    batch_labels = torch.tensor(batch_labels, dtype=torch.long).cuda()
+    batch_label_bools = torch.tensor(batch_label_bools, dtype=torch.bool).cuda()
+
+    return (batch_data_q, batch_data_k), batch_labels, batch_label_bools
+
+
+def collate_bag(batch):
     batch_data = []
     batch_bag_labels = []
     batch_instance_labels = []
@@ -110,10 +149,10 @@ def collate_custom(batch):
 
 
 
-class EmbeddingBagModel(nn.Module):
+class Embeddingmodel(nn.Module):
     
     def __init__(self, encoder, aggregator, num_classes=1):
-        super(EmbeddingBagModel, self).__init__()
+        super(Embeddingmodel, self).__init__()
         self.encoder = encoder
         self.aggregator = aggregator
         self.num_classes = num_classes
@@ -157,142 +196,65 @@ def generate_pseudo_labels(inputs, threshold = .5):
     #print("pseudo labels: ", pseudo_labels)
     return pseudo_labels
 
-# use raw output? still convert to 0 or 1 (Pseudo labels)
-# Need instance labels 
-# In the begginnning only do negitivebags in the loss
-# Threshold .1? .1 or .9 prediction would pass. Slowly decreaing that threshold 
-# Two seperate throholds for 1 and 0?
-# DO NOT USE POSITIVE CASES IN BEGINNING
-# Rank all images in batch, take best ten percent in the beginning 
-# Paramter that controls the amount of positive cases that show up in the numerator in the loss function (IDEALLY)
-# Just dont compute it initially?
-# You should use Yhats instead, they are all from 0 to 1 individually
 
-class SupConLoss(nn.Module):
-    """Supervised Contrastive Learning: https://arxiv.org/pdf/2004.11362.pdf.
-    It also supports the unsupervised contrastive loss in SimCLR"""
-    def __init__(self, temperature=0.07, contrast_mode='one',
-                 base_temperature=0.07, pair_mode=0, mask_uncertain_neg=False):
-        super(SupConLoss, self).__init__()
+class GenSupConLoss(nn.Module):
+    def __init__(self, temperature=0.07, contrast_mode='all',
+                 base_temperature=0.07):
+        super(GenSupConLoss, self).__init__()
         self.temperature = temperature
         self.contrast_mode = contrast_mode
         self.base_temperature = base_temperature
-        self.pair_mode = pair_mode
-        self.mask_uncertain_neg = mask_uncertain_neg
 
-    def forward(self, features, labels=None, bag_label=None, mask=None):
-        """Compute loss for model. If both `labels` and `mask` are None,
-        it degenerates to SimCLR unsupervised loss:
-        https://arxiv.org/pdf/2002.05709.pdf
-
+    def forward(self, features, labels):
+        '''
         Args:
-            features: hidden vector of shape [bsz, n_views, ...].
-            labels: ground truth of shape [bsz].
-            mask: contrastive mask of shape [bsz, bsz], mask_{i,j}=1 if sample j
-                has the same class as sample i. Can be asymmetric.
-        Returns:
-            A loss scalar.
-        """
-        device = (torch.device('cuda')
-                  if features.is_cuda
-                  else torch.device('cpu'))
-
-        if len(features.shape) < 3:
-            raise ValueError('`features` needs to be [bsz, n_views, ...],'
-                             'at least 3 dimensions are required')
-        if len(features.shape) > 3:
-            features = features.view(features.shape[0], features.shape[1], -1)
-
-        batch_size = features.shape[0]
-        if labels is not None and mask is not None:
-            raise ValueError('Cannot define both `labels` and `mask`')
-        elif labels is None and mask is None:
-            mask = torch.eye(batch_size, dtype=torch.float32).to(device)
-        elif labels is not None:
-            labels = labels.contiguous().view(-1, 1)
-            if labels.shape[0] != batch_size:
-                raise ValueError('Num of labels does not match num of features')
-            mask = torch.eq(labels, labels.T).float().to(device)
-            if self.pair_mode==0:
-                pass
-
-            # only take the positive into account
-            elif self.pair_mode==1:
-                mask[labels[:, 0] == 0, :] = 0
-                mask[:, labels[:, 0] == 0] = 0
-
-            # only take the negative into account
-            elif self.pair_mode==2:
-                mask[labels[:, 0] == 1, :] = 0
-                mask[:, labels[:, 0] == 1] = 0
-        else:
-            mask = mask.float().to(device)
-
-        contrast_count = features.shape[1]
-        contrast_feature = torch.cat(torch.unbind(features, dim=1), dim=0)
-        if self.contrast_mode == 'one':
-            anchor_feature = features[:, 0]
-            anchor_count = 1
-        elif self.contrast_mode == 'all':
-            anchor_feature = contrast_feature
-            anchor_count = contrast_count
-        else:
-            raise ValueError('Unknown mode: {}'.format(self.contrast_mode))
-
-        # compute logits
-        anchor_dot_contrast = torch.div(
-            torch.matmul(anchor_feature, contrast_feature.T),
-            self.temperature)
+            feats: (anchor_features, contrast_features), each: [N, feat_dim]
+            labels: (anchor_labels, contrast_labels) each: [N, num_cls]
+        '''
+        if self.contrast_mode == 'all': # anchor+contrast @ anchor+contrast
+            anchor_labels = torch.cat(labels, dim=0).float()
+            contrast_labels = anchor_labels
+            
+            anchor_features = torch.cat(features, dim=0)
+            contrast_features = anchor_features
+        elif self.contrast_mode == 'one': # anchor @ contrast
+            anchor_labels = labels[0].float()
+            contrast_labels = labels[1].float()
+            
+            anchor_features = features[0]
+            contrast_features = features[1]
+            
+        # 1. compute similarities among targets
+        anchor_norm = torch.norm(anchor_labels, p=2, dim=-1, keepdim=True) # [anchor_N, 1]
+        contrast_norm = torch.norm(contrast_labels, p=2, dim=-1, keepdim=True) # [contrast_N, 1]
         
+        deno = torch.mm(anchor_norm, contrast_norm.T)
+        mask = torch.mm(anchor_labels, contrast_labels.T) / deno # cosine similarity: [anchor_N, contrast_N]
+
+        logits_mask = torch.ones_like(mask)
+        if self.contrast_mode == 'all':
+            logits_mask.fill_diagonal_(0)
+        mask = mask * logits_mask
+        
+        # 2. compute logits
+        anchor_dot_contrast = torch.div(
+            torch.matmul(anchor_features, contrast_features.T),
+            self.temperature
+        )
         # for numerical stability
         logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
         logits = anchor_dot_contrast - logits_max.detach()
-        # logits = anchor_dot_contrast
-        # tile mask
-        mask = mask.repeat(anchor_count, contrast_count)
-
-        # mask-out self-contrast cases
-        logits_mask = torch.scatter(
-            torch.ones_like(mask),
-            1,
-            torch.arange(batch_size * anchor_count).view(-1, 1).to(device),
-            0
-        )
-
-        if self.mask_uncertain_neg:
-            # to mask out the instance with bag-label being 1 and instance-label being 0
-            labels_repeat = labels.repeat(anchor_count, 1)
-            bag_label_repeat = bag_label.repeat(anchor_count, 1)
-
-            labels_repeat = labels_repeat.to(device)
-            bag_label_repeat = bag_label_repeat.to(device)
-
-            logits_mask[:, (bag_label_repeat[:, 0] == 1) * (labels_repeat[:, 0] == 0)] = 0
-
-
-        mask = mask * logits_mask
-    
         # compute log_prob
         exp_logits = torch.exp(logits) * logits_mask
-        if self.mask_uncertain_neg:
-            log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True)+ 1e-10)
-        else:
-            log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True) )
+        log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True))
+        mean_log_prob_pos = (mask * log_prob).sum(1) / (mask.sum(1) + 1e-8)
 
-        # compute mean of log-likelihood over positive
-        mean_log_prob_pos = (mask * log_prob).sum(1) / (mask.sum(1) + 1e-10)
-        
         # loss
         loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
-            
-        
-        loss = loss.view(anchor_count, batch_size).mean()
-
-        #print("Bag Loss: ", loss)
-        #print("anchor_count: ", anchor_count)
-        #print("batch_size: ", batch_size)
+        loss = loss.mean()
 
         return loss
+    
 
 def spl_scheduler(current_epoch, total_epochs, initial_ratio, final_ratio):
     if current_epoch < warmup_epochs:
@@ -324,16 +286,16 @@ def default_train():
     global val_loss_best
     
     # Training phase
-    bagmodel.train()
+    model.train()
     total_loss = 0.0
     total = 0
     correct = 0
-    for (data, yb, instance_yb, id) in tqdm(train_dl, total=len(train_dl)): 
+    for (data, yb, instance_yb, id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)): 
         xb, yb = data, yb.cuda()
         
         optimizer.zero_grad()
         
-        outputs, _, _, _, _ = bagmodel(xb)
+        outputs, _, _, _, _ = model(xb)
 
         loss = loss_func(outputs, yb)
 
@@ -352,17 +314,17 @@ def default_train():
     train_acc = correct / total
 
     # Evaluation phase
-    bagmodel.eval()
+    model.eval()
     total_val_loss = 0.0
     total = 0
     correct = 0
     all_targs = []
     all_preds = []
     with torch.no_grad():
-        for (data, yb, instance_yb, id) in tqdm(val_dl, total=len(val_dl)): 
+        for (data, yb, instance_yb, id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
             xb, yb = data, yb.cuda()
 
-            outputs, _, _, _, _ = bagmodel(xb)
+            outputs, _, _, _, _ = model(xb)
             loss = loss_func(outputs, yb)
             
             total_val_loss += loss.item() * len(xb)
@@ -392,14 +354,14 @@ def default_train():
     # Save the model
     if val_loss < val_loss_best:
         val_loss_best = val_loss  # Update the best validation accuracy
-        save_state(epoch, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, bagmodel, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs)
+        save_state(epoch, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, model, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs)
         print("Saved checkpoint due to improved val_loss")
 
 
 if __name__ == '__main__':
 
     # Config
-    model_name = 'ITS2CLR-test'
+    model_name = 'Gen_ITS2CLR_test'
     encoder_arch = 'resnet18'
     dataset_name = 'export_12_26_2023'
     label_columns = ['Has_Malignant']
@@ -427,45 +389,55 @@ if __name__ == '__main__':
     # Get Training Data
     bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
     num_labels = len(label_columns)
+    
+    
+    
+    train_transform = T.Compose([
+                T.RandomVerticalFlip(),
+                T.RandomHorizontalFlip(),
+                T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
+                T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
+                CLAHETransform(),
+                T.ToTensor(),
+                GaussianNoise(mean=0, std=0.015),  # Add slight noise
+                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
+    
+    val_transform = T.Compose([
+                CLAHETransform(),
+                T.ToTensor(),
+                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
 
     print("Training Data...")
     # Create datasets
-    positive_train_dataset = TUD.Subset(ITS2CLR_Dataset(bags_train, train=True, save_processed=False, bag_type='positive'),list(range(0,100)))
-    negative_train_dataset = TUD.Subset(ITS2CLR_Dataset(bags_train, train=True, save_processed=False, bag_type='negative'),list(range(0,100)))
-    train_dataset = TUD.Subset(ITS2CLR_Dataset(bags_train, train=True, save_processed=False, bag_type='all'),list(range(0,100)))
-    dataset_val = TUD.Subset(ITS2CLR_Dataset(bags_val, save_processed=False),list(range(0,100)))
+    bag_dataset_train = TUD.Subset(ITS2CLR_Dataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
+    bag_dataset_val = TUD.Subset(ITS2CLR_Dataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
+    instance_dataset_train = TUD.Subset(Instance_Dataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
+    instance_dataset_val = TUD.Subset(Instance_Dataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
     
-    #positive_train_dataset = ITS2CLR_Dataset(bags_train, train=True, save_processed=False, bag_type='positive')
-    #negative_train_dataset = ITS2CLR_Dataset(bags_train, train=True, save_processed=False, bag_type='negative')
-    #train_dataset = ITS2CLR_Dataset(bags_train, train=True, save_processed=False, bag_type='all')
-    #dataset_val = ITS2CLR_Dataset(bags_val, train=False)
+    #bag_dataset_train = ITS2CLR_Dataset(bags_train, transform=train_transform, save_processed=False)
+    #bag_dataset_val = ITS2CLR_Dataset(bags_val, transform=val_transform, save_processed=False)
+    #instance_dataset_train = Instance_Dataset(bags_train, transform=train_transform, save_processed=False)
+    #instance_dataset_val = Instance_Dataset(bags_val, transform=val_transform, save_processed=False)
 
             
     # Create data loaders
-    pos_train_dl =  TUD.DataLoader(positive_train_dataset, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
-    neg_train_dl =  TUD.DataLoader(negative_train_dataset, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
-    train_dl =  TUD.DataLoader(train_dataset, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
-    val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
+    bag_dataloader_train =  TUD.DataLoader(bag_dataset_train, batch_size=batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
+    bag_dataloader_val =  TUD.DataLoader(bag_dataset_val, batch_size=batch_size, collate_fn = collate_bag, drop_last=True)
+    instance_dataloader_train =  TUD.DataLoader(instance_dataset_train, batch_size=batch_size, collate_fn = collate_instance, drop_last=True, shuffle = True)
+    instance_dataloader_val =    TUD.DataLoader(instance_dataset_val, batch_size=batch_size, collate_fn = collate_instance, drop_last=True)
 
     
-    encoder = create_timm_body(encoder_arch)
-    nf = num_features_model(nn.Sequential(*encoder.children()))
-    
-    # bag aggregator
-    aggregator = ABMIL_aggregate( nf = nf, num_classes = num_labels, pool_patches = 6, L = 128)
 
-    # total model
-    bagmodel = EmbeddingBagModel(encoder, aggregator, num_classes = num_labels).cuda()
-    total_params = sum(p.numel() for p in bagmodel.parameters())
-    print(f"Total Parameters: {total_params}")
-    
-    # Define the adaptive average pooling layer
-    adaptive_avg_pool = nn.AdaptiveAvgPool2d((1, 1)).to(device)
+    # Get Model
+    model = SupConResNet_custom(name='resnet18').cuda()
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"Total Parameters: {total_params}")        
         
-        
-    optimizer = Adam(bagmodel.parameters(), lr=lr)
+    optimizer = Adam(model.parameters(), lr=lr)
     loss_func = nn.BCELoss()
-    supcon_loss = SupConLoss(temperature=0.07, pair_mode = 2, contrast_mode='all', base_temperature=0.07)
+    supcon_loss = GenSupConLoss(temperature=0.07)
     train_losses_over_epochs = []
     valid_losses_over_epochs = []
     epoch_start = 0
@@ -479,7 +451,7 @@ if __name__ == '__main__':
     stats_path = f"{model_folder}/{model_name}_stats.pkl"
     
     if os.path.exists(model_path):
-        bagmodel.load_state_dict(torch.load(model_path))
+        model.load_state_dict(torch.load(model_path))
         optimizer.load_state_dict(torch.load(optimizer_path))
         print(f"Loaded pre-existing model from {model_name}")
         
@@ -543,12 +515,9 @@ if __name__ == '__main__':
                 optimizer.zero_grad()
 
                 # Generate pseudo labels from attention scores
-                logits, sm, yhat_ins, att_sc, encoder_outputs = bagmodel(xb)
+                logits, sm, yhat_ins, att_sc, encoder_outputs = model(xb)
                 
                 pseudo_labels = generate_pseudo_labels(att_sc)
-                
-                # Apply adaptive average pooling to the feature maps
-                encoder_outputs = adaptive_avg_pool(encoder_outputs)
 
                 # Calculate the correct number of features per bag
                 split_sizes = [bag.size(0) for bag in xb]
