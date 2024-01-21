@@ -4,6 +4,7 @@ import torch.utils.data as TUD
 from tqdm import tqdm
 from torch import nn
 from archs.save_arch import *
+from data.ITS2CLR_util import *
 from torch.optim import Adam
 from data.format_data import *
 from archs.model_GenSCL import *
@@ -149,41 +150,6 @@ def collate_bag(batch):
 
 
 
-class Embeddingmodel(nn.Module):
-    
-    def __init__(self, encoder, aggregator, num_classes=1):
-        super(Embeddingmodel, self).__init__()
-        self.encoder = encoder
-        self.aggregator = aggregator
-        self.num_classes = num_classes
-                    
-    def forward(self, input):
-        num_bags = len(input) # input = [bag #, image #, channel, height, width]
-        
-        # Concatenate all bags into a single tensor for batch processing
-        all_images = torch.cat(input, dim=0)  # Shape: [Total images in all bags, channel, height, width]
-        
-        # Calculate the embeddings for all images in one go
-        h_all = self.encoder(all_images)
-        
-        # Split the embeddings back into per-bag embeddings
-        split_sizes = [bag.size(0) for bag in input]
-        h_per_bag = torch.split(h_all, split_sizes, dim=0)
-        logits = torch.empty(num_bags, self.num_classes).cuda()
-        saliency_maps, yhat_instances, attention_scores = [], [], []
-        
-        for i, h in enumerate(h_per_bag):
-            # Receive four values from the aggregator
-            yhat_bag, sm, yhat_ins, att_sc = self.aggregator(h)
-            
-            logits[i] = yhat_bag
-            saliency_maps.append(sm)
-            yhat_instances.append(yhat_ins)
-            attention_scores.append(att_sc)
-        
-        return logits, saliency_maps, yhat_instances, attention_scores, h_all
-
-
 def generate_pseudo_labels(inputs, threshold = .5):
     pseudo_labels = []
     for tensor in inputs:
@@ -284,33 +250,42 @@ def combine_pos_neg_data(pos_data, neg_data, pos_batch_size, neg_batch_size):
 
 def default_train():
     global val_loss_best
-    
+
     # Training phase
     model.train()
     total_loss = 0.0
     total = 0
     correct = 0
-    for (data, yb, instance_yb, id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)): 
-        xb, yb = data, yb.cuda()
-        
+
+    for (data, yb, instance_yb, id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)):
+        num_bags = len(data)
+        all_images = torch.cat(data, dim=0).cuda()
+        yb = yb.cuda()
+
         optimizer.zero_grad()
-        
-        outputs, _, _, _, _ = model(xb)
 
-        loss = loss_func(outputs, yb)
+        # Process all images and then split per bag
+        features, logits = model(all_images)
+        split_sizes = [bag.size(0) for bag in data]
+        logits_per_bag = torch.split(logits, split_sizes, dim=0)
 
-        loss.backward()
+        batch_loss = 0.0
+        for i, logit in enumerate(logits_per_bag):
+            bag_logit = logit.sum(dim=0, keepdim=False)
+            bag_logit = torch.sigmoid(bag_logit)
+            loss = loss_func(bag_logit, yb[i])
+            batch_loss += loss
+            predicted = (torch.sigmoid(bag_logit) > 0.5).float()
+            correct += (predicted == yb[i]).sum().item()
+
+        batch_loss /= num_bags
+        total_loss += batch_loss.item() 
+        total += num_bags  # Assuming one label per bag
+
+        batch_loss.backward()
         optimizer.step()
 
-        total_loss += loss.item() * len(xb)
-        predicted = (outputs > .5).float()
-        total += yb.size(0)
-        if len(label_columns) == 1:  # Binary or single-label classification
-            correct += (predicted == yb).sum().item()
-        else:  # Multi-label classification
-            correct += ((predicted == yb).sum(dim=1) == len(label_columns)).sum().item()
-            
-    train_loss = total_loss / total
+    train_loss = total_loss / len(bag_dataloader_train)
     train_acc = correct / total
 
     # Evaluation phase
@@ -320,30 +295,40 @@ def default_train():
     correct = 0
     all_targs = []
     all_preds = []
+
     with torch.no_grad():
-        for (data, yb, instance_yb, id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
-            xb, yb = data, yb.cuda()
+        for (data, yb, instance_yb, id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)):
+            num_bags = len(data)
+            all_images = torch.cat(data, dim=0).cuda()
+            yb = yb.cuda()
 
-            outputs, _, _, _, _ = model(xb)
-            loss = loss_func(outputs, yb)
-            
-            total_val_loss += loss.item() * len(xb)
-            predicted = (outputs > .5).float()
-            total += yb.size(0)
-            if len(label_columns) == 1:  # Binary or single-label classification
-                correct += (predicted == yb).sum().item()
-            else:  # Multi-label classification
-                correct += ((predicted == yb).sum(dim=1) == len(label_columns)).sum().item()
-            
-            # Confusion Matrix data
-            all_targs.extend(yb.cpu().numpy())
-            if len(predicted.size()) == 0:
-                predicted = predicted.view(1)
-            all_preds.extend(predicted.cpu().detach().numpy())
+            # Process all images and then split per bag
+            features, logits = model(all_images)
+            split_sizes = [bag.size(0) for bag in data]
+            logits_per_bag = torch.split(logits, split_sizes, dim=0)
 
-    val_loss = total_val_loss / total
+            batch_loss = 0.0
+            for i, logit in enumerate(logits_per_bag):
+                bag_logit = logit.sum(dim=0, keepdim=False)
+                bag_logit = torch.sigmoid(bag_logit)
+                loss = loss_func(bag_logit, yb[i])
+                batch_loss += loss
+                predicted = (bag_logit > 0.5).float()  # Prediction based on the summed logits
+                correct += (predicted == yb[i]).sum().item()
+
+                #confusion_matrix
+                target_scalar = yb[i].item() 
+                predicted_list = predicted.squeeze().tolist() 
+                all_targs.append(target_scalar)
+                all_preds.append(predicted_list)
+
+            batch_loss /= num_bags
+            total_val_loss += batch_loss.item()
+            total += num_bags
+
+    val_loss = total_val_loss / len(bag_dataloader_val)
     val_acc = correct / total
-    
+
     train_losses_over_epochs.append(train_loss)
     valid_losses_over_epochs.append(val_loss)
     
@@ -358,6 +343,26 @@ def default_train():
         print("Saved checkpoint due to improved val_loss")
 
 
+class Args:
+    def __init__(self, warm, start_epoch, warm_epochs, learning_rate, lr_decay_rate, num_classes, epochs, warmup_from, cosine, lr_decay_epochs, mix, mix_alpha, KD_temp, KD_alpha, print_freq, teacher_path, teacher_ckpt):
+        self.warm = warm
+        self.start_epoch = start_epoch
+        self.warm_epochs = warm_epochs
+        self.learning_rate = learning_rate
+        self.lr_decay_rate = lr_decay_rate
+        self.num_classes = num_classes
+        self.epochs = epochs
+        self.warmup_from = warmup_from
+        self.cosine = cosine
+        self.lr_decay_epochs = lr_decay_epochs
+        self.mix = mix
+        self.mix_alpha = mix_alpha
+        self.KD_temp = KD_temp
+        self.KD_alpha = KD_alpha
+        self.print_freq = print_freq
+        self.teacher_path = teacher_path
+        self.teacher_ckpt = teacher_ckpt
+
 if __name__ == '__main__':
 
     # Config
@@ -367,10 +372,31 @@ if __name__ == '__main__':
     label_columns = ['Has_Malignant']
     instance_columns = [] #['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
     img_size = 350
-    batch_size = 5
+    bag_batch_size = 2
     min_bag_size = 2
-    max_bag_size = 20
-    lr = 0.001
+    max_bag_size = 10
+    instance_batch_size = 16
+    model_folder = f"{env}/models/{model_name}/"
+    
+    args = Args(
+        warm=True,
+        start_epoch=0,
+        warm_epochs=5,
+        learning_rate=0.01,
+        lr_decay_rate=0.1,
+        num_classes = 2,
+        epochs=50,
+        warmup_from=0.001,
+        cosine=True,
+        lr_decay_epochs=[30, 40],
+        mix='mixup',
+        mix_alpha=0.2,
+        KD_temp=4,
+        KD_alpha=0.9,
+        print_freq=100,
+        teacher_path=model_folder,
+        teacher_ckpt='teacher_ITS2CLR.pth'
+    )
     
     #ITS2CLR Config
     feature_extractor_train_count = 10
@@ -423,21 +449,21 @@ if __name__ == '__main__':
 
             
     # Create data loaders
-    bag_dataloader_train =  TUD.DataLoader(bag_dataset_train, batch_size=batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
-    bag_dataloader_val =  TUD.DataLoader(bag_dataset_val, batch_size=batch_size, collate_fn = collate_bag, drop_last=True)
-    instance_dataloader_train =  TUD.DataLoader(instance_dataset_train, batch_size=batch_size, collate_fn = collate_instance, drop_last=True, shuffle = True)
-    instance_dataloader_val =    TUD.DataLoader(instance_dataset_val, batch_size=batch_size, collate_fn = collate_instance, drop_last=True)
+    bag_dataloader_train =  TUD.DataLoader(bag_dataset_train, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
+    bag_dataloader_val =  TUD.DataLoader(bag_dataset_val, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True)
+    instance_dataloader_train =  TUD.DataLoader(instance_dataset_train, batch_size=instance_batch_size, collate_fn = collate_instance, drop_last=True, shuffle = True)
+    instance_dataloader_val =    TUD.DataLoader(instance_dataset_val, batch_size=instance_batch_size, collate_fn = collate_instance, drop_last=True)
 
     
 
     # Get Model
-    model = SupConResNet_custom(name='resnet18').cuda()
+    model = SupConResNet_custom(name='resnet18', num_classes=1).cuda()
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total Parameters: {total_params}")        
         
-    optimizer = Adam(model.parameters(), lr=lr)
+    optimizer = Adam(model.parameters(), lr=args.learning_rate)
     loss_func = nn.BCELoss()
-    supcon_loss = GenSupConLoss(temperature=0.07)
+    genscl = GenSupConLoss(temperature=0.07)
     train_losses_over_epochs = []
     valid_losses_over_epochs = []
     epoch_start = 0
@@ -474,92 +500,56 @@ if __name__ == '__main__':
             print('Training Default')
             default_train()
         else:
-            print('Training Feature Extractor')
             # Generalized Supervised Contrastive Learning phase
-            # Freeze the aggregator and unfreeze the encoder
-            for param in aggregator.parameters():
-                param.requires_grad = False
-            for param in encoder.parameters():
-                param.requires_grad = True
+            print('Training Feature Extractor')
+            model.train()
+            losses = AverageMeter()
             
-
             # Get difficualy ratio
             current_ratio = spl_scheduler(epoch, total_epochs, initial_ratio, final_ratio)
             print(f'Current Bag Ratio: {current_ratio:.2f}')
-            pos_batch_size = int(current_ratio * batch_size)
-            neg_batch_size = batch_size - pos_batch_size
-
-            # Iterator for positive and negative data loaders
-            pos_data_iter = iter(pos_train_dl)
-            neg_data_iter = iter(neg_train_dl)
-
-            # Determine the total number of batches
-            total_batches = max(len(pos_train_dl), len(neg_train_dl))
+            pos_batch_size = int(current_ratio * instance_batch_size)
+            neg_batch_size = instance_batch_size - pos_batch_size
             
             epoch_loss = 0.0
 
             # Iterate over the training data
-            for _ in tqdm(range(total_batches)):
-                # Fetch batches from positive and negative data loaders
-                pos_data = next(pos_data_iter, None)
-                neg_data = next(neg_data_iter, None)
-
-                if pos_data is None or neg_data is None:
-                    break  # Break if either data loader is exhausted
-
-                # Combine positive and negative batches
-                combined_data = combine_pos_neg_data(pos_data, neg_data, pos_batch_size, neg_batch_size)
-                xb, yb, instance_yb, id = combined_data
-            
-                yb = yb.cuda().view(-1)
-                optimizer.zero_grad()
-
-                # Generate pseudo labels from attention scores
-                logits, sm, yhat_ins, att_sc, encoder_outputs = model(xb)
+            for idx, (images, batch_labels, batch_label_bools) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
+                warmup_learning_rate(args, epoch, idx, len(instance_dataloader_train), optimizer)
                 
-                pseudo_labels = generate_pseudo_labels(att_sc)
-
-                # Calculate the correct number of features per bag
-                split_sizes = [bag.size(0) for bag in xb]
-                features_per_bag = torch.split(encoder_outputs, split_sizes, dim=0)
-
-                # Initialize a list to hold losses for each bag
-                losses = []
-
-                # Iterate over each bag's features and corresponding pseudo labels
-                for bag_features, bag_pseudo_labels_list in zip(features_per_bag, pseudo_labels):
-                    # Ensure bag_features and bag_pseudo_labels are on the same device
-                    bag_features = bag_features.to(device)
-                    bag_pseudo_labels_tensor = bag_pseudo_labels_list.to(device)
-
-                    bag_features = F.normalize(bag_features, dim=1)
+                bsz = batch_labels.shape[0]
+                im_q, im_k = images
+                if torch.cuda.is_available():
+                    im_q = im_q.cuda(non_blocking=True)
+                    im_k = im_k.cuda(non_blocking=True)
+                    batch_labels = batch_labels.cuda(non_blocking=True)
                     
-                    #print("Shape of features:", bag_features.shape)
-                    #print("Shape of teacher_probs (pseudo labels):", bag_pseudo_labels_tensor.shape)
+                if args.mix: # image-based regularizations
+                    im_q, y0a, y0b, lam0 = mix_fn(im_q, batch_labels, args.mix_alpha, args.mix)
+                    im_k, y1a, y1b, lam1 = mix_fn(im_k, batch_labels, args.mix_alpha, args.mix)
+                    images = torch.cat([im_q, im_k], dim=0)
+                    l_q = mix_target(y0a, y0b, lam0, args.num_classes)
+                    l_k = mix_target(y1a, y1b, lam1, args.num_classes)
+                else:
+                    images = torch.cat([im_q, im_k], dim=0)
+                    l_q = F.one_hot(batch_labels, args.num_classes)
+                    l_k = l_q
+                
 
-                    # Compute the loss for the current bag
-                    bag_loss = supcon_loss(bag_features, bag_pseudo_labels_tensor)
-                    
-                    # Store the loss
-                    losses.append(bag_loss)
-
-                # Combine losses for all bags
-                total_loss = torch.mean(torch.stack(losses))
-                epoch_loss += total_loss.item()
-                #print("Batch Loss: ", total_loss)
-
-                # Backward pass
-                total_loss.backward()
+                # forward
+                features, pred = model(images)
+                features = torch.split(features, [bsz, bsz], dim=0)
+                
+                # no KD
+                loss = genscl(features, [l_q, l_k])
+                
+                losses.update(loss.item(), bsz)
+                # backwaqrd
+                optimizer.zero_grad()
+                loss.backward()
                 optimizer.step()
                 
-            # Calculate the average loss for the epoch
-            epoch_loss /= total_batches
-            print(f'Loss: {epoch_loss:3f}')
+                print(f'loss {loss:.3f}')
 
-            # After the contrastive update, unfreeze the aggregator and encoder
-            for param in aggregator.parameters():
-                param.requires_grad = True
-            for param in encoder.parameters():
-                param.requires_grad = True
                 
                 

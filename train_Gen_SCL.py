@@ -279,7 +279,7 @@ if __name__ == '__main__':
     label_columns = ['Has_Malignant']
     instance_columns = [] #['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
     img_size = 350
-    batch_size = 8
+    batch_size = 5
     min_bag_size = 2
     max_bag_size = 20
     model_folder = f"{env}/models/{model_name}/"

@@ -188,10 +188,11 @@ class SupConResNet(nn.Module):
     
 class SupConResNet_custom(nn.Module):
     """backbone + projection head + classifier"""
-    def __init__(self, name='resnet50', head='mlp', feat_dim=128, num_classes=None):
-        super(SupConResNet, self).__init__()
+    def __init__(self, name='resnet50', head='mlp', feat_dim=128, num_classes=1):
+        super(SupConResNet_custom, self).__init__()
         model_fun, dim_in = model_dict[name]
         self.encoder = model_fun()
+        self.classifier = nn.Linear(feat_dim, num_classes)
         
         # Projection head
         if head == 'linear':
@@ -205,21 +206,15 @@ class SupConResNet_custom(nn.Module):
         else:
             raise NotImplementedError('head not supported: {}'.format(head))
 
-        # Classifier (optional)
-        self.classifier = None
-        if num_classes is not None:
-            self.classifier = nn.Linear(feat_dim, num_classes)
+        
 
-    def forward(self, x):
+    def forward(self, x):      
         # Extract features using the encoder and the head
         feat = self.encoder(x)
         feat = self.head(feat)
         normalized_feat = F.normalize(feat, dim=1)
 
-        # If classifier is defined, compute predictions
-        pred = None
-        if self.classifier is not None:
-            pred = self.classifier(normalized_feat)
+        pred = self.classifier(normalized_feat)
 
         return normalized_feat, pred
 
