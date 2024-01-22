@@ -212,11 +212,10 @@ class SupConResNet_custom(nn.Module):
         # Extract features using the encoder and the head
         feat = self.encoder(x)
         feat = self.head(feat)
-        normalized_feat = F.normalize(feat, dim=1)
+        
+        pred = self.classifier(feat)
 
-        pred = self.classifier(normalized_feat)
-
-        return normalized_feat, pred
+        return feat, pred
 
 
 

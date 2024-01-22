@@ -519,6 +519,7 @@ if __name__ == '__main__':
 
                 # forward
                 features, pred = model(images)
+                features = F.normalize(features, dim=1)
                 features = torch.split(features, [bsz, bsz], dim=0)
                 
                 # no KD
