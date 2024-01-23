@@ -209,17 +209,6 @@ class GenSupConLoss(nn.Module):
         return loss
     
 
-def generate_pseudo_labels(inputs, threshold = .5):
-    pseudo_labels = []
-    for tensor in inputs:
-        # Calculate the dynamic threshold for each tensor
-        threshold = 1 / tensor.size(0)
-        pseudo_labels_tensor = (tensor > threshold).float()
-        pseudo_labels.append(pseudo_labels_tensor)
-    
-    #print("input scores: ", inputs)    
-    #print("pseudo labels: ", pseudo_labels)
-    return pseudo_labels
 
 
 def spl_scheduler(current_epoch, total_epochs, initial_ratio, final_ratio):
@@ -227,6 +216,25 @@ def spl_scheduler(current_epoch, total_epochs, initial_ratio, final_ratio):
         return initial_ratio
     else:
         return initial_ratio + (final_ratio - initial_ratio) * (current_epoch - warmup_epochs) / (total_epochs - warmup_epochs)
+    
+    
+def anchor_selection(batch_labels, batch_preds, current_ratio, batch_label_bools):
+    # Initialize an empty list for the output
+    output = []
+
+    # Iterate over the elements using indices
+    for i in range(len(batch_labels)):
+        if batch_label_bools[i]:
+            output.append(True)
+        else:
+            if batch_preds[i] > current_ratio:
+                output.append(True)
+            else:
+                output.append(False)
+
+    return output
+
+
 
 
 def default_train():
@@ -252,11 +260,11 @@ def default_train():
 
         batch_loss = 0.0
         for i, logit in enumerate(logits_per_bag):
-            bag_logit = logit.sum(dim=0, keepdim=False)
-            bag_logit = torch.sigmoid(bag_logit)
-            loss = loss_func(bag_logit, yb[i])
+            # Find the max sigmoid value for each bag
+            bag_max_output = logit.max(dim=0)[0]
+            loss = loss_func(bag_max_output, yb[i])
             batch_loss += loss
-            predicted = (torch.sigmoid(bag_logit) > 0.5).float()
+            predicted = (bag_max_output > 0.5).float()
             correct += (predicted == yb[i]).sum().item()
 
         batch_loss /= num_bags
@@ -290,11 +298,11 @@ def default_train():
 
             batch_loss = 0.0
             for i, logit in enumerate(logits_per_bag):
-                bag_logit = logit.sum(dim=0, keepdim=False)
-                bag_logit = torch.sigmoid(bag_logit)
-                loss = loss_func(bag_logit, yb[i])
+                # Find the max sigmoid value for each bag
+                bag_max_output = logit.max(dim=0)[0]
+                loss = loss_func(bag_max_output, yb[i])
                 batch_loss += loss
-                predicted = (bag_logit > 0.5).float()  # Prediction based on the summed logits
+                predicted = (bag_max_output > 0.5).float()
                 correct += (predicted == yb[i]).sum().item()
 
                 #confusion_matrix
@@ -347,7 +355,7 @@ class Args:
 if __name__ == '__main__':
 
     # Config
-    model_name = 'Gen_ITS2CLR_test'
+    model_name = 'Gen_ITS2CLR_test_2'
     encoder_arch = 'resnet18'
     dataset_name = 'export_12_26_2023'
     label_columns = ['Has_Malignant']
@@ -356,7 +364,7 @@ if __name__ == '__main__':
     bag_batch_size = 2
     min_bag_size = 2
     max_bag_size = 10
-    instance_batch_size = 16
+    instance_batch_size = 8
     model_folder = f"{env}/models/{model_name}/"
     
     args = Args(
@@ -381,7 +389,7 @@ if __name__ == '__main__':
     
     #ITS2CLR Config
     feature_extractor_train_count = 10
-    initial_ratio = 1 #100% negitive bags
+    initial_ratio = 1 #100% confidence needed
     final_ratio = 0.7  #20% negitive bags
     total_epochs = 200
     warmup_epochs = 25
@@ -421,24 +429,19 @@ if __name__ == '__main__':
     bag_dataset_train = TUD.Subset(Bag_Dataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
     bag_dataset_val = TUD.Subset(Bag_Dataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
     instance_dataset_train = TUD.Subset(Instance_Dataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
-    instance_dataset_val = TUD.Subset(Instance_Dataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
     
     #bag_dataset_train = ITS2CLR_Dataset(bags_train, transform=train_transform, save_processed=False)
     #bag_dataset_val = ITS2CLR_Dataset(bags_val, transform=val_transform, save_processed=False)
     #instance_dataset_train = Instance_Dataset(bags_train, transform=train_transform, save_processed=False)
-    #instance_dataset_val = Instance_Dataset(bags_val, transform=val_transform, save_processed=False)
-
             
     # Create data loaders
-    bag_dataloader_train =  TUD.DataLoader(bag_dataset_train, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
-    bag_dataloader_val =  TUD.DataLoader(bag_dataset_val, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True)
-    instance_dataloader_train =  TUD.DataLoader(instance_dataset_train, batch_size=instance_batch_size, collate_fn = collate_instance, drop_last=True, shuffle = True)
-    instance_dataloader_val =    TUD.DataLoader(instance_dataset_val, batch_size=instance_batch_size, collate_fn = collate_instance, drop_last=True)
-
+    bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
+    bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True)
+    instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_size=instance_batch_size, collate_fn = collate_instance, drop_last=True, shuffle = True)
     
 
     # Get Model
-    model = SupConResNet_custom(name='resnet18', num_classes=1).cuda()
+    model = SupConResNet_custom(name=encoder_arch, num_classes=num_labels).cuda()
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total Parameters: {total_params}")        
         
@@ -493,28 +496,25 @@ if __name__ == '__main__':
             neg_batch_size = instance_batch_size - pos_batch_size
             
             epoch_loss = 0.0
+            total_loss = 0
 
             # Iterate over the training data
             for idx, (images, batch_labels, batch_label_bools) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
                 warmup_learning_rate(args, epoch, idx, len(instance_dataloader_train), optimizer)
                 
+                # Data preparation 
                 bsz = batch_labels.shape[0]
                 im_q, im_k = images
-                if torch.cuda.is_available():
-                    im_q = im_q.cuda(non_blocking=True)
-                    im_k = im_k.cuda(non_blocking=True)
-                    batch_labels = batch_labels.cuda(non_blocking=True)
+                im_q = im_q.cuda(non_blocking=True)
+                im_k = im_k.cuda(non_blocking=True)
+                batch_labels = batch_labels.cuda(non_blocking=True)
                     
-                if args.mix: # image-based regularizations
-                    im_q, y0a, y0b, lam0 = mix_fn(im_q, batch_labels, args.mix_alpha, args.mix)
-                    im_k, y1a, y1b, lam1 = mix_fn(im_k, batch_labels, args.mix_alpha, args.mix)
-                    images = torch.cat([im_q, im_k], dim=0)
-                    l_q = mix_target(y0a, y0b, lam0, args.num_classes)
-                    l_k = mix_target(y1a, y1b, lam1, args.num_classes)
-                else:
-                    images = torch.cat([im_q, im_k], dim=0)
-                    l_q = F.one_hot(batch_labels, args.num_classes)
-                    l_k = l_q
+                # image-based regularizations (mixup)
+                im_q, y0a, y0b, lam0 = mix_fn(im_q, batch_labels, args.mix_alpha, args.mix)
+                im_k, y1a, y1b, lam1 = mix_fn(im_k, batch_labels, args.mix_alpha, args.mix)
+                images = torch.cat([im_q, im_k], dim=0)
+                l_q = mix_target(y0a, y0b, lam0, args.num_classes)
+                l_k = mix_target(y1a, y1b, lam1, args.num_classes)
                 
 
                 # forward
@@ -522,16 +522,21 @@ if __name__ == '__main__':
                 features = F.normalize(features, dim=1)
                 features = torch.split(features, [bsz, bsz], dim=0)
                 
-                # no KD
+                # Get anchors
+                anchors = anchor_selection(batch_labels, pred, current_ratio, batch_label_bools)
+                print(anchors)
+                
+                # get loss (no teacher)
                 loss = genscl(features, [l_q, l_k])
                 
                 losses.update(loss.item(), bsz)
+                
                 # backwaqrd
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
                 
-                print(f'loss {loss:.3f}')
+            print(f'loss: {losses:.3f}')
 
                 
                 

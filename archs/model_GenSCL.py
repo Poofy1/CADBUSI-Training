@@ -206,14 +206,14 @@ class SupConResNet_custom(nn.Module):
         else:
             raise NotImplementedError('head not supported: {}'.format(head))
 
-        
-
     def forward(self, x):      
         # Extract features using the encoder and the head
         feat = self.encoder(x)
         feat = self.head(feat)
         
+        # Get predictions and apply sigmoid
         pred = self.classifier(feat)
+        pred = torch.sigmoid(pred)
 
         return feat, pred
 
