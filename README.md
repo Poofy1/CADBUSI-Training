@@ -52,3 +52,10 @@ Our framework supports universal data formatting, allowing for seamless integrat
 ```
 pip install -r requirements.txt
 ```
+
+
+## Data Pipeline
+- [CADBUSI-Anonymize](https://github.com/Poofy1/CADBUSI-Anonymize)
+- [CADBUSI-Database](https://github.com/Poofy1/CADBUSI-Database)
+- [CADBUSI-Training](https://github.com/Poofy1/CADBUSI-Training)
+![CASBUSI Pipeline](https://raw.githubusercontent.com/Poofy1/CADBUSI-Database/main/pipeline/CADBUSI-Pipeline.png)
