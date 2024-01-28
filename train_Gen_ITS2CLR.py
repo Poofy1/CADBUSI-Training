@@ -92,11 +92,10 @@ class Instance_Dataset(TUD.Dataset):
         image_data_q = self.transform(Image.open(img_path).convert("RGB"))
         image_data_k = self.transform(Image.open(img_path).convert("RGB"))
 
-        # Create a boolean value that is True if bag_label is False, and vice versa
-        label_bool = not bool(bag_label)
+        # Create an integer value: 1 if bag_label is False (0), and 0 if bag_label is True (1)
+        label_bool = int(not bag_label)
 
         return (image_data_q, image_data_k), bag_label, label_bool
-
     
     def __len__(self):
         return len(self.unique_bag_ids)
@@ -151,20 +150,30 @@ def collate_bag(batch):
 
 
 class GenSupConLoss(nn.Module):
-    def __init__(self, temperature=0.07, contrast_mode='all',
-                 base_temperature=0.07):
+    def __init__(self, temperature=0.07, contrast_mode='all', base_temperature=0.07):
         super(GenSupConLoss, self).__init__()
         self.temperature = temperature
         self.contrast_mode = contrast_mode
         self.base_temperature = base_temperature
 
-    def forward(self, features, labels):
+    def forward(self, features, labels, mapped_anchors):
         '''
         Args:
-            feats: (anchor_features, contrast_features), each: [N, feat_dim]
+            features: (anchor_features, contrast_features), each: [N, feat_dim]
             labels: (anchor_labels, contrast_labels) each: [N, num_cls]
+            mapped_anchors: [N,], boolean tensor indicating anchor status
         '''
-        if self.contrast_mode == 'all': # anchor+contrast @ anchor+contrast
+        if self.contrast_mode == 'dynamic':
+            # Separate anchor and contrast based on mapped_anchors
+            anchor_indices = mapped_anchors.nonzero().squeeze()
+            contrast_indices = (~mapped_anchors).nonzero().squeeze()
+
+            anchor_features = features[0][anchor_indices]
+            contrast_features = features[1][contrast_indices]
+
+            anchor_labels = labels[0][anchor_indices].float()
+            contrast_labels = labels[1][contrast_indices].float()
+        elif self.contrast_mode == 'all': # anchor+contrast @ anchor+contrast
             anchor_labels = torch.cat(labels, dim=0).float()
             contrast_labels = anchor_labels
             
@@ -180,6 +189,9 @@ class GenSupConLoss(nn.Module):
         # 1. compute similarities among targets
         anchor_norm = torch.norm(anchor_labels, p=2, dim=-1, keepdim=True) # [anchor_N, 1]
         contrast_norm = torch.norm(contrast_labels, p=2, dim=-1, keepdim=True) # [contrast_N, 1]
+        
+        #print(anchor_norm.shape)
+        #print(contrast_norm.shape)
         
         deno = torch.mm(anchor_norm, contrast_norm.T)
         mask = torch.mm(anchor_labels, contrast_labels.T) / deno # cosine similarity: [anchor_N, contrast_N]
@@ -218,21 +230,65 @@ def spl_scheduler(current_epoch, total_epochs, initial_ratio, final_ratio):
         return initial_ratio + (final_ratio - initial_ratio) * (current_epoch - warmup_epochs) / (total_epochs - warmup_epochs)
     
     
-def anchor_selection(batch_labels, batch_preds, current_ratio, batch_label_bools):
-    # Initialize an empty list for the output
-    output = []
 
-    # Iterate over the elements using indices
-    for i in range(len(batch_labels)):
-        if batch_label_bools[i]:
-            output.append(True)
+import random
+
+def anchor_selection(batch_labels, model_preds, required_confidence, pre_conf_q, pre_conf_k):
+    combined_pre_conf = torch.max(pre_conf_q, pre_conf_k)
+
+    # Function to find threshold for at least n_true Trues or Falses
+    def find_threshold(pre_conf_values, n_true, is_true_threshold):
+        sorted_values = sorted(pre_conf_values)
+        if is_true_threshold:
+            return sorted_values[-n_true] if len(sorted_values) >= n_true else 0
         else:
-            if batch_preds[i] > current_ratio:
-                output.append(True)
-            else:
-                output.append(False)
+            return sorted_values[n_true - 1] if len(sorted_values) >= n_true else 1
+
+    # Find thresholds
+    threshold_true = find_threshold(combined_pre_conf, 2, True)
+    threshold_false = find_threshold(combined_pre_conf, 2, False)
+
+    # Adjust pre_conf_threshold
+    pre_conf_threshold = 0.5
+    if pre_conf_threshold < threshold_true:
+        pre_conf_threshold = threshold_true
+    elif pre_conf_threshold < threshold_false:
+        pre_conf_threshold = threshold_false
+
+    # Determine initial anchors
+    output = [False] * len(batch_labels)
+    for i in range(len(batch_labels)):
+        if combined_pre_conf[i] >= pre_conf_threshold or model_preds[i] >= required_confidence:
+            output[i] = True
+
+    # Count True/False after initial selection
+    num_true = sum(output)
+    num_false = len(output) - num_true
+
+    # Adjust for extreme cases
+    indices = list(range(len(batch_labels)))
+    if num_true < 2:
+        false_indices = [i for i, val in enumerate(output) if not val]
+        selected_indices = random.sample(false_indices, 2 - num_true)
+        for i in selected_indices:
+            output[i] = True
+    elif num_false < 2:
+        true_indices = [i for i, val in enumerate(output) if val]
+        selected_indices = random.sample(true_indices, 2 - num_false)
+        for i in selected_indices:
+            output[i] = False
+
+    print(threshold_true)
+    print(threshold_false)
+    print(pre_conf_threshold)
+    print(combined_pre_conf)
+    print(output)
 
     return output
+
+
+    
+
 
 
 
@@ -447,7 +503,7 @@ if __name__ == '__main__':
         
     optimizer = Adam(model.parameters(), lr=args.learning_rate)
     loss_func = nn.BCELoss()
-    genscl = GenSupConLoss(temperature=0.07)
+    genscl = GenSupConLoss(temperature=0.07, contrast_mode='dynamic')
     train_losses_over_epochs = []
     valid_losses_over_epochs = []
     epoch_start = 0
@@ -490,10 +546,9 @@ if __name__ == '__main__':
             losses = AverageMeter()
             
             # Get difficualy ratio
-            current_ratio = spl_scheduler(epoch, total_epochs, initial_ratio, final_ratio)
-            print(f'Current Bag Ratio: {current_ratio:.2f}')
-            pos_batch_size = int(current_ratio * instance_batch_size)
-            neg_batch_size = instance_batch_size - pos_batch_size
+            required_confidence = spl_scheduler(epoch, total_epochs, initial_ratio, final_ratio)
+            print(f'Current Required Confidence: {required_confidence:.2f}')
+
             
             epoch_loss = 0.0
             total_loss = 0
@@ -501,6 +556,9 @@ if __name__ == '__main__':
             # Iterate over the training data
             for idx, (images, batch_labels, batch_label_bools) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
                 warmup_learning_rate(args, epoch, idx, len(instance_dataloader_train), optimizer)
+                
+                #print(batch_labels)
+                print(batch_label_bools)
                 
                 # Data preparation 
                 bsz = batch_labels.shape[0]
@@ -510,11 +568,11 @@ if __name__ == '__main__':
                 batch_labels = batch_labels.cuda(non_blocking=True)
                     
                 # image-based regularizations (mixup)
-                im_q, y0a, y0b, lam0 = mix_fn(im_q, batch_labels, args.mix_alpha, args.mix)
-                im_k, y1a, y1b, lam1 = mix_fn(im_k, batch_labels, args.mix_alpha, args.mix)
+                im_q, y0a_q, y0b_q, mixed_bools_q, lam0_q = mixup_data_custom(im_q, batch_labels, batch_label_bools, args.mix_alpha)
+                im_k, y1a_k, y1b_k, mixed_bools_k, lam0_k = mixup_data_custom(im_k, batch_labels, batch_label_bools, args.mix_alpha)
                 images = torch.cat([im_q, im_k], dim=0)
-                l_q = mix_target(y0a, y0b, lam0, args.num_classes)
-                l_k = mix_target(y1a, y1b, lam1, args.num_classes)
+                l_q = mix_target(y0a_q, y0b_q, lam0_q, args.num_classes)
+                l_k = mix_target(y1a_k, y1b_k, lam0_k, args.num_classes)
                 
 
                 # forward
@@ -523,20 +581,23 @@ if __name__ == '__main__':
                 features = torch.split(features, [bsz, bsz], dim=0)
                 
                 # Get anchors
-                anchors = anchor_selection(batch_labels, pred, current_ratio, batch_label_bools)
-                print(anchors)
+                mapped_anchors = anchor_selection(batch_labels, pred, required_confidence, mixed_bools_q, mixed_bools_k)
+                mapped_anchors = torch.tensor(mapped_anchors)
+                #print(mixed_bools_q)
+                #print(mixed_bools_k)
+                #print(mapped_anchors)
                 
                 # get loss (no teacher)
-                loss = genscl(features, [l_q, l_k])
+                loss = genscl(features, [l_q, l_k], mapped_anchors)
                 
                 losses.update(loss.item(), bsz)
                 
-                # backwaqrd
+                # backward
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
                 
-            print(f'loss: {losses:.3f}')
+            #print(f'loss: {losses:.3f}')
 
                 
                 

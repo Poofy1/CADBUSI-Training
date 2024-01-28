@@ -150,7 +150,7 @@ if __name__ == '__main__':
     
 
 
-    # Merge df_failed_cases with case_study_data to get the BI-RADS scores
+    """# Merge df_failed_cases with case_study_data to get the BI-RADS scores
     merged_data = pd.merge(df_failed_cases, case_study_data[['Accession_Number', 'BI-RADS']], on='Accession_Number', how='left')
 
     # Group by BI-RADS scores and calculate average error for each group
@@ -179,4 +179,4 @@ if __name__ == '__main__':
     # Sort by Image_Count (which is the index after grouping)
     average_errors_images = average_errors_images.sort_index()
 
-    plot_and_save_average_errors(average_errors_images, 'Average Loss by Number of Images per Accession_Number', 'Number of Images', 'Average Loss', f"{output_path}/Average_Loss_by_Image_Count.png")
+    plot_and_save_average_errors(average_errors_images, 'Average Loss by Number of Images per Accession_Number', 'Number of Images', 'Average Loss', f"{output_path}/Average_Loss_by_Image_Count.png")"""
