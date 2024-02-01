@@ -74,11 +74,11 @@ class EmbeddingBagModel(nn.Module):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'FC_12_26_1'
+    model_name = 'FC_01_31_1'
     encoder_arch = 'resnet18'
-    dataset_name = 'export_12_26_2023'
-    label_columns = ['Has_Malignant', 'Has_Benign']
-    instance_columns = ['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present'] # 'Reject Image' is used to remove images and is not trained on
+    dataset_name = 'export_01_31_2024'
+    label_columns = ['Has_Malignant']
+    instance_columns = []#['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present'] # 'Reject Image' is used to remove images and is not trained on
     img_size = 350
     batch_size = 5
     min_bag_size = 2
@@ -208,7 +208,7 @@ if __name__ == '__main__':
 
         print(f"\nEpoch {epoch}: \nBag Loss = {avg_bag_loss:.2f}, \nInstance Loss = {avg_instance_loss:.2f}, \nBag Accuracy = {bag_accuracy:.2f}, \nInstance Accuracy = {instance_accuracy:.2f}")
 
-"""
+
         # Evaluation phase
         bagmodel.eval()
         total_val_loss = 0.0
@@ -221,20 +221,36 @@ if __name__ == '__main__':
             for (data, yb, instance_yb, id) in tqdm(val_dl, total=len(val_dl)): 
                 xb, yb = data, yb.cuda()
 
-                outputs, _, _ = bagmodel(xb)
-                loss = loss_func(outputs, yb)
+                # Forward pass
+                yhat_bag, yhat_instance = bagmodel(xb)
+
+                # Bag-level loss and accuracy
+                bag_loss = loss_func(yhat_bag, yb)
+                total_bag_loss += bag_loss.item() * len(xb) 
+                bag_pred = (yhat_bag > 0.5).float()
+                total_bag_correct += (bag_pred == yb).sum().item()
+                total_bags += len(xb)
                 
-                total_val_loss += loss.item() * len(xb)
-                
-                total_loss += loss.item() * len(xb)
-                predicted = (outputs > .5).float()
-                total += yb.size(0)
-                
-                if len(label_columns) == 1:  # Binary or single-label classification
-                    correct += (predicted == yb).sum().item()
-                else:  # Multi-label classification
-                    correct += ((predicted == yb).sum(dim=1) == len(label_columns)).sum().item()
-                
+                # Instance-level loss and accuracy
+                instance_loss = 0.0
+                instance_correct = 0
+                valid_instance_count = 0
+                for i, instance_labels in enumerate(instance_yb):
+                    for j, label in enumerate(instance_labels):
+                        if label.numel() == 1 and label.item() != -1:  # Check if label is a single-element tensor and not -1
+                            inst_loss = instance_loss_func(yhat_instance[i][j].unsqueeze(0), label.unsqueeze(0).cuda())
+                            instance_loss += inst_loss.item()
+                            instance_pred = (yhat_instance[i][j] > 0.5).float()
+                            instance_correct += (instance_pred == label.cuda()).sum().item()
+                            valid_instance_count += 1
+
+                total_instance_loss += instance_loss
+                total_instance_correct += instance_correct
+                total_instances += valid_instance_count
+
+                # Combine losses and backward pass
+                total_loss = bag_loss + instance_loss
+     
                 # Confusion Matrix data
                 all_targs.extend(yb.cpu().numpy())
                 if len(predicted.size()) == 0:
@@ -265,4 +281,4 @@ if __name__ == '__main__':
         if val_loss < val_loss_best:
             val_loss_best = val_loss  # Update the best validation accuracy
             save_state(epoch, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, bagmodel, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs)
-            print("Saved checkpoint due to improved val_loss")"""
+            print("Saved checkpoint due to improved val_loss")
