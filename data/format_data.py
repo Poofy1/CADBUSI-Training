@@ -408,10 +408,10 @@ def prepare_all_data(export_location, label_columns, instance_columns, cropped_i
     preprocess_and_save_images(data, export_location, cropped_images, img_size)
     
     # Split the data into training and validation sets
-    train_patient_ids = data[data['Valid'] == 0]['ID']
-    val_patient_ids = data[data['Valid'] == 1]['ID']
-    train_data = data[data['ID'].isin(train_patient_ids)].reset_index(drop=True)
-    val_data = data[data['ID'].isin(val_patient_ids)].reset_index(drop=True)
+    train_patient_ids = data[data['Valid'] == 0]['Accession_Number']
+    val_patient_ids = data[data['Valid'] == 1]['Accession_Number']
+    train_data = data[data['Accession_Number'].isin(train_patient_ids)].reset_index(drop=True)
+    val_data = data[data['Accession_Number'].isin(val_patient_ids)].reset_index(drop=True)
     
     bags_train = create_bags(train_data, min_bag_size, max_bag_size, cropped_images, label_columns, instance_columns, instance_data)
     bags_val = create_bags(val_data, min_bag_size, max_bag_size, cropped_images, label_columns, instance_columns, instance_data)

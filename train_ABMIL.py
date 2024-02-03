@@ -78,7 +78,7 @@ if __name__ == '__main__':
     encoder_arch = 'resnet18'
     dataset_name = 'export_01_31_2024'
     label_columns = ['Has_Malignant']
-    instance_columns = []#['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
+    instance_columns = ['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
     img_size = 350
     batch_size = 5
     min_bag_size = 2

@@ -58,6 +58,8 @@ def predict_on_test_set(bagmodel, test_dl):
 def test_dataset(output_path, label_columns, instance_columns):
     # Load data
     bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
+    
+    train_data = pd.read_csv(f'{export_location}/TrainData.csv')
 
     # Combine training and validation data
     combined_dict = bags_train
@@ -83,6 +85,10 @@ def test_dataset(output_path, label_columns, instance_columns):
     # Sort the DataFrame by Loss column in descending order
     results_df = results_df.sort_values(by="Loss", ascending=False)
 
+    #Replace Accession_Number in results_df using map
+    id_to_acc_number = pd.Series(train_data.Accession_Number.values,index=train_data.ID).to_dict()
+    results_df['Accession_Number'] = results_df['Accession_Number'].map(id_to_acc_number)
+    
     # Save the DataFrame to a CSV file
     results_df.to_csv(f'{output_path}/failed_cases.csv', index=False)
     print("Saved failed cases")
@@ -107,11 +113,11 @@ def plot_and_save_average_errors(average_errors, title, xlabel, ylabel, save_pat
 if __name__ == '__main__':
 
     # Config
-    model_name = 'ABMIL_12_26_1'
+    model_name = 'ABMIL_12_26_2'
     encoder_arch = 'resnet18'
-    dataset_name = 'export_12_26_2023'
-    label_columns = ['Has_Malignant', 'Has_Benign']
-    instance_columns = ['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present'] # 'Reject Image' is used to remove images and is not trained on
+    dataset_name = 'export_01_31_2024'
+    label_columns = ['Has_Malignant']
+    instance_columns = []#['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present'] # 'Reject Image' is used to remove images and is not trained on
     img_size = 350
     batch_size = 1
     min_bag_size = 2
