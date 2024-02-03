@@ -1,4 +1,4 @@
-import os, pickle
+import os, pickle, random
 from fastai.vision.all import *
 import torch.utils.data as TUD
 from tqdm import tqdm
@@ -84,46 +84,65 @@ class Instance_Dataset(TUD.Dataset):
                 self.images.append(img_path)
                 self.bag_labels.append(bag_info['bag_labels'][0])
 
+        self.positive_indices = [i for i, label in enumerate(self.bag_labels) if label]
+        self.negative_indices = [i for i, label in enumerate(self.bag_labels) if not label]
+
     def __getitem__(self, index):
         img_path = self.images[index]
         bag_label = self.bag_labels[index]
 
-        # Process the image for 'query' and 'key'
         image_data_q = self.transform(Image.open(img_path).convert("RGB"))
         image_data_k = self.transform(Image.open(img_path).convert("RGB"))
 
-        # Create an integer value: 1 if bag_label is False (0), and 0 if bag_label is True (1)
-        label_bool = int(not bag_label)
+        label_confidence = int(not bag_label)
 
-        return (image_data_q, image_data_k), bag_label, label_bool
+        return (image_data_q, image_data_k), bag_label, label_confidence
     
     def __len__(self):
-        return len(self.unique_bag_ids)
+        return len(self.images) 
     
-    def n_features(self):
-        return self.data.size(1)
+    # Utility function to get positive and negative indices
+    def get_pos_neg_indices(self):
+        return self.positive_indices, self.negative_indices
     
+class BalancedInstanceSampler(Sampler):
+    def __init__(self, dataset, batch_size):
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.positive_indices, self.negative_indices = dataset.get_pos_neg_indices()
+        self.total_batches = len(dataset) // batch_size
+
+    def __iter__(self):
+        for _ in range(self.total_batches):
+            batch = random.sample(self.positive_indices, 2) + random.sample(self.negative_indices, 2)
+            while len(batch) < self.batch_size:
+                batch.append(random.choice(self.positive_indices + self.negative_indices))
+            random.shuffle(batch)
+            yield batch  # Yield the entire batch as a list
+
+    def __len__(self):
+        return self.total_batches
     
     
 def collate_instance(batch):
-    batch_data_q = []  # List to store query images
-    batch_data_k = []  # List to store key images
-    batch_labels = []  # List to store bag labels
-    batch_label_bools = []  # List to store the boolean values
+    batch_data_q = []
+    batch_data_k = [] 
+    batch_labels = []
+    batch_label_confidence = [] 
 
     for (image_data_q, image_data_k), bag_label, label_bool in batch:
         batch_data_q.append(image_data_q)
         batch_data_k.append(image_data_k)
         batch_labels.append(bag_label)
-        batch_label_bools.append(label_bool)
+        batch_label_confidence.append(label_bool)
 
     # Stack the images and labels
     batch_data_q = torch.stack(batch_data_q).cuda()
     batch_data_k = torch.stack(batch_data_k).cuda()
     batch_labels = torch.tensor(batch_labels, dtype=torch.long).cuda()
-    batch_label_bools = torch.tensor(batch_label_bools, dtype=torch.bool).cuda()
+    batch_label_confidence = torch.tensor(batch_label_confidence, dtype=torch.int).cuda()
 
-    return (batch_data_q, batch_data_k), batch_labels, batch_label_bools
+    return (batch_data_q, batch_data_k), batch_labels, batch_label_confidence
 
 
 def collate_bag(batch):
@@ -229,62 +248,33 @@ def spl_scheduler(current_epoch, total_epochs, initial_ratio, final_ratio):
     else:
         return initial_ratio + (final_ratio - initial_ratio) * (current_epoch - warmup_epochs) / (total_epochs - warmup_epochs)
     
+
+
+def anchor_selection(model_preds, number_of_best, mixed_confidence_q, mixed_confidence_k):
+    # Ensure model_preds is flattened
+    model_preds_adjusted = model_preds.view(-1)
+
+    # Interleave mixed_confidence_q and mixed_confidence_k
+    default_confidence = torch.cat((mixed_confidence_q.unsqueeze(1), mixed_confidence_k.unsqueeze(1)), dim=1).view(-1)
     
+    # Initialize 'anchors' to zeros initially
+    anchors = torch.zeros_like(default_confidence).int()
 
-import random
+    # Select the top `number_of_best` predictions from the model and mark them as anchors
+    _, top_indices = torch.topk(model_preds_adjusted, number_of_best)
+    anchors[top_indices] = 1
 
-def anchor_selection(batch_labels, model_preds, required_confidence, pre_conf_q, pre_conf_k):
-    combined_pre_conf = torch.max(pre_conf_q, pre_conf_k)
+    # Apply default confidence threshold only for those not already marked as anchors
+    # This step ensures that if a prediction is already marked as an anchor based on model confidence,
+    # it is not modified by the default confidence check
+    additional_anchors = (default_confidence == 1) & (anchors == 0)
+    anchors[additional_anchors] = 1
 
-    # Function to find threshold for at least n_true Trues or Falses
-    def find_threshold(pre_conf_values, n_true, is_true_threshold):
-        sorted_values = sorted(pre_conf_values)
-        if is_true_threshold:
-            return sorted_values[-n_true] if len(sorted_values) >= n_true else 0
-        else:
-            return sorted_values[n_true - 1] if len(sorted_values) >= n_true else 1
+    print("Default confidence:\n", default_confidence)
+    print("Anchors:\n", anchors)
 
-    # Find thresholds
-    threshold_true = find_threshold(combined_pre_conf, 2, True)
-    threshold_false = find_threshold(combined_pre_conf, 2, False)
+    return anchors
 
-    # Adjust pre_conf_threshold
-    pre_conf_threshold = 0.5
-    if pre_conf_threshold < threshold_true:
-        pre_conf_threshold = threshold_true
-    elif pre_conf_threshold < threshold_false:
-        pre_conf_threshold = threshold_false
-
-    # Determine initial anchors
-    output = [False] * len(batch_labels)
-    for i in range(len(batch_labels)):
-        if combined_pre_conf[i] >= pre_conf_threshold or model_preds[i] >= required_confidence:
-            output[i] = True
-
-    # Count True/False after initial selection
-    num_true = sum(output)
-    num_false = len(output) - num_true
-
-    # Adjust for extreme cases
-    indices = list(range(len(batch_labels)))
-    if num_true < 2:
-        false_indices = [i for i, val in enumerate(output) if not val]
-        selected_indices = random.sample(false_indices, 2 - num_true)
-        for i in selected_indices:
-            output[i] = True
-    elif num_false < 2:
-        true_indices = [i for i, val in enumerate(output) if val]
-        selected_indices = random.sample(true_indices, 2 - num_false)
-        for i in selected_indices:
-            output[i] = False
-
-    print(threshold_true)
-    print(threshold_false)
-    print(pre_conf_threshold)
-    print(combined_pre_conf)
-    print(output)
-
-    return output
 
 
     
@@ -413,7 +403,7 @@ if __name__ == '__main__':
     # Config
     model_name = 'Gen_ITS2CLR_test_2'
     encoder_arch = 'resnet18'
-    dataset_name = 'export_12_26_2023'
+    dataset_name = 'export_01_31_2024'
     label_columns = ['Has_Malignant']
     instance_columns = [] #['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
     img_size = 350
@@ -482,18 +472,21 @@ if __name__ == '__main__':
 
     print("Training Data...")
     # Create datasets
-    bag_dataset_train = TUD.Subset(Bag_Dataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
-    bag_dataset_val = TUD.Subset(Bag_Dataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
-    instance_dataset_train = TUD.Subset(Instance_Dataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
+    #bag_dataset_train = TUD.Subset(Bag_Dataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
+    #bag_dataset_val = TUD.Subset(Bag_Dataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
+    #instance_dataset_train = TUD.Subset(Instance_Dataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
+
     
-    #bag_dataset_train = ITS2CLR_Dataset(bags_train, transform=train_transform, save_processed=False)
-    #bag_dataset_val = ITS2CLR_Dataset(bags_val, transform=val_transform, save_processed=False)
-    #instance_dataset_train = Instance_Dataset(bags_train, transform=train_transform, save_processed=False)
+    bag_dataset_train = Bag_Dataset(bags_train, transform=train_transform, save_processed=False)
+    bag_dataset_val = Bag_Dataset(bags_val, transform=val_transform, save_processed=False)
+    instance_dataset_train = Instance_Dataset(bags_train, transform=train_transform, save_processed=False)
+    
+    instance_sampler = BalancedInstanceSampler(instance_dataset_train, batch_size=instance_batch_size) 
             
     # Create data loaders
     bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
     bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True)
-    instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_size=instance_batch_size, collate_fn = collate_instance, drop_last=True, shuffle = True)
+    instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=instance_sampler, collate_fn = collate_instance)
     
 
     # Get Model
@@ -554,11 +547,8 @@ if __name__ == '__main__':
             total_loss = 0
 
             # Iterate over the training data
-            for idx, (images, batch_labels, batch_label_bools) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
+            for idx, (images, batch_labels, batch_label_confidence) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
                 warmup_learning_rate(args, epoch, idx, len(instance_dataloader_train), optimizer)
-                
-                #print(batch_labels)
-                print(batch_label_bools)
                 
                 # Data preparation 
                 bsz = batch_labels.shape[0]
@@ -568,12 +558,11 @@ if __name__ == '__main__':
                 batch_labels = batch_labels.cuda(non_blocking=True)
                     
                 # image-based regularizations (mixup)
-                im_q, y0a_q, y0b_q, mixed_bools_q, lam0_q = mixup_data_custom(im_q, batch_labels, batch_label_bools, args.mix_alpha)
-                im_k, y1a_k, y1b_k, mixed_bools_k, lam0_k = mixup_data_custom(im_k, batch_labels, batch_label_bools, args.mix_alpha)
+                im_q, y0a_q, y0b_q, mixed_confidence_q, lam0_q = mixup_data_custom(im_q, batch_labels, batch_label_confidence, args.mix_alpha)
+                im_k, y1a_k, y1b_k, mixed_confidence_k, lam0_k = mixup_data_custom(im_k, batch_labels, batch_label_confidence, args.mix_alpha)
                 images = torch.cat([im_q, im_k], dim=0)
                 l_q = mix_target(y0a_q, y0b_q, lam0_q, args.num_classes)
                 l_k = mix_target(y1a_k, y1b_k, lam0_k, args.num_classes)
-                
 
                 # forward
                 features, pred = model(images)
@@ -581,11 +570,9 @@ if __name__ == '__main__':
                 features = torch.split(features, [bsz, bsz], dim=0)
                 
                 # Get anchors
-                mapped_anchors = anchor_selection(batch_labels, pred, required_confidence, mixed_bools_q, mixed_bools_k)
+                mapped_anchors = anchor_selection(pred, 1, mixed_confidence_q, mixed_confidence_k)
                 mapped_anchors = torch.tensor(mapped_anchors)
-                #print(mixed_bools_q)
-                #print(mixed_bools_k)
-                #print(mapped_anchors)
+                """
                 
                 # get loss (no teacher)
                 loss = genscl(features, [l_q, l_k], mapped_anchors)
@@ -595,7 +582,7 @@ if __name__ == '__main__':
                 # backward
                 optimizer.zero_grad()
                 loss.backward()
-                optimizer.step()
+                optimizer.step()"""
                 
             #print(f'loss: {losses:.3f}')
 

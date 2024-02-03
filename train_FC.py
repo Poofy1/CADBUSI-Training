@@ -64,6 +64,8 @@ class EmbeddingBagModel(nn.Module):
         for i, h in enumerate(h_per_bag):
             # Receive values from the aggregator
             yhat_bag, yhat_ins = self.aggregator(h)
+            print(yhat_bag)
+            print(yhat_ins)
             
             logits[i] = yhat_bag
             yhat_instances.append(yhat_ins)
@@ -78,7 +80,7 @@ if __name__ == '__main__':
     encoder_arch = 'resnet18'
     dataset_name = 'export_01_31_2024'
     label_columns = ['Has_Malignant']
-    instance_columns = []#['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present'] # 'Reject Image' is used to remove images and is not trained on
+    instance_columns = ['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present'] # 'Reject Image' is used to remove images and is not trained on
     img_size = 350
     batch_size = 5
     min_bag_size = 2
@@ -95,7 +97,7 @@ if __name__ == '__main__':
     # Get Training Data
     bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
     num_bag_classes = len(label_columns)
-    num_instance_classes = len(instance_columns) - 1
+    num_instance_classes = len(instance_columns) - 1 # Remove the Reject Image column
 
     print("Training Data...")
     # Create datasets
@@ -166,6 +168,7 @@ if __name__ == '__main__':
 
         for (data, yb, instance_yb, id) in tqdm(train_dl, total=len(train_dl)): 
             xb, yb = data, yb.cuda()
+            print(instance_yb)
             
             # Forward pass
             yhat_bag, yhat_instance = bagmodel(xb)

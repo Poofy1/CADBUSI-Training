@@ -1,0 +1,96 @@
+Epoch 1
+Training Accuracies:
+  Has_Malignant: 0.5095
+Validation Accuracies:
+  Has_Malignant: 0.6123
+
+Epoch 2
+Training Accuracies:
+  Has_Malignant: 0.5729
+Validation Accuracies:
+  Has_Malignant: 0.6473
+
+Epoch 3
+Training Accuracies:
+  Has_Malignant: 0.6540
+Validation Accuracies:
+  Has_Malignant: 0.7135
+
+Epoch 5
+Training Accuracies:
+  Has_Malignant: 0.7155
+Validation Accuracies:
+  Has_Malignant: 0.7267
+
+Epoch 6
+Training Accuracies:
+  Has_Malignant: 0.7183
+Validation Accuracies:
+  Has_Malignant: 0.7556
+
+Epoch 7
+Training Accuracies:
+  Has_Malignant: 0.7281
+Validation Accuracies:
+  Has_Malignant: 0.7655
+
+Epoch 8
+Training Accuracies:
+  Has_Malignant: 0.7367
+Validation Accuracies:
+  Has_Malignant: 0.7730
+
+Epoch 11
+Training Accuracies:
+  Has_Malignant: 0.7497
+Validation Accuracies:
+  Has_Malignant: 0.7754
+
+Epoch 21
+Training Accuracies:
+  Has_Malignant: 0.7739
+Validation Accuracies:
+  Has_Malignant: 0.7991
+
+Epoch 22
+Training Accuracies:
+  Has_Malignant: 0.7781
+Validation Accuracies:
+  Has_Malignant: 0.8057
+
+Epoch 33
+Training Accuracies:
+  Has_Malignant: 0.7918
+Validation Accuracies:
+  Has_Malignant: 0.8109
+
+Epoch 38
+Training Accuracies:
+  Has_Malignant: 0.8083
+Validation Accuracies:
+  Has_Malignant: 0.8217
+
+Epoch 41
+Training Accuracies:
+  Has_Malignant: 0.8099
+Validation Accuracies:
+  Has_Malignant: 0.8260
+
+Epoch 44
+Training Accuracies:
+  Has_Malignant: 0.8181
+Validation Accuracies:
+  Has_Malignant: 0.8270
+
+Epoch 52
+Training Accuracies:
+  Has_Malignant: 0.8272
+Validation Accuracies:
+  Has_Malignant: 0.8301
+
+Epoch 56
+Training Accuracies:
+  Has_Malignant: 0.8292
+Validation Accuracies:
+  Has_Malignant: 0.8397
+
