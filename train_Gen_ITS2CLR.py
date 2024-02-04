@@ -76,27 +76,39 @@ class Instance_Dataset(TUD.Dataset):
         
         self.images = []  # List to store individual images
         self.bag_labels = []  # List to store corresponding bag labels for each image
+        self.image_labels = []  # List to store individual image labels
 
-        # Iterate over each bag and add images and labels to the lists
+        # Iterate over each bag and add images, bag labels, and image labels to the lists
         for bag_id in self.unique_bag_ids:
             bag_info = bags_dict[bag_id]
-            for img_path in bag_info['images']:
+            for idx, img_path in enumerate(bag_info['images']):
                 self.images.append(img_path)
                 self.bag_labels.append(bag_info['bag_labels'][0])
+                self.image_labels.append(bag_info['image_labels'][idx])
 
         self.positive_indices = [i for i, label in enumerate(self.bag_labels) if label]
         self.negative_indices = [i for i, label in enumerate(self.bag_labels) if not label]
 
+
     def __getitem__(self, index):
         img_path = self.images[index]
         bag_label = self.bag_labels[index]
+        image_label = self.image_labels[index]
 
+        # Use transform on the image
         image_data_q = self.transform(Image.open(img_path).convert("RGB"))
         image_data_k = self.transform(Image.open(img_path).convert("RGB"))
+        
+        # Determine label and confidence based on image_label presence
+        if image_label != [None]:  # This implies specific labels exist for the image
+            instance_label = image_label[0] # Use the specific image label(s)
+            label_confidence = 1  # Set confidence to 1 for specific labels
+        else:
+            instance_label = bag_label  # Use the bag label as a fallback
+            label_confidence = int(not instance_label)  # Confidence based on bag label presence
 
-        label_confidence = int(not bag_label)
-
-        return (image_data_q, image_data_k), bag_label, label_confidence
+        return (image_data_q, image_data_k), instance_label, label_confidence
+    
     
     def __len__(self):
         return len(self.images) 
@@ -183,15 +195,20 @@ class GenSupConLoss(nn.Module):
             mapped_anchors: [N,], boolean tensor indicating anchor status
         '''
         if self.contrast_mode == 'dynamic':
-            # Separate anchor and contrast based on mapped_anchors
-            anchor_indices = mapped_anchors.nonzero().squeeze()
-            contrast_indices = (~mapped_anchors).nonzero().squeeze()
-
-            anchor_features = features[0][anchor_indices]
-            contrast_features = features[1][contrast_indices]
+            # features is a tuple (anchor_features, contrast_features)
+            anchor_features_map, contrast_features_map = features
+            
+            # Ensure mapped_anchors is a boolean tensor for indexing
+            anchor_indices = mapped_anchors.nonzero(as_tuple=True)[0]
+            contrast_indices = (~mapped_anchors).nonzero(as_tuple=True)[0]
+            
+            # Now select the features and labels based on anchor and contrast indices
+            anchor_features = anchor_features_map[anchor_indices]
+            contrast_features = contrast_features_map[contrast_indices]
 
             anchor_labels = labels[0][anchor_indices].float()
             contrast_labels = labels[1][contrast_indices].float()
+            
         elif self.contrast_mode == 'all': # anchor+contrast @ anchor+contrast
             anchor_labels = torch.cat(labels, dim=0).float()
             contrast_labels = anchor_labels
@@ -204,13 +221,16 @@ class GenSupConLoss(nn.Module):
             
             anchor_features = features[0]
             contrast_features = features[1]
-            
+        
+        print(anchor_labels)
+        print(contrast_labels)
+        
         # 1. compute similarities among targets
         anchor_norm = torch.norm(anchor_labels, p=2, dim=-1, keepdim=True) # [anchor_N, 1]
         contrast_norm = torch.norm(contrast_labels, p=2, dim=-1, keepdim=True) # [contrast_N, 1]
         
-        #print(anchor_norm.shape)
-        #print(contrast_norm.shape)
+        print(anchor_norm.shape)
+        print(contrast_norm.shape)
         
         deno = torch.mm(anchor_norm, contrast_norm.T)
         mask = torch.mm(anchor_labels, contrast_labels.T) / deno # cosine similarity: [anchor_N, contrast_N]
@@ -242,7 +262,7 @@ class GenSupConLoss(nn.Module):
 
 
 
-def spl_scheduler(current_epoch, total_epochs, initial_ratio, final_ratio):
+def prediction_anchor_scheduler(current_epoch, total_epochs, warmup_epochs, initial_ratio, final_ratio):
     if current_epoch < warmup_epochs:
         return initial_ratio
     else:
@@ -250,25 +270,63 @@ def spl_scheduler(current_epoch, total_epochs, initial_ratio, final_ratio):
     
 
 
-def anchor_selection(model_preds, number_of_best, mixed_confidence_q, mixed_confidence_k):
-    # Ensure model_preds is flattened
-    model_preds_adjusted = model_preds.view(-1)
 
-    # Interleave mixed_confidence_q and mixed_confidence_k
-    default_confidence = torch.cat((mixed_confidence_q.unsqueeze(1), mixed_confidence_k.unsqueeze(1)), dim=1).view(-1)
+def anchor_selection(model_preds, number_of_best, mixed_confidence_q, mixed_confidence_k):
+    # Assuming model_preds is a tensor of shape [N, 1] where N is even
+    model_preds_flattened = model_preds.view(-1)
+    
+    # Reshape to [-1, 2] to prepare for pair-wise multiplication, assuming N is even
+    model_preds_reshaped = model_preds_flattened.view(-1, 2)
+    
+    # Multiply pairs: [0]*[1], [2]*[3], etc., by multiplying elements in the reshaped tensor
+    model_preds_multiplied = model_preds_reshaped[:, 0] * model_preds_reshaped[:, 1]
+    
+    # Now find the adjusted version (distance from 0.5)
+    model_preds_adjusted = torch.abs(model_preds_multiplied - 0.5)
+
+    # Element-wise multiplication of mixed_confidence_q and mixed_confidence_k
+    default_confidence = mixed_confidence_q * mixed_confidence_k
     
     # Initialize 'anchors' to zeros initially
     anchors = torch.zeros_like(default_confidence).int()
 
     # Select the top `number_of_best` predictions from the model and mark them as anchors
-    _, top_indices = torch.topk(model_preds_adjusted, number_of_best)
+    _, top_indices = torch.topk(model_preds_adjusted, number_of_best, largest=True)
     anchors[top_indices] = 1
 
-    # Apply default confidence threshold only for those not already marked as anchors
-    # This step ensures that if a prediction is already marked as an anchor based on model confidence,
-    # it is not modified by the default confidence check
-    additional_anchors = (default_confidence == 1) & (anchors == 0)
+    # Apply default confidence threshold ONLY for those not already marked as anchors
+    additional_anchors = (default_confidence >= 0.9) & (anchors == 0)
     anchors[additional_anchors] = 1
+    
+    # Ensure at least 2 positive and 2 negative anchors
+    pos_indices = (anchors == 1).nonzero(as_tuple=True)[0]
+    neg_indices = (anchors == 0).nonzero(as_tuple=True)[0]
+
+    
+    # Randomly flip positive anchors to negitive anchors
+    if len(neg_indices) < 2:
+        # Calculate how many anchors need to be flipped
+        flips_needed = 2 - len(neg_indices)
+        # Ensure not to reduce pos_indices below 2
+        max_flips_possible = max(0, len(pos_indices) - 2)
+        flips_to_perform = min(flips_needed, max_flips_possible)
+        
+        if flips_to_perform > 0:
+            # Convert pos_indices tensor to a list for random sampling
+            pos_indices_list = pos_indices.tolist()
+            to_flip = random.sample(pos_indices_list, flips_to_perform)
+            anchors[torch.tensor(to_flip, dtype=torch.long)] = 0
+            
+    # Use model pred to select more anchors if needed
+    if len(pos_indices) < 2:
+        additional_pos_needed = 2 - len(pos_indices)
+        not_selected = (anchors == 0)  # Indices not already selected as anchors
+        # Re-select from the top model predictions that are not yet selected as anchors
+        _, additional_top_indices = torch.topk(model_preds_adjusted[not_selected], additional_pos_needed, largest=True)
+        # Convert these indices to the original indexing scheme
+        original_indices = torch.nonzero(not_selected).view(-1)[additional_top_indices]
+        anchors[original_indices] = 1
+
 
     print("Default confidence:\n", default_confidence)
     print("Anchors:\n", anchors)
@@ -405,7 +463,7 @@ if __name__ == '__main__':
     encoder_arch = 'resnet18'
     dataset_name = 'export_01_31_2024'
     label_columns = ['Has_Malignant']
-    instance_columns = [] #['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
+    instance_columns = ['Reject Image', 'Malignant Lesion Present']   #['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
     img_size = 350
     bag_batch_size = 2
     min_bag_size = 2
@@ -435,8 +493,8 @@ if __name__ == '__main__':
     
     #ITS2CLR Config
     feature_extractor_train_count = 10
-    initial_ratio = 1 #100% confidence needed
-    final_ratio = 0.7  #20% negitive bags
+    initial_ratio = 0 # 0% preditions included
+    final_ratio = 0.7 # 70% preditions included
     total_epochs = 200
     warmup_epochs = 25
 
@@ -539,8 +597,9 @@ if __name__ == '__main__':
             losses = AverageMeter()
             
             # Get difficualy ratio
-            required_confidence = spl_scheduler(epoch, total_epochs, initial_ratio, final_ratio)
-            print(f'Current Required Confidence: {required_confidence:.2f}')
+            predictions_ratio = prediction_anchor_scheduler(epoch, total_epochs, warmup_epochs, initial_ratio, final_ratio)
+            predictions_included = round(predictions_ratio * instance_batch_size)
+            print(f'Including Predictions: {predictions_ratio:.2f} ({predictions_included})')
 
             
             epoch_loss = 0.0
@@ -570,9 +629,8 @@ if __name__ == '__main__':
                 features = torch.split(features, [bsz, bsz], dim=0)
                 
                 # Get anchors
-                mapped_anchors = anchor_selection(pred, 1, mixed_confidence_q, mixed_confidence_k)
+                mapped_anchors = anchor_selection(pred, predictions_included, mixed_confidence_q, mixed_confidence_k)
                 mapped_anchors = torch.tensor(mapped_anchors)
-                """
                 
                 # get loss (no teacher)
                 loss = genscl(features, [l_q, l_k], mapped_anchors)
@@ -582,7 +640,7 @@ if __name__ == '__main__':
                 # backward
                 optimizer.zero_grad()
                 loss.backward()
-                optimizer.step()"""
+                optimizer.step()
                 
             #print(f'loss: {losses:.3f}')
 
