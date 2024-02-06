@@ -590,6 +590,11 @@ if __name__ == '__main__':
             
             print('Training Default')
             default_train()
+            
+            # When Bag AUC increases goto Feature extractor
+            
+            # Used the instance predictions from bag training to update the Instance Dataloader
+            
         else:
             # Generalized Supervised Contrastive Learning phase
             print('Training Feature Extractor')
@@ -601,27 +606,31 @@ if __name__ == '__main__':
             predictions_included = round(predictions_ratio * instance_batch_size)
             print(f'Including Predictions: {predictions_ratio:.2f} ({predictions_included})')
 
+            # Predictions ratio is not per batch, for the entire dataset
+            # Update instance dataloader, only include confident instances or negitive bags or instance labels
+            
             
             epoch_loss = 0.0
             total_loss = 0
 
             # Iterate over the training data
-            for idx, (images, batch_labels, batch_label_confidence) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
+            for idx, (images, instance_labels, _) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
                 warmup_learning_rate(args, epoch, idx, len(instance_dataloader_train), optimizer)
                 
                 # Data preparation 
-                bsz = batch_labels.shape[0]
+                bsz = instance_labels.shape[0]
                 im_q, im_k = images
                 im_q = im_q.cuda(non_blocking=True)
                 im_k = im_k.cuda(non_blocking=True)
-                batch_labels = batch_labels.cuda(non_blocking=True)
-                    
+                instance_labels = instance_labels.cuda(non_blocking=True)
+                
                 # image-based regularizations (mixup)
-                im_q, y0a_q, y0b_q, mixed_confidence_q, lam0_q = mixup_data_custom(im_q, batch_labels, batch_label_confidence, args.mix_alpha)
-                im_k, y1a_k, y1b_k, mixed_confidence_k, lam0_k = mixup_data_custom(im_k, batch_labels, batch_label_confidence, args.mix_alpha)
+                # lam 1 = no mixup
+                im_q, y0a, y0b, lam0 = mix_fn(im_q, instance_labels, args.mix_alpha, args.mix)
+                im_k, y1a, y1b, lam1 = mix_fn(im_k, instance_labels, args.mix_alpha, args.mix)
                 images = torch.cat([im_q, im_k], dim=0)
-                l_q = mix_target(y0a_q, y0b_q, lam0_q, args.num_classes)
-                l_k = mix_target(y1a_k, y1b_k, lam0_k, args.num_classes)
+                l_q = mix_target(y0a, y0b, lam0, args.num_classes)
+                l_k = mix_target(y1a, y1b, lam1, args.num_classes)
 
                 # forward
                 features, pred = model(images)
@@ -630,11 +639,15 @@ if __name__ == '__main__':
                 
                 # Get anchors
                 mapped_anchors = anchor_selection(pred, predictions_included, mixed_confidence_q, mixed_confidence_k)
+                # In warmup use the whole batch and then Only true labels (no model predictions) as anchors 
+                # After warmup the whole batch is an anchor contrasted against the whole batch
+                # Anchors are on Instance level
+                
+                
                 mapped_anchors = torch.tensor(mapped_anchors)
                 
                 # get loss (no teacher)
                 loss = genscl(features, [l_q, l_k], mapped_anchors)
-                
                 losses.update(loss.item(), bsz)
                 
                 # backward
