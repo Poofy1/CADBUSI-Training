@@ -68,93 +68,65 @@ class Bag_Dataset(TUD.Dataset):
 
     
 class Instance_Dataset(TUD.Dataset):
-    def __init__(self, bags_dict, transform=None, save_processed=False):
-        self.bags_dict = bags_dict
-        self.save_processed = save_processed
+    def __init__(self, bags_dict, selection_mask, transform=None, save_processed=False):
         self.transform = transform
-        self.unique_bag_ids = list(bags_dict.keys())
-        
-        self.images = []  # List to store individual images
-        self.bag_labels = []  # List to store corresponding bag labels for each image
-        self.image_labels = []  # List to store individual image labels
+        self.save_processed = save_processed
+        self.images = []
+        self.final_labels = []
 
-        # Iterate over each bag and add images, bag labels, and image labels to the lists
-        for bag_id in self.unique_bag_ids:
-            bag_info = bags_dict[bag_id]
-            for idx, img_path in enumerate(bag_info['images']):
-                self.images.append(img_path)
-                self.bag_labels.append(bag_info['bag_labels'][0])
-                self.image_labels.append(bag_info['image_labels'][idx])
+        # Only include confident instances (sleection_mask) or negitive bags or instance labels
+        for bag_id, mask in selection_mask.items():
+            # Convert bag_id to appropriate format if necessary
+            bag_id = bag_id.item() if isinstance(bag_id, torch.Tensor) else bag_id
 
-        self.positive_indices = [i for i, label in enumerate(self.bag_labels) if label]
-        self.negative_indices = [i for i, label in enumerate(self.bag_labels) if not label]
+            if bag_id in bags_dict:
+                bag_info = bags_dict[bag_id]
+                images = bag_info['images']
+                image_labels = bag_info['image_labels']
+                bag_label = bag_info['bag_labels'][0]  # Assuming each bag has a single label
+
+                # Iterate over each image in the bag
+                for idx, (img, label) in enumerate(zip(images, image_labels)):
+                    include_based_on_label = label != [None]  # Include if specific label is present
+                    include_based_on_mask_or_label = (mask[idx] == 1) or (bag_label == 0)
+
+                    # Include images based on the combined criteria
+                    if include_based_on_label or include_based_on_mask_or_label:
+                        self.images.append(img)
+                        # Decide final label: specific image label if present, otherwise bag label
+                        final_label = label[0] if include_based_on_label else bag_label
+                        self.final_labels.append(final_label)
 
 
     def __getitem__(self, index):
         img_path = self.images[index]
-        bag_label = self.bag_labels[index]
-        image_label = self.image_labels[index]
+        instance_label = self.final_labels[index]
 
-        # Use transform on the image
         image_data_q = self.transform(Image.open(img_path).convert("RGB"))
         image_data_k = self.transform(Image.open(img_path).convert("RGB"))
-        
-        # Determine label and confidence based on image_label presence
-        if image_label != [None]:  # This implies specific labels exist for the image
-            instance_label = image_label[0] # Use the specific image label(s)
-            label_confidence = 1  # Set confidence to 1 for specific labels
-        else:
-            instance_label = bag_label  # Use the bag label as a fallback
-            label_confidence = int(not instance_label)  # Confidence based on bag label presence
 
-        return (image_data_q, image_data_k), instance_label, label_confidence
-    
-    
-    def __len__(self):
-        return len(self.images) 
-    
-    # Utility function to get positive and negative indices
-    def get_pos_neg_indices(self):
-        return self.positive_indices, self.negative_indices
-    
-class BalancedInstanceSampler(Sampler):
-    def __init__(self, dataset, batch_size):
-        self.dataset = dataset
-        self.batch_size = batch_size
-        self.positive_indices, self.negative_indices = dataset.get_pos_neg_indices()
-        self.total_batches = len(dataset) // batch_size
-
-    def __iter__(self):
-        for _ in range(self.total_batches):
-            batch = random.sample(self.positive_indices, 2) + random.sample(self.negative_indices, 2)
-            while len(batch) < self.batch_size:
-                batch.append(random.choice(self.positive_indices + self.negative_indices))
-            random.shuffle(batch)
-            yield batch  # Yield the entire batch as a list
+        return (image_data_q, image_data_k), instance_label
 
     def __len__(self):
-        return self.total_batches
+        return len(self.images)
     
     
 def collate_instance(batch):
     batch_data_q = []
     batch_data_k = [] 
     batch_labels = []
-    batch_label_confidence = [] 
 
-    for (image_data_q, image_data_k), bag_label, label_bool in batch:
+    for (image_data_q, image_data_k), bag_label in batch:
         batch_data_q.append(image_data_q)
         batch_data_k.append(image_data_k)
         batch_labels.append(bag_label)
-        batch_label_confidence.append(label_bool)
 
     # Stack the images and labels
     batch_data_q = torch.stack(batch_data_q).cuda()
     batch_data_k = torch.stack(batch_data_k).cuda()
     batch_labels = torch.tensor(batch_labels, dtype=torch.long).cuda()
-    batch_label_confidence = torch.tensor(batch_label_confidence, dtype=torch.int).cuda()
 
-    return (batch_data_q, batch_data_k), batch_labels, batch_label_confidence
+    return (batch_data_q, batch_data_k), batch_labels
 
 
 def collate_bag(batch):
@@ -222,15 +194,9 @@ class GenSupConLoss(nn.Module):
             anchor_features = features[0]
             contrast_features = features[1]
         
-        print(anchor_labels)
-        print(contrast_labels)
-        
         # 1. compute similarities among targets
         anchor_norm = torch.norm(anchor_labels, p=2, dim=-1, keepdim=True) # [anchor_N, 1]
         contrast_norm = torch.norm(contrast_labels, p=2, dim=-1, keepdim=True) # [contrast_N, 1]
-        
-        print(anchor_norm.shape)
-        print(contrast_norm.shape)
         
         deno = torch.mm(anchor_norm, contrast_norm.T)
         mask = torch.mm(anchor_labels, contrast_labels.T) / deno # cosine similarity: [anchor_N, contrast_N]
@@ -270,79 +236,12 @@ def prediction_anchor_scheduler(current_epoch, total_epochs, warmup_epochs, init
     
 
 
-
-def anchor_selection(model_preds, number_of_best, mixed_confidence_q, mixed_confidence_k):
-    # Assuming model_preds is a tensor of shape [N, 1] where N is even
-    model_preds_flattened = model_preds.view(-1)
-    
-    # Reshape to [-1, 2] to prepare for pair-wise multiplication, assuming N is even
-    model_preds_reshaped = model_preds_flattened.view(-1, 2)
-    
-    # Multiply pairs: [0]*[1], [2]*[3], etc., by multiplying elements in the reshaped tensor
-    model_preds_multiplied = model_preds_reshaped[:, 0] * model_preds_reshaped[:, 1]
-    
-    # Now find the adjusted version (distance from 0.5)
-    model_preds_adjusted = torch.abs(model_preds_multiplied - 0.5)
-
-    # Element-wise multiplication of mixed_confidence_q and mixed_confidence_k
-    default_confidence = mixed_confidence_q * mixed_confidence_k
-    
-    # Initialize 'anchors' to zeros initially
-    anchors = torch.zeros_like(default_confidence).int()
-
-    # Select the top `number_of_best` predictions from the model and mark them as anchors
-    _, top_indices = torch.topk(model_preds_adjusted, number_of_best, largest=True)
-    anchors[top_indices] = 1
-
-    # Apply default confidence threshold ONLY for those not already marked as anchors
-    additional_anchors = (default_confidence >= 0.9) & (anchors == 0)
-    anchors[additional_anchors] = 1
-    
-    # Ensure at least 2 positive and 2 negative anchors
-    pos_indices = (anchors == 1).nonzero(as_tuple=True)[0]
-    neg_indices = (anchors == 0).nonzero(as_tuple=True)[0]
-
-    
-    # Randomly flip positive anchors to negitive anchors
-    if len(neg_indices) < 2:
-        # Calculate how many anchors need to be flipped
-        flips_needed = 2 - len(neg_indices)
-        # Ensure not to reduce pos_indices below 2
-        max_flips_possible = max(0, len(pos_indices) - 2)
-        flips_to_perform = min(flips_needed, max_flips_possible)
-        
-        if flips_to_perform > 0:
-            # Convert pos_indices tensor to a list for random sampling
-            pos_indices_list = pos_indices.tolist()
-            to_flip = random.sample(pos_indices_list, flips_to_perform)
-            anchors[torch.tensor(to_flip, dtype=torch.long)] = 0
-            
-    # Use model pred to select more anchors if needed
-    if len(pos_indices) < 2:
-        additional_pos_needed = 2 - len(pos_indices)
-        not_selected = (anchors == 0)  # Indices not already selected as anchors
-        # Re-select from the top model predictions that are not yet selected as anchors
-        _, additional_top_indices = torch.topk(model_preds_adjusted[not_selected], additional_pos_needed, largest=True)
-        # Convert these indices to the original indexing scheme
-        original_indices = torch.nonzero(not_selected).view(-1)[additional_top_indices]
-        anchors[original_indices] = 1
-
-
-    print("Default confidence:\n", default_confidence)
-    print("Anchors:\n", anchors)
-
-    return anchors
-
-
-
-    
-
-
-
-
-
 def default_train():
     global val_loss_best
+
+    # Initialize dicts to store logits with ids as keys
+    train_bag_logits = {}
+    val_bag_logits = {}
 
     # Training phase
     model.train()
@@ -363,7 +262,7 @@ def default_train():
         logits_per_bag = torch.split(logits, split_sizes, dim=0)
 
         batch_loss = 0.0
-        for i, logit in enumerate(logits_per_bag):
+        for i, (logit, bag_id) in enumerate(zip(logits_per_bag, id)):
             # Find the max sigmoid value for each bag
             bag_max_output = logit.max(dim=0)[0]
             loss = loss_func(bag_max_output, yb[i])
@@ -371,9 +270,13 @@ def default_train():
             predicted = (bag_max_output > 0.5).float()
             correct += (predicted == yb[i]).sum().item()
 
+            # Store logits for each bag, using id as key
+            train_bag_logits[bag_id] = logit.detach().cpu().numpy()
+
+
         batch_loss /= num_bags
         total_loss += batch_loss.item() 
-        total += num_bags  # Assuming one label per bag
+        total += num_bags
 
         batch_loss.backward()
         optimizer.step()
@@ -401,7 +304,7 @@ def default_train():
             logits_per_bag = torch.split(logits, split_sizes, dim=0)
 
             batch_loss = 0.0
-            for i, logit in enumerate(logits_per_bag):
+            for i, (logit, bag_id) in enumerate(zip(logits_per_bag, id)):
                 # Find the max sigmoid value for each bag
                 bag_max_output = logit.max(dim=0)[0]
                 loss = loss_func(bag_max_output, yb[i])
@@ -409,11 +312,11 @@ def default_train():
                 predicted = (bag_max_output > 0.5).float()
                 correct += (predicted == yb[i]).sum().item()
 
-                #confusion_matrix
-                target_scalar = yb[i].item() 
-                predicted_list = predicted.squeeze().tolist() 
-                all_targs.append(target_scalar)
-                all_preds.append(predicted_list)
+                # Store logits for each bag during validation, using id as key
+                train_bag_logits[bag_id] = logit.detach().cpu().numpy()
+
+                all_targs.append(yb[i].item())
+                all_preds.append(predicted.squeeze().tolist())
 
             batch_loss /= num_bags
             total_val_loss += batch_loss.item()
@@ -429,11 +332,39 @@ def default_train():
     print(f"Train   | {train_acc:.4f} | {train_loss:.4f}")
     print(f"Val     | {val_acc:.4f} | {val_loss:.4f}")
         
-    # Save the model
-    if val_loss < val_loss_best:
-        val_loss_best = val_loss  # Update the best validation accuracy
-        save_state(epoch, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, model, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs)
-        print("Saved checkpoint due to improved val_loss")
+    return train_bag_logits, val_bag_logits, val_loss, train_acc, val_acc, all_targs, all_preds
+
+
+def create_selection_mask(train_bag_logits, val_bag_logits, predictions_included):
+    # Combine logits from both training and validation
+    combined_logits = []
+    original_indices = []
+
+    # Helper function to add logits and indices
+    def add_logits_and_indices(logits_dict):
+        for bag_id, logits in logits_dict.items():
+            for i, logit in enumerate(logits):
+                # Interpret confidence as distance from 0.5 (for probabilities)
+                confidence = min(logit[0], 1 - logit[0]) if len(logit) == 1 else min(abs(logit - 0.5))
+                combined_logits.append(confidence)
+                original_indices.append((bag_id, i))
+
+    # Add training and validation logits to the combined list
+    add_logits_and_indices(train_bag_logits)
+    add_logits_and_indices(val_bag_logits)
+
+    # Rank instances based on their confidence
+    top_indices = np.argsort(-np.array(combined_logits))[:predictions_included]
+
+    # Initialize mask dictionary
+    mask_dict = {key: np.zeros(len(logits), dtype=int) for key, logits in {**train_bag_logits, **val_bag_logits}.items()}
+
+    # Set mask to 1 for selected top instances
+    for idx in top_indices:
+        original_bag_id, original_position = original_indices[idx]
+        mask_dict[original_bag_id][original_position] = 1
+
+    return mask_dict
 
 
 class Args:
@@ -496,7 +427,7 @@ if __name__ == '__main__':
     initial_ratio = 0 # 0% preditions included
     final_ratio = 0.7 # 70% preditions included
     total_epochs = 200
-    warmup_epochs = 25
+    warmup_epochs = 10
 
     # Paths
     export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
@@ -528,24 +459,17 @@ if __name__ == '__main__':
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
 
-    print("Training Data...")
-    # Create datasets
-    #bag_dataset_train = TUD.Subset(Bag_Dataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
-    #bag_dataset_val = TUD.Subset(Bag_Dataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
-    #instance_dataset_train = TUD.Subset(Instance_Dataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
 
-    
-    bag_dataset_train = Bag_Dataset(bags_train, transform=train_transform, save_processed=False)
-    bag_dataset_val = Bag_Dataset(bags_val, transform=val_transform, save_processed=False)
-    instance_dataset_train = Instance_Dataset(bags_train, transform=train_transform, save_processed=False)
-    
-    instance_sampler = BalancedInstanceSampler(instance_dataset_train, batch_size=instance_batch_size) 
-            
-    # Create data loaders
+    # Create datasets
+    bag_dataset_train = TUD.Subset(Bag_Dataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
+    bag_dataset_val = TUD.Subset(Bag_Dataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
+    #bag_dataset_train = Bag_Dataset(bags_train, transform=train_transform, save_processed=False)
+    #bag_dataset_val = Bag_Dataset(bags_val, transform=val_transform, save_processed=False)
+     
+    # Create bag data loaders
     bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
     bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True)
-    instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=instance_sampler, collate_fn = collate_instance)
-    
+
 
     # Get Model
     model = SupConResNet_custom(name=encoder_arch, num_classes=num_labels).cuda()
@@ -554,13 +478,12 @@ if __name__ == '__main__':
         
     optimizer = Adam(model.parameters(), lr=args.learning_rate)
     loss_func = nn.BCELoss()
-    genscl = GenSupConLoss(temperature=0.07, contrast_mode='dynamic')
+    genscl = GenSupConLoss(temperature=0.07, contrast_mode='all')
     train_losses_over_epochs = []
     valid_losses_over_epochs = []
     epoch_start = 0
     
 
-    
     # Check if the model already exists
     model_folder = f"{env}/models/{model_name}/"
     model_path = f"{model_folder}/{model_name}.pth"
@@ -586,76 +509,80 @@ if __name__ == '__main__':
 
     # Training loop
     for epoch in range(epoch_start, total_epochs):
-        if epoch % (1 + feature_extractor_train_count) == 0:
-            
-            print('Training Default')
-            default_train()
-            
-            # When Bag AUC increases goto Feature extractor
-            
-            # Used the instance predictions from bag training to update the Instance Dataloader
-            
-        else:
-            # Generalized Supervised Contrastive Learning phase
-            print('Training Feature Extractor')
-            model.train()
-            losses = AverageMeter()
-            
+        
+        print('Training Default')
+        train_bag_logits, val_bag_logits, val_loss, train_acc, val_acc, all_targs, all_preds = default_train()
+        
+        
+        if True: #val_loss < val_loss_best:
+            # Save the model
+            val_loss_best = val_loss
+            save_state(epoch, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, model, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs)
+            print("Saved checkpoint due to improved val_loss")
+        
+        
             # Get difficualy ratio
             predictions_ratio = prediction_anchor_scheduler(epoch, total_epochs, warmup_epochs, initial_ratio, final_ratio)
             predictions_included = round(predictions_ratio * instance_batch_size)
+            predictions_included = 10  # Debug value for now
+            selection_mask = create_selection_mask(train_bag_logits, val_bag_logits, predictions_included)
+            
+            # Used the instance predictions from bag training to update the Instance Dataloader
+            instance_dataset_train = TUD.Subset(Instance_Dataset(bags_train, selection_mask, transform=train_transform, save_processed=False),list(range(0,100)))
+            #instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, save_processed=False)
+            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_size=instance_batch_size, collate_fn = collate_instance, drop_last=True, shuffle = True)
+            print('Training Feature Extractor')
             print(f'Including Predictions: {predictions_ratio:.2f} ({predictions_included})')
-
-            # Predictions ratio is not per batch, for the entire dataset
-            # Update instance dataloader, only include confident instances or negitive bags or instance labels
             
-            
-            epoch_loss = 0.0
-            total_loss = 0
+            # Generalized Supervised Contrastive Learning phase
+            for i in range(feature_extractor_train_count): 
+                model.train()
+                losses = AverageMeter()
+                
+                epoch_loss = 0.0
+                total_loss = 0
 
-            # Iterate over the training data
-            for idx, (images, instance_labels, _) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
-                warmup_learning_rate(args, epoch, idx, len(instance_dataloader_train), optimizer)
-                
-                # Data preparation 
-                bsz = instance_labels.shape[0]
-                im_q, im_k = images
-                im_q = im_q.cuda(non_blocking=True)
-                im_k = im_k.cuda(non_blocking=True)
-                instance_labels = instance_labels.cuda(non_blocking=True)
-                
-                # image-based regularizations (mixup)
-                # lam 1 = no mixup
-                im_q, y0a, y0b, lam0 = mix_fn(im_q, instance_labels, args.mix_alpha, args.mix)
-                im_k, y1a, y1b, lam1 = mix_fn(im_k, instance_labels, args.mix_alpha, args.mix)
-                images = torch.cat([im_q, im_k], dim=0)
-                l_q = mix_target(y0a, y0b, lam0, args.num_classes)
-                l_k = mix_target(y1a, y1b, lam1, args.num_classes)
+                # Iterate over the training data
+                for idx, (images, instance_labels) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
+                    warmup_learning_rate(args, epoch, idx, len(instance_dataloader_train), optimizer)
+                    
+                    # Data preparation 
+                    bsz = instance_labels.shape[0]
+                    im_q, im_k = images
+                    im_q = im_q.cuda(non_blocking=True)
+                    im_k = im_k.cuda(non_blocking=True)
+                    instance_labels = instance_labels.cuda(non_blocking=True)
+                    
+                    # image-based regularizations (lam 1 = no mixup)
+                    im_q, y0a, y0b, lam0 = mix_fn(im_q, instance_labels, args.mix_alpha, args.mix)
+                    im_k, y1a, y1b, lam1 = mix_fn(im_k, instance_labels, args.mix_alpha, args.mix)
+                    images = torch.cat([im_q, im_k], dim=0)
+                    l_q = mix_target(y0a, y0b, lam0, args.num_classes)
+                    l_k = mix_target(y1a, y1b, lam1, args.num_classes)
 
-                # forward
-                features, pred = model(images)
-                features = F.normalize(features, dim=1)
-                features = torch.split(features, [bsz, bsz], dim=0)
-                
-                # Get anchors
-                mapped_anchors = anchor_selection(pred, predictions_included, mixed_confidence_q, mixed_confidence_k)
-                # In warmup use the whole batch and then Only true labels (no model predictions) as anchors 
-                # After warmup the whole batch is an anchor contrasted against the whole batch
-                # Anchors are on Instance level
-                
-                
-                mapped_anchors = torch.tensor(mapped_anchors)
-                
-                # get loss (no teacher)
-                loss = genscl(features, [l_q, l_k], mapped_anchors)
-                losses.update(loss.item(), bsz)
-                
-                # backward
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                
-            #print(f'loss: {losses:.3f}')
+                    # forward
+                    features, pred = model(images)
+                    features = F.normalize(features, dim=1)
+                    features = torch.split(features, [bsz, bsz], dim=0)
+                    
+                    # Get anchors
+                    # In warmup use the whole batch and then Only true labels (no model predictions) as anchors 
+                    # After warmup the whole batch is an anchor contrasted against the whole batch
+                    # Anchors are on Instance level
+                    
+                    
+                    mapped_anchors = None
+                    
+                    # get loss (no teacher)
+                    loss = genscl(features, [l_q, l_k], mapped_anchors)
+                    losses.update(loss.item(), bsz)
+                    
+                    # backward
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+                    
+                print(f'Gen_SCL Loss: {losses.avg:.5f}')
 
-                
-                
+                    
+                    
