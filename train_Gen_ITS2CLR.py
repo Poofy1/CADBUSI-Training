@@ -74,28 +74,31 @@ class Instance_Dataset(TUD.Dataset):
         self.images = []
         self.final_labels = []
 
-        # Only include confident instances (sleection_mask) or negitive bags or instance labels
-        for bag_id, mask in selection_mask.items():
-            # Convert bag_id to appropriate format if necessary
-            bag_id = bag_id.item() if isinstance(bag_id, torch.Tensor) else bag_id
-
-            if bag_id in bags_dict:
-                bag_info = bags_dict[bag_id]
-                images = bag_info['images']
-                image_labels = bag_info['image_labels']
-                bag_label = bag_info['bag_labels'][0]  # Assuming each bag has a single label
-
-                # Iterate over each image in the bag
-                for idx, (img, label) in enumerate(zip(images, image_labels)):
-                    include_based_on_label = label != [None]  # Include if specific label is present
-                    include_based_on_mask_or_label = (mask[idx] == 1) or (bag_label == 0)
-
-                    # Include images based on the combined criteria
-                    if include_based_on_label or include_based_on_mask_or_label:
-                        self.images.append(img)
-                        # Decide final label: specific image label if present, otherwise bag label
-                        final_label = label[0] if include_based_on_label else bag_label
-                        self.final_labels.append(final_label)
+        # Only include confident instances (selection_mask) or negative bags or instance labels
+        for bag_id, bag_info in bags_dict.items():
+            images = bag_info['images']
+            image_labels = bag_info['image_labels']
+            bag_label = bag_info['bag_labels'][0]  # Assuming each bag has a single label
+            
+            # Convert bag_id to a format consistent with keys in selection_mask
+            bag_id_key = bag_id.item() if isinstance(bag_id, torch.Tensor) else bag_id
+            # Check if the bag_id exists in the selection_mask
+            has_mask = bag_id_key in selection_mask
+            
+            for idx, (img, label) in enumerate(zip(images, image_labels)):
+                image_label = None
+                
+                if label[0] is not None: # Check if instance label is not None
+                    image_label = label[0]  
+                elif has_mask and selection_mask[bag_id_key][0][idx] == 1: # Check if selection_mask includes this image
+                    if selection_mask[bag_id_key][1][idx] is not None:
+                        image_label = selection_mask[bag_id_key][1][idx]
+                elif bag_label == 0: # Check if bag label is 0
+                    image_label = 0
+                
+                if image_label is not None:
+                    self.images.append(img)
+                    self.final_labels.append(image_label)
 
 
     def __getitem__(self, index):
@@ -335,36 +338,44 @@ def default_train():
     return train_bag_logits, val_bag_logits, val_loss, train_acc, val_acc, all_targs, all_preds
 
 
+
 def create_selection_mask(train_bag_logits, val_bag_logits, predictions_included):
     # Combine logits from both training and validation
     combined_logits = []
     original_indices = []
+    predictions = []  # To store predictions alongside logits
 
-    # Helper function to add logits and indices
-    def add_logits_and_indices(logits_dict):
+    # Helper function to add logits, indices, and predictions
+    def add_logits_indices_and_predictions(logits_dict, include_predictions=False):
         for bag_id, logits in logits_dict.items():
             for i, logit in enumerate(logits):
                 # Interpret confidence as distance from 0.5 (for probabilities)
                 confidence = min(logit[0], 1 - logit[0]) if len(logit) == 1 else min(abs(logit - 0.5))
                 combined_logits.append(confidence)
                 original_indices.append((bag_id, i))
+                prediction = None
+                if include_predictions:
+                    prediction = 0 if logit[0] < 0.5 else 1  # Assuming binary classification
+                predictions.append(prediction)
 
     # Add training and validation logits to the combined list
-    add_logits_and_indices(train_bag_logits)
-    add_logits_and_indices(val_bag_logits)
+    add_logits_indices_and_predictions(train_bag_logits, include_predictions=True)
+    add_logits_indices_and_predictions(val_bag_logits, include_predictions=True)
 
     # Rank instances based on their confidence
     top_indices = np.argsort(-np.array(combined_logits))[:predictions_included]
 
-    # Initialize mask dictionary
-    mask_dict = {key: np.zeros(len(logits), dtype=int) for key, logits in {**train_bag_logits, **val_bag_logits}.items()}
+    # Initialize mask and predictions dictionary
+    combined_dict = {key: [np.zeros(len(logits), dtype=int), [None]*len(logits)] for key, logits in {**train_bag_logits, **val_bag_logits}.items()}
 
-    # Set mask to 1 for selected top instances
+    # Set mask to 1 for selected top instances and include predictions
     for idx in top_indices:
         original_bag_id, original_position = original_indices[idx]
-        mask_dict[original_bag_id][original_position] = 1
+        combined_dict[original_bag_id][0][original_position] = 1  # Update mask
+        combined_dict[original_bag_id][1][original_position] = predictions[idx]  # Update prediction
 
-    return mask_dict
+    return combined_dict
+
 
 
 class Args:
@@ -521,6 +532,7 @@ if __name__ == '__main__':
             print("Saved checkpoint due to improved val_loss")
         
         
+
             # Get difficualy ratio
             predictions_ratio = prediction_anchor_scheduler(epoch, total_epochs, warmup_epochs, initial_ratio, final_ratio)
             predictions_included = round(predictions_ratio * instance_batch_size)
