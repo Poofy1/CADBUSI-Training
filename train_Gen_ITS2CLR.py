@@ -4,7 +4,7 @@ import torch.utils.data as TUD
 from tqdm import tqdm
 from torch import nn
 from archs.save_arch import *
-from data.ITS2CLR_util import *
+from data.Gen_ITS2CLR_util import *
 from torch.optim import Adam
 from data.format_data import *
 from archs.model_GenSCL import *
@@ -39,7 +39,6 @@ class Bag_Dataset(TUD.Dataset):
 
         # Process images
         image_data = torch.stack([self.transform(Image.open(fn).convert("RGB")) for fn in files_this_bag])
-        image_data = image_data.cuda()  # Move to GPU if CUDA is available
         
         # Save processed images if required
         if self.save_processed:
@@ -125,9 +124,9 @@ def collate_instance(batch):
         batch_labels.append(bag_label)
 
     # Stack the images and labels
-    batch_data_q = torch.stack(batch_data_q).cuda()
-    batch_data_k = torch.stack(batch_data_k).cuda()
-    batch_labels = torch.tensor(batch_labels, dtype=torch.long).cuda()
+    batch_data_q = torch.stack(batch_data_q)
+    batch_data_k = torch.stack(batch_data_k)
+    batch_labels = torch.tensor(batch_labels, dtype=torch.long)
 
     return (batch_data_q, batch_data_k), batch_labels
 
@@ -146,10 +145,10 @@ def collate_bag(batch):
         batch_ids.append(bag_id)
 
     # Use torch.stack for bag labels to handle multiple labels per bag
-    out_bag_labels = torch.stack(batch_bag_labels).cuda()
+    out_bag_labels = torch.stack(batch_bag_labels)
 
     # Converting to a tensor
-    out_ids = torch.tensor(batch_ids, dtype=torch.long).cuda()
+    out_ids = torch.tensor(batch_ids, dtype=torch.long)
 
     return batch_data, out_bag_labels, batch_instance_labels, out_ids
 
@@ -231,12 +230,6 @@ class GenSupConLoss(nn.Module):
 
 
 
-def prediction_anchor_scheduler(current_epoch, total_epochs, warmup_epochs, initial_ratio, final_ratio):
-    if current_epoch < warmup_epochs:
-        return initial_ratio
-    else:
-        return initial_ratio + (final_ratio - initial_ratio) * (current_epoch - warmup_epochs) / (total_epochs - warmup_epochs)
-    
 
 
 def default_train():
@@ -436,7 +429,7 @@ if __name__ == '__main__':
     #ITS2CLR Config
     feature_extractor_train_count = 10
     initial_ratio = 0 # 0% preditions included
-    final_ratio = 0.7 # 70% preditions included
+    final_ratio = 0.25 # 25% preditions included
     total_epochs = 200
     warmup_epochs = 10
 
@@ -472,10 +465,10 @@ if __name__ == '__main__':
 
 
     # Create datasets
-    bag_dataset_train = TUD.Subset(Bag_Dataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
-    bag_dataset_val = TUD.Subset(Bag_Dataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
-    #bag_dataset_train = Bag_Dataset(bags_train, transform=train_transform, save_processed=False)
-    #bag_dataset_val = Bag_Dataset(bags_val, transform=val_transform, save_processed=False)
+    #bag_dataset_train = TUD.Subset(Bag_Dataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
+    #bag_dataset_val = TUD.Subset(Bag_Dataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
+    bag_dataset_train = Bag_Dataset(bags_train, transform=train_transform, save_processed=False)
+    bag_dataset_val = Bag_Dataset(bags_val, transform=val_transform, save_processed=False)
      
     # Create bag data loaders
     bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
@@ -525,7 +518,7 @@ if __name__ == '__main__':
         train_bag_logits, val_bag_logits, val_loss, train_acc, val_acc, all_targs, all_preds = default_train()
         
         
-        if True: #val_loss < val_loss_best:
+        if val_loss < val_loss_best:
             # Save the model
             val_loss_best = val_loss
             save_state(epoch, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, model, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs)
@@ -536,12 +529,11 @@ if __name__ == '__main__':
             # Get difficualy ratio
             predictions_ratio = prediction_anchor_scheduler(epoch, total_epochs, warmup_epochs, initial_ratio, final_ratio)
             predictions_included = round(predictions_ratio * instance_batch_size)
-            predictions_included = 10  # Debug value for now
             selection_mask = create_selection_mask(train_bag_logits, val_bag_logits, predictions_included)
             
             # Used the instance predictions from bag training to update the Instance Dataloader
-            instance_dataset_train = TUD.Subset(Instance_Dataset(bags_train, selection_mask, transform=train_transform, save_processed=False),list(range(0,100)))
-            #instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, save_processed=False)
+            #instance_dataset_train = TUD.Subset(Instance_Dataset(bags_train, selection_mask, transform=train_transform, save_processed=False),list(range(0,100)))
+            instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, save_processed=False)
             instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_size=instance_batch_size, collate_fn = collate_instance, drop_last=True, shuffle = True)
             print('Training Feature Extractor')
             print(f'Including Predictions: {predictions_ratio:.2f} ({predictions_included})')
