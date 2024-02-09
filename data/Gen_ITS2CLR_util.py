@@ -25,6 +25,14 @@ def mix_target(y_a, y_b, lam, num_classes):
     return lam * l1 + (1 - lam) * l2
 
 
+
+def prediction_anchor_scheduler(current_epoch, total_epochs, warmup_epochs, initial_ratio, final_ratio):
+    if current_epoch < warmup_epochs:
+        return initial_ratio
+    else:
+        return initial_ratio + (final_ratio - initial_ratio) * (current_epoch - warmup_epochs) / (total_epochs - warmup_epochs)
+    
+
 '''
 modified from https://github.com/hongyi-zhang/mixup/blob/master/cifar/utils.py
 '''
@@ -198,10 +206,3 @@ class Cutout(object):
 
         return img
     
-class TwoCropTransform:
-    """Create two crops of the same image"""
-    def __init__(self, transform):
-        self.transform = transform
-
-    def __call__(self, x):
-        return [self.transform(x), self.transform(x)]

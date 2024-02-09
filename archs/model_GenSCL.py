@@ -148,7 +148,7 @@ model_dict = {
 }
 
 
-class LinearBatchNorm(nn.Module):
+'''class LinearBatchNorm(nn.Module):
     """Implements BatchNorm1d by BatchNorm2d, for SyncBN purpose"""
     def __init__(self, dim, affine=True):
         super(LinearBatchNorm, self).__init__()
@@ -159,7 +159,7 @@ class LinearBatchNorm(nn.Module):
         x = x.view(-1, self.dim, 1, 1)
         x = self.bn(x)
         x = x.view(-1, self.dim)
-        return x
+        return x'''
 
 
 class SupConResNet(nn.Module):
@@ -219,7 +219,7 @@ class SupConResNet_custom(nn.Module):
 
 
 
-class SupCEResNet(nn.Module):
+'''class SupCEResNet(nn.Module):
     """encoder + classifier"""
     def __init__(self, name='resnet50', num_classes=10):
         super(SupCEResNet, self).__init__()
@@ -239,4 +239,4 @@ class LinearClassifier(nn.Module):
         self.fc = nn.Linear(feat_dim, num_classes)
 
     def forward(self, features):
-        return self.fc(features)
+        return self.fc(features)'''
