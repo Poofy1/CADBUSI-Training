@@ -48,7 +48,7 @@ class EmbeddingBagModel(nn.Module):
         num_bags = len(input) # input = [bag #, image #, channel, height, width]
         
         # Concatenate all bags into a single tensor for batch processing
-        all_images = torch.cat(input, dim=0)  # Shape: [Total images in all bags, channel, height, width]
+        all_images = torch.cat(input, dim=0).cuda()  # Shape: [Total images in all bags, channel, height, width]
         
         # Calculate the embeddings for all images in one go
         h_all = self.encoder(all_images)
@@ -95,15 +95,32 @@ if __name__ == '__main__':
     # Get Training Data
     bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
     num_labels = len(label_columns)
+    
+    train_transform = T.Compose([
+                    T.RandomVerticalFlip(),
+                    T.RandomHorizontalFlip(),
+                    #T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
+                    T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
+                    CLAHETransform(),
+                    T.ToTensor(),
+                    GaussianNoise(mean=0, std=0.015),  # Add slight noise
+                    T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                ])
+    val_transform = T.Compose([
+                CLAHETransform(),
+                T.ToTensor(),
+                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
 
-    print("Training Data...")
+    
     # Create datasets
-    #dataset_train = TUD.Subset(BagOfImagesDataset(bags_train),list(range(0,100)))
-    #dataset_val = TUD.Subset(BagOfImagesDataset(bags_val),list(range(0,100)))
-    dataset_train = BagOfImagesDataset(bags_train, save_processed=False)
-    dataset_val = BagOfImagesDataset(bags_val, train=False)
+    #dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
+    #dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
+    dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
+    dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
 
-            
+    
+                    
     # Create data loaders
     train_dl =  TUD.DataLoader(dataset_train, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
     val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
@@ -149,7 +166,7 @@ if __name__ == '__main__':
         val_loss_best = 99999
     
     
-    
+    print("Training Data...")
     # Training loop
     for epoch in range(epoch_start, epochs):
         # Training phase
