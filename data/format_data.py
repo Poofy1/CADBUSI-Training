@@ -144,32 +144,11 @@ class CLAHETransform(object):
 
 class BagOfImagesDataset(TUD.Dataset):
 
-    def __init__(self, bags_dict, train=True, save_processed=False):
+    def __init__(self, bags_dict, transform=None, save_processed=False):
         self.bags_dict = bags_dict
         self.unique_bag_ids = list(bags_dict.keys())
         self.save_processed = save_processed
-        self.train = train
-    
-        # Normalize
-        if train:
-            self.tsfms = T.Compose([
-                T.RandomVerticalFlip(),
-                T.RandomHorizontalFlip(),
-                #T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
-                T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
-                #HistogramEqualization(),
-                CLAHETransform(),
-                T.ToTensor(),
-                GaussianNoise(mean=0, std=0.015),  # Add slight noise
-                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
-        else:
-            self.tsfms = T.Compose([
-                #HistogramEqualization(),
-                CLAHETransform(),
-                T.ToTensor(),
-                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
+        self.transform = transform
     
     def __getitem__(self, index):
         actual_id = self.unique_bag_ids[index]
@@ -181,9 +160,8 @@ class BagOfImagesDataset(TUD.Dataset):
         instance_labels = bag_info['image_labels']
 
         # Process images
-        image_data = torch.stack([self.tsfms(Image.open(fn).convert("RGB")) for fn in files_this_bag])
-        image_data = image_data.cuda()  # Move to GPU if CUDA is available
-        
+        image_data = torch.stack([self.transform(Image.open(fn).convert("RGB")) for fn in files_this_bag])
+
         # Save processed images if required
         if self.save_processed:
             save_folder = os.path.join(env, 'processed_images')  
@@ -208,33 +186,6 @@ class BagOfImagesDataset(TUD.Dataset):
     
     def n_features(self):
         return self.data.size(1)
-
-
-
-def create_bags_old(data, min_size, max_size, root_dir, label_columns):
-    bags_dict = {}  # This will be indexed by ID
-    
-    total_rows = len(data)
-
-    for _, row in tqdm(data.iterrows(), total = total_rows):
-        # Parse the 'Images' column to get the list of images
-        image_files = ast.literal_eval(row['Images'])
-
-        # Exclude bags that are outside the size range
-        if not (min_size <= len(image_files) <= max_size):
-            continue
-
-        # Create the full path for each image file
-        bag_files = [os.path.join(root_dir, img_name) for img_name in image_files]
-
-        # Extract labels from the specified columns
-        bag_labels = [int(row[label]) for label in label_columns]
-
-        # Add to dictionary
-        bags_dict[row['ID']] = [bag_labels, bag_files]
-
-    return bags_dict  # ID : [[labels], [image_files]]
-
 
 
 
@@ -430,5 +381,9 @@ def prepare_all_data(export_location, label_columns, instance_columns, cropped_i
     print(f'There are {len(bags_train)} files in the training data')
     print(f'There are {len(bags_val)} files in the validation data')
     count_bag_labels(bags_train)
+    
+    
+    
     #save_bags_to_csv(bags_train, 'F:/Temp_SSD_Data/bags_testing.csv')
+    
     return bags_train, bags_val

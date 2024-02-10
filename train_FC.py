@@ -169,6 +169,7 @@ if __name__ == '__main__':
         for (data, yb, instance_yb, id) in tqdm(train_dl, total=len(train_dl)): 
             xb, yb = data, yb.cuda()
             print(instance_yb)
+            optimizer.zero_grad()
             
             # Forward pass
             yhat_bag, yhat_instance = bagmodel(xb)
@@ -199,7 +200,7 @@ if __name__ == '__main__':
 
             # Combine losses and backward pass
             total_loss = bag_loss + instance_loss  # Optionally, use weighted sum
-            optimizer.zero_grad()
+            
             total_loss.backward()
             optimizer.step()
 

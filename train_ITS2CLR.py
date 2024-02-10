@@ -157,16 +157,6 @@ def generate_pseudo_labels(inputs, threshold = .5):
     #print("pseudo labels: ", pseudo_labels)
     return pseudo_labels
 
-# use raw output? still convert to 0 or 1 (Pseudo labels)
-# Need instance labels 
-# In the begginnning only do negitivebags in the loss
-# Threshold .1? .1 or .9 prediction would pass. Slowly decreaing that threshold 
-# Two seperate throholds for 1 and 0?
-# DO NOT USE POSITIVE CASES IN BEGINNING
-# Rank all images in batch, take best ten percent in the beginning 
-# Paramter that controls the amount of positive cases that show up in the numerator in the loss function (IDEALLY)
-# Just dont compute it initially?
-# You should use Yhats instead, they are all from 0 to 1 individually
 
 class SupConLoss(nn.Module):
     """Supervised Contrastive Learning: https://arxiv.org/pdf/2004.11362.pdf.
