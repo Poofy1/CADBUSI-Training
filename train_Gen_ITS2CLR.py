@@ -52,9 +52,10 @@ class Instance_Dataset(TUD.Dataset):
     def __getitem__(self, index):
         img_path = self.images[index]
         instance_label = self.final_labels[index]
-
-        image_data_q = self.transform(Image.open(img_path).convert("RGB"))
-        image_data_k = self.transform(Image.open(img_path).convert("RGB"))
+        
+        img = Image.open(img_path).convert("RGB")
+        image_data_q = self.transform(img)
+        image_data_k = self.transform(img)
 
         return (image_data_q.half(), image_data_k.half()), instance_label
 
@@ -249,7 +250,7 @@ if __name__ == '__main__':
     img_size = 350
     bag_batch_size = 2
     min_bag_size = 2
-    max_bag_size = 8
+    max_bag_size = 10
     instance_batch_size = 8
     model_folder = f"{env}/models/{model_name}/"
     
@@ -327,7 +328,7 @@ if __name__ == '__main__':
     print(f"Total Parameters: {total_params}")        
         
     optimizer = Adam(model.parameters(), lr=args.learning_rate)
-    loss_func = nn.BCELoss()
+    BCE_loss = nn.BCEWithLogitsLoss()
     genscl = GenSupConLoss(temperature=0.07, contrast_mode='all')
     scaler = GradScaler()
     train_losses_over_epochs = []
@@ -384,16 +385,15 @@ if __name__ == '__main__':
             logits_per_bag = torch.split(logits, split_sizes, dim=0)
 
             batch_loss = 0.0
-            for i, (logit, bag_id) in enumerate(zip(logits_per_bag, id)):
+            for i, (bag_logit, bag_id) in enumerate(zip(logits_per_bag, id)):
                 # Find the max sigmoid value for each bag
-                bag_max_output = logit.max(dim=0)[0]
-                loss = loss_func(bag_max_output, yb[i])
-                batch_loss += loss
+                bag_max_output = bag_logit.max(dim=0)[0]
+                batch_loss += BCE_loss(bag_max_output, yb[i])
                 predicted = (bag_max_output > 0.5).float()
                 correct += (predicted == yb[i]).sum().item()
 
                 # Store logits for each bag, using id as key
-                train_bag_logits[bag_id] = logit.detach().cpu().numpy()
+                train_bag_logits[bag_id] = bag_logit.detach().cpu().numpy()
 
 
             batch_loss /= num_bags
@@ -428,16 +428,15 @@ if __name__ == '__main__':
                 logits_per_bag = torch.split(logits, split_sizes, dim=0)
 
                 batch_loss = 0.0
-                for i, (logit, bag_id) in enumerate(zip(logits_per_bag, id)):
+                for i, (bag_logit, bag_id) in enumerate(zip(logits_per_bag, id)):
                     # Find the max sigmoid value for each bag
-                    bag_max_output = logit.max(dim=0)[0]
-                    loss = loss_func(bag_max_output, yb[i])
-                    batch_loss += loss
+                    bag_max_output = bag_logit.max(dim=0)[0]
+                    batch_loss += BCE_loss(bag_max_output, yb[i])
                     predicted = (bag_max_output > 0.5).float()
                     correct += (predicted == yb[i]).sum().item()
 
                     # Store logits for each bag during validation, using id as key
-                    train_bag_logits[bag_id] = logit.detach().cpu().numpy()
+                    train_bag_logits[bag_id] = bag_logit.detach().cpu().numpy()
 
                     all_targs.append(yb[i].item())
                     all_preds.append(predicted.squeeze().tolist())
@@ -461,7 +460,7 @@ if __name__ == '__main__':
             
             
             
-        if False: #val_loss < val_loss_best:
+        if True: #val_loss < val_loss_best:
             # Save the model
             val_loss_best = val_loss
             save_state(epoch, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, model, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs)
@@ -482,8 +481,8 @@ if __name__ == '__main__':
             print(f'Including Predictions: {predictions_ratio:.2f} ({predictions_included})')
             
             # Generalized Supervised Contrastive Learning phase
+            model.train()
             for i in range(feature_extractor_train_count): 
-                model.train()
                 losses = AverageMeter()
                 
                 epoch_loss = 0.0
@@ -521,18 +520,23 @@ if __name__ == '__main__':
                     
                     
                     mapped_anchors = None
-                    
+
                     # get loss (no teacher)
                     loss = genscl(features, [l_q, l_k], mapped_anchors)
                     losses.update(loss.item(), bsz)
                     
-                    # backward
+                    if features is None:
+                        print("features is None")
+                    if [l_q, l_k] is None:
+                        print("features is None")
+                    if loss is None:
+                        print("features is None")
                     
+                    # backward
                     scaler.scale(loss).backward()
                     scaler.step(optimizer)
                     scaler.update()
                     
                 print(f'Gen_SCL Loss: {losses.avg:.5f}')
-
-                    
-                    
+                
+                

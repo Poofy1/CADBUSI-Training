@@ -181,12 +181,7 @@ if __name__ == '__main__':
             optimizer.zero_grad()
             
             outputs, _, _, _ = bagmodel(xb)
-            
-            # TEMP DEBUG
-            if not torch.all(outputs.ge(0) & outputs.le(1)):
-                print(f"Invalid output detected: {outputs[~(outputs.ge(0) & outputs.le(1))]}")
-            if not torch.all(yb.ge(0) & yb.le(1)):
-                print(f"Invalid label detected: {yb[~(yb.ge(0) & yb.le(1))]}")
+
 
             loss = loss_func(outputs, yb)
 
