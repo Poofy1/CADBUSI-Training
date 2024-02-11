@@ -175,7 +175,7 @@ class SupConResNet_custom(nn.Module):
         
         # Get predictions and apply sigmoid
         pred = self.classifier(feat)
-        pred = torch.sigmoid(pred)
+        #pred = torch.sigmoid(pred)
 
         return feat, pred
 
