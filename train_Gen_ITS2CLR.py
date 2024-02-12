@@ -16,38 +16,46 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
     
     
 class Instance_Dataset(TUD.Dataset):
-    def __init__(self, bags_dict, selection_mask, transform=None, save_processed=False):
+    def __init__(self, bags_dict, selection_mask, transform=None, save_processed=False, warmup=True):
         self.transform = transform
         self.save_processed = save_processed
+        self.warmup = warmup 
         self.images = []
         self.final_labels = []
 
-        # Only include confident instances (selection_mask) or negative bags or instance labels
         for bag_id, bag_info in bags_dict.items():
             images = bag_info['images']
             image_labels = bag_info['image_labels']
             bag_label = bag_info['bag_labels'][0]  # Assuming each bag has a single label
             
-            # Convert bag_id to a format consistent with keys in selection_mask
             bag_id_key = bag_id.item() if isinstance(bag_id, torch.Tensor) else bag_id
-            # Check if the bag_id exists in the selection_mask
             has_mask = bag_id_key in selection_mask
             
             for idx, (img, label) in enumerate(zip(images, image_labels)):
                 image_label = None
                 
-                if label[0] is not None: # Check if instance label is not None
-                    image_label = label[0]  
-                elif has_mask and selection_mask[bag_id_key][0][idx] == 1: # Check if selection_mask includes this image
-                    if selection_mask[bag_id_key][1][idx] is not None:
-                        image_label = selection_mask[bag_id_key][1][idx]
-                elif bag_label == 0: # Check if bag label is 0
-                    image_label = 0
+                if not self.warmup:
+                    # Only include confident instances (selection_mask) or negative bags or instance labels
+                    if label[0] is not None:
+                        image_label = label[0]
+                    elif has_mask and selection_mask[bag_id_key][0][idx] == 1:
+                        if selection_mask[bag_id_key][1][idx] is not None:
+                            image_label = selection_mask[bag_id_key][1][idx]
+                    elif bag_label == 0:
+                        image_label = 0
+                else:
+                    # Include all data but replace with image_labels if present
+                    if label[0] is not None:
+                        image_label = label[0]
+                    else:
+                        image_label = bag_label  # Use bag label if instance label is not present
                 
                 if image_label is not None:
                     self.images.append(img)
                     self.final_labels.append(image_label)
-
+                    
+                    
+        print(len(self.final_labels))
 
     def __getitem__(self, index):
         img_path = self.images[index]
@@ -220,7 +228,7 @@ def create_selection_mask(train_bag_logits, val_bag_logits, predictions_included
 
 
 class Args:
-    def __init__(self, warm, start_epoch, warm_epochs, learning_rate, lr_decay_rate, num_classes, epochs, warmup_from, cosine, lr_decay_epochs, mix, mix_alpha, KD_temp, KD_alpha, print_freq, teacher_path, teacher_ckpt):
+    def __init__(self, warm, start_epoch, warm_epochs, learning_rate, lr_decay_rate, num_classes, epochs, warmup_from, cosine, lr_decay_epochs, mix, mix_alpha, KD_temp, KD_alpha, teacher_path, teacher_ckpt):
         self.warm = warm
         self.start_epoch = start_epoch
         self.warm_epochs = warm_epochs
@@ -235,7 +243,6 @@ class Args:
         self.mix_alpha = mix_alpha
         self.KD_temp = KD_temp
         self.KD_alpha = KD_alpha
-        self.print_freq = print_freq
         self.teacher_path = teacher_path
         self.teacher_ckpt = teacher_ckpt
 
@@ -254,10 +261,17 @@ if __name__ == '__main__':
     instance_batch_size = 8
     model_folder = f"{env}/models/{model_name}/"
     
+    #ITS2CLR Config
+    feature_extractor_train_count = 5
+    initial_ratio = 0 # 0% preditions included
+    final_ratio = 0.25 # 25% preditions included
+    total_epochs = 500
+    warmup_epochs = 10
+    
     args = Args(
         warm=True,
         start_epoch=0,
-        warm_epochs=5,
+        warm_epochs = warmup_epochs,
         learning_rate=0.01,
         lr_decay_rate=0.1,
         num_classes = 2,
@@ -269,17 +283,11 @@ if __name__ == '__main__':
         mix_alpha=0.2,
         KD_temp=4,
         KD_alpha=0.9,
-        print_freq=100,
         teacher_path=model_folder,
         teacher_ckpt='teacher_ITS2CLR.pth'
     )
     
-    #ITS2CLR Config
-    feature_extractor_train_count = 5
-    initial_ratio = 0 # 0% preditions included
-    final_ratio = 0.25 # 25% preditions included
-    total_epochs = 200
-    warmup_epochs = 10
+    
 
     # Paths
     export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
@@ -300,7 +308,7 @@ if __name__ == '__main__':
                 T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
                 CLAHETransform(),
                 T.ToTensor(),
-                GaussianNoise(mean=0, std=0.015),  # Add slight noise
+                GaussianNoise(mean=0, std=0.015), 
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
     
@@ -467,15 +475,21 @@ if __name__ == '__main__':
             print("Saved checkpoint due to improved val_loss")
         
         
-
+            
             # Get difficualy ratio
             predictions_ratio = prediction_anchor_scheduler(epoch, total_epochs, warmup_epochs, initial_ratio, final_ratio)
             predictions_included = round(predictions_ratio * instance_batch_size)
             selection_mask = create_selection_mask(train_bag_logits, val_bag_logits, predictions_included)
             
+            if epoch < warmup_epochs:
+                warmup_on = True
+            else:
+                warmup_on = False
+            
+            
             # Used the instance predictions from bag training to update the Instance Dataloader
-            #instance_dataset_train = TUD.Subset(Instance_Dataset(bags_train, selection_mask, transform=train_transform, save_processed=False),list(range(0,100)))
-            instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, save_processed=False)
+            #instance_dataset_train = TUD.Subset(Instance_Dataset(bags_train, selection_mask, transform=train_transform, save_processed=False, warmup=warmup_on),list(range(0,100)))
+            instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, save_processed=False, warmup=warmup_on)
             instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_size=instance_batch_size, collate_fn = collate_instance, drop_last=True, shuffle = True)
             print('Training Feature Extractor')
             print(f'Including Predictions: {predictions_ratio:.2f} ({predictions_included})')
@@ -511,7 +525,7 @@ if __name__ == '__main__':
                     with autocast():
                         features, pred = model(images)
                     features = F.normalize(features, dim=1)
-                    features = torch.split(features, [bsz, bsz], dim=0)
+                    zk, zq = torch.split(features, [bsz, bsz], dim=0)
                     
                     # Get anchors
                     # In warmup use the whole batch and then Only true labels (no model predictions) as anchors 
@@ -520,9 +534,10 @@ if __name__ == '__main__':
                     
                     
                     mapped_anchors = None
+                    
 
                     # get loss (no teacher)
-                    loss = genscl(features, [l_q, l_k], mapped_anchors)
+                    loss = genscl([zk, zq], [l_q, l_k], mapped_anchors)
                     losses.update(loss.item(), bsz)
                     
                     if features is None:
