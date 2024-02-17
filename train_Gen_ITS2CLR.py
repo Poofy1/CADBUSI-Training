@@ -91,25 +91,13 @@ def collate_instance(batch):
 
 
 def collate_bag(batch):
-    batch_data = []
-    batch_bag_labels = []
-    batch_instance_labels = []
-    batch_ids = []  # List to store bag IDs
+    batch_data, batch_bag_labels, batch_instance_labels, batch_ids = zip(*batch)
 
-    for sample in batch:
-        image_data, bag_labels, instance_labels, bag_id = sample  # Updated to unpack four items
-        batch_data.append(image_data.half())
-        batch_bag_labels.append(bag_labels.half())
-        batch_instance_labels.append([label_tensor.half() for label_tensor in instance_labels])
-        batch_ids.append(bag_id)
-
-    # Use torch.stack for bag labels to handle multiple labels per bag
+    # Directly stack bag labels
     out_bag_labels = torch.stack(batch_bag_labels)
 
-    # Converting to a tensor
-    out_ids = torch.tensor(batch_ids, dtype=torch.long)
+    return batch_data, out_bag_labels, batch_instance_labels, batch_ids
 
-    return batch_data, out_bag_labels, batch_instance_labels, out_ids
 
 
 
@@ -320,10 +308,10 @@ if __name__ == '__main__':
 
 
     # Create datasets
-    bag_dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
-    bag_dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
-    #bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
-    #bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
+    #bag_dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
+    #bag_dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
+    bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
+    bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
      
     # Create bag data loaders
     bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
@@ -391,20 +379,15 @@ if __name__ == '__main__':
                 
             split_sizes = [bag.size(0) for bag in data]
             logits_per_bag = torch.split(logits, split_sizes, dim=0)
+            bag_max_output = torch.stack([logit.max(dim=0)[0] for logit in logits_per_bag])
+            batch_loss = BCE_loss(bag_max_output, yb).mean()
+            correct_preds = (bag_max_output > 0.5).float() == yb
+            correct += correct_preds.sum().item()
 
-            batch_loss = 0.0
-            for i, (bag_logit, bag_id) in enumerate(zip(logits_per_bag, id)):
-                # Find the max sigmoid value for each bag
-                bag_max_output = bag_logit.max(dim=0)[0]
-                batch_loss += BCE_loss(bag_max_output, yb[i])
-                predicted = (bag_max_output > 0.5).float()
-                correct += (predicted == yb[i]).sum().item()
-
-                # Store logits for each bag, using id as key
-                train_bag_logits[bag_id] = bag_logit.detach().cpu().numpy()
+            for i, bag_id in enumerate(id):
+                train_bag_logits[bag_id] = logits_per_bag[i].detach().cpu().numpy()
 
 
-            batch_loss /= num_bags
             total_loss += batch_loss.item() 
             total += num_bags
 
@@ -434,6 +417,7 @@ if __name__ == '__main__':
                     features, logits = model(all_images)
                 split_sizes = [bag.size(0) for bag in data]
                 logits_per_bag = torch.split(logits, split_sizes, dim=0)
+                
 
                 batch_loss = 0.0
                 for i, (bag_logit, bag_id) in enumerate(zip(logits_per_bag, id)):
@@ -444,7 +428,7 @@ if __name__ == '__main__':
                     correct += (predicted == yb[i]).sum().item()
 
                     # Store logits for each bag during validation, using id as key
-                    train_bag_logits[bag_id] = bag_logit.detach().cpu().numpy()
+                    val_bag_logits[bag_id] = bag_logit.detach().cpu().numpy()
 
                     all_targs.append(yb[i].item())
                     all_preds.append(predicted.squeeze().tolist())
@@ -468,7 +452,7 @@ if __name__ == '__main__':
             
             
             
-        if True: #val_loss < val_loss_best:
+        if val_loss < val_loss_best:
             # Save the model
             val_loss_best = val_loss
             save_state(epoch, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, model, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs)
@@ -476,7 +460,7 @@ if __name__ == '__main__':
         
         
             
-            # Get difficualy ratio
+            """# Get difficualy ratio
             predictions_ratio = prediction_anchor_scheduler(epoch, total_epochs, warmup_epochs, initial_ratio, final_ratio)
             predictions_included = round(predictions_ratio * instance_batch_size)
             selection_mask = create_selection_mask(train_bag_logits, val_bag_logits, predictions_included)
@@ -552,6 +536,6 @@ if __name__ == '__main__':
                     scaler.step(optimizer)
                     scaler.update()
                     
-                print(f'Gen_SCL Loss: {losses.avg:.5f}')
+                print(f'Gen_SCL Loss: {losses.avg:.5f}')"""
                 
                 
