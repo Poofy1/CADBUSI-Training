@@ -91,46 +91,44 @@ def collate_instance(batch):
 
 
 def collate_bag(batch):
-    batch_data, batch_bag_labels, batch_instance_labels, batch_ids = zip(*batch)
+    batch_data = []
+    batch_bag_labels = []
+    batch_instance_labels = []
+    batch_ids = []  # List to store bag IDs
 
-    # Directly stack bag labels
-    out_bag_labels = torch.stack(batch_bag_labels)
+    for sample in batch:
+        image_data, bag_labels, instance_labels, bag_id = sample  # Updated to unpack four items
+        batch_data.append(image_data)
+        batch_bag_labels.append(bag_labels)
+        batch_instance_labels.append(instance_labels)
+        batch_ids.append(bag_id)
 
-    return batch_data, out_bag_labels, batch_instance_labels, batch_ids
+    # Use torch.stack for bag labels to handle multiple labels per bag
+    out_bag_labels = torch.stack(batch_bag_labels).cuda()
+
+    # Converting to a tensor
+    out_ids = torch.tensor(batch_ids, dtype=torch.long).cuda()
+
+    return batch_data, out_bag_labels, batch_instance_labels, out_ids
 
 
 
-
-class GenSupConLoss(nn.Module):
-    def __init__(self, temperature=0.07, contrast_mode='all', base_temperature=0.07):
-        super(GenSupConLoss, self).__init__()
+class GenSupConLossv2(nn.Module):
+    def __init__(self, temperature=0.07, contrast_mode='all',
+                 base_temperature=0.07):
+        super(GenSupConLossv2, self).__init__()
         self.temperature = temperature
         self.contrast_mode = contrast_mode
         self.base_temperature = base_temperature
 
-    def forward(self, features, labels, mapped_anchors):
+    def forward(self, features, labels, anc_mask = None):
         '''
         Args:
-            features: (anchor_features, contrast_features), each: [N, feat_dim]
+            feats: (anchor_features, contrast_features), each: [N, feat_dim]
             labels: (anchor_labels, contrast_labels) each: [N, num_cls]
-            mapped_anchors: [N,], boolean tensor indicating anchor status
+            anc_mask: (anchors_mask, contrast_mask) each: [N]
         '''
-        if self.contrast_mode == 'dynamic':
-            # features is a tuple (anchor_features, contrast_features)
-            anchor_features_map, contrast_features_map = features
-            
-            # Ensure mapped_anchors is a boolean tensor for indexing
-            anchor_indices = mapped_anchors.nonzero(as_tuple=True)[0]
-            contrast_indices = (~mapped_anchors).nonzero(as_tuple=True)[0]
-            
-            # Now select the features and labels based on anchor and contrast indices
-            anchor_features = anchor_features_map[anchor_indices]
-            contrast_features = contrast_features_map[contrast_indices]
-
-            anchor_labels = labels[0][anchor_indices].float()
-            contrast_labels = labels[1][contrast_indices].float()
-            
-        elif self.contrast_mode == 'all': # anchor+contrast @ anchor+contrast
+        if self.contrast_mode == 'all': # anchor+contrast @ anchor+contrast
             anchor_labels = torch.cat(labels, dim=0).float()
             contrast_labels = anchor_labels
             
@@ -142,7 +140,7 @@ class GenSupConLoss(nn.Module):
             
             anchor_features = features[0]
             contrast_features = features[1]
-        
+            
         # 1. compute similarities among targets
         anchor_norm = torch.norm(anchor_labels, p=2, dim=-1, keepdim=True) # [anchor_N, 1]
         contrast_norm = torch.norm(contrast_labels, p=2, dim=-1, keepdim=True) # [contrast_N, 1]
@@ -163,6 +161,7 @@ class GenSupConLoss(nn.Module):
         # for numerical stability
         logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
         logits = anchor_dot_contrast - logits_max.detach()
+        
         # compute log_prob
         exp_logits = torch.exp(logits) * logits_mask
         log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True))
@@ -170,6 +169,10 @@ class GenSupConLoss(nn.Module):
 
         # loss
         loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
+        if anc_mask:
+            select = torch.cat( anc_mask )
+            loss = loss[select]
+        print(loss)
         loss = loss.mean()
 
         return loss
@@ -212,7 +215,6 @@ def create_selection_mask(train_bag_logits, val_bag_logits, predictions_included
         combined_dict[original_bag_id][1][original_position] = predictions[idx]  # Update prediction
 
     return combined_dict
-
 
 
 class Args:
@@ -260,7 +262,7 @@ if __name__ == '__main__':
         warm=True,
         start_epoch=0,
         warm_epochs = warmup_epochs,
-        learning_rate=0.01,
+        learning_rate=0.001,
         lr_decay_rate=0.1,
         num_classes = 2,
         epochs=50,
@@ -319,13 +321,13 @@ if __name__ == '__main__':
 
 
     # Get Model
-    model = SupConResNet_custom(name=encoder_arch, num_classes=num_labels).cuda()
+    model = SupConResNet_custom(name=encoder_arch, head='mlp', num_classes=num_labels).cuda()
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total Parameters: {total_params}")        
         
     optimizer = Adam(model.parameters(), lr=args.learning_rate)
     BCE_loss = nn.BCEWithLogitsLoss()
-    genscl = GenSupConLoss(temperature=0.07, contrast_mode='all')
+    genscl = GenSupConLossv2(temperature=0.07, contrast_mode='all', base_temperature=0.07)
     scaler = GradScaler()
     train_losses_over_epochs = []
     valid_losses_over_epochs = []
@@ -370,23 +372,28 @@ if __name__ == '__main__':
         for (data, yb, instance_yb, id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)):
             num_bags = len(data)
             all_images = torch.cat(data, dim=0).cuda()
-            yb = yb.cuda()
+            yb = yb.half().cuda()
             optimizer.zero_grad()
-
+            
             # Process all images and then split per bag
             with autocast():
                 features, logits = model(all_images)
                 
             split_sizes = [bag.size(0) for bag in data]
             logits_per_bag = torch.split(logits, split_sizes, dim=0)
-            bag_max_output = torch.stack([logit.max(dim=0)[0] for logit in logits_per_bag])
-            batch_loss = BCE_loss(bag_max_output, yb).mean()
-            correct_preds = (bag_max_output > 0.5).float() == yb
+            #bag_max_output = torch.stack([logit.max(dim=0)[0] for logit in logits_per_bag])
+            bag_sum_output = torch.stack([logit.sum(dim=0) / logit.size(0) for logit in logits_per_bag])
+            print(logits)
+            print(yb)
+            print(bag_sum_output)
+            with autocast():
+                batch_loss = BCE_loss(bag_sum_output, yb)
+            print(batch_loss)
+            correct_preds = (bag_sum_output > 0.5).float() == yb
             correct += correct_preds.sum().item()
 
             for i, bag_id in enumerate(id):
                 train_bag_logits[bag_id] = logits_per_bag[i].detach().cpu().numpy()
-
 
             total_loss += batch_loss.item() 
             total += num_bags
@@ -394,6 +401,9 @@ if __name__ == '__main__':
             scaler.scale(batch_loss).backward()
             scaler.step(optimizer)
             scaler.update()
+            
+            #batch_loss.backward()
+            #optimizer.step()
 
         train_loss = total_loss / len(bag_dataloader_train)
         train_acc = correct / total
@@ -460,7 +470,7 @@ if __name__ == '__main__':
         
         
             
-            """# Get difficualy ratio
+            # Get difficualy ratio
             predictions_ratio = prediction_anchor_scheduler(epoch, total_epochs, warmup_epochs, initial_ratio, final_ratio)
             predictions_included = round(predictions_ratio * instance_batch_size)
             selection_mask = create_selection_mask(train_bag_logits, val_bag_logits, predictions_included)
@@ -536,6 +546,6 @@ if __name__ == '__main__':
                     scaler.step(optimizer)
                     scaler.update()
                     
-                print(f'Gen_SCL Loss: {losses.avg:.5f}')"""
+                print(f'Gen_SCL Loss: {losses.avg:.5f}')
                 
                 
