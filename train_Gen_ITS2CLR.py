@@ -16,9 +16,8 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
     
     
 class Instance_Dataset(TUD.Dataset):
-    def __init__(self, bags_dict, selection_mask, transform=None, save_processed=False, warmup=True):
+    def __init__(self, bags_dict, selection_mask, transform=None, warmup=True):
         self.transform = transform
-        self.save_processed = save_processed
         self.warmup = warmup 
         self.images = []
         self.final_labels = []
@@ -30,19 +29,24 @@ class Instance_Dataset(TUD.Dataset):
             bag_label = bag_info['bag_labels'][0]  # Assuming each bag has a single label
             
             bag_id_key = bag_id.item() if isinstance(bag_id, torch.Tensor) else bag_id
-            has_mask = bag_id_key in selection_mask
+            
+            
+            if bag_id_key in selection_mask:
+                selection_mask_labels, _ = selection_mask[bag_id_key]
+            else: 
+                selection_mask_labels = None
             
             for idx, (img, label) in enumerate(zip(images, image_labels)):
                 image_label = None
                 warmup_mask_value = 0
+
                 
                 if not self.warmup:
                     # Only include confident instances (selection_mask) or negative bags or instance labels
                     if label[0] is not None:
                         image_label = label[0]
-                    elif has_mask and selection_mask[bag_id_key][0][idx] == 1:
-                        if selection_mask[bag_id_key][1][idx] is not None:
-                            image_label = selection_mask[bag_id_key][1][idx]
+                    elif selection_mask_labels is not None and selection_mask_labels[idx] != -1:
+                        image_label = selection_mask_labels[idx]
                     elif bag_label == 0:
                         image_label = 0
                 else:
@@ -183,44 +187,55 @@ class GenSupConLossv2(nn.Module):
 
         return loss
     
+    
 
 
-def create_selection_mask(train_bag_logits, val_bag_logits, predictions_included):
-    # Combine logits from both training and validation
+def create_selection_mask(train_bag_logits, include_ratio):
     combined_logits = []
     original_indices = []
     predictions = []  # To store predictions alongside logits
+    logit_signs = []  # To store the original sign of each logit
+    
+    # Loop through train_bag_logits to process logits
+    for bag_id, logits in train_bag_logits.items():
+        # Convert tensor bag_id to integer if necessary
+        bag_id_int = bag_id.item() if isinstance(bag_id, torch.Tensor) else bag_id
+        
+        for i, logit in enumerate(logits):
+            combined_logits.append(abs(logit))  # Use absolute value of logit
+            original_indices.append((bag_id_int, i))
+            logit_signs.append(np.sign(logit))  # Store original sign
+            predictions.append(logit)  # Store prediction/logit directly
 
-    # Helper function to add logits, indices, and predictions
-    def add_logits_indices_and_predictions(logits_dict, include_predictions=False):
-        for bag_id, logits in logits_dict.items():
-            for i, logit in enumerate(logits):
-                # Interpret confidence as distance from 0.5 (for probabilities)
-                confidence = min(logit[0], 1 - logit[0]) if len(logit) == 1 else min(abs(logit - 0.5))
-                combined_logits.append(confidence)
-                original_indices.append((bag_id, i))
-                prediction = None
-                if include_predictions:
-                    prediction = 0 if logit[0] < 0.5 else 1  # Assuming binary classification
-                predictions.append(prediction)
+    total_predictions = len(combined_logits)
+    predictions_included = int(total_predictions * include_ratio)  # Calculate number of predictions to include based on ratio
+    
+    print(f'Including Predictions: {include_ratio:.2f} ({predictions_included})')
 
-    # Add training and validation logits to the combined list
-    add_logits_indices_and_predictions(train_bag_logits, include_predictions=True)
-    add_logits_indices_and_predictions(val_bag_logits, include_predictions=True)
-
-    # Rank instances based on their confidence
+    # Rank instances based on their logit values
     top_indices = np.argsort(-np.array(combined_logits))[:predictions_included]
 
-    # Initialize mask and predictions dictionary
-    combined_dict = {key: [np.zeros(len(logits), dtype=int), [None]*len(logits)] for key, logits in {**train_bag_logits, **val_bag_logits}.items()}
+    # Initialize combined_dict with all -1 for masks (not selected by default) and placeholders for predictions
+    combined_dict = {}
+    for bag_id, logits in train_bag_logits.items():
+        bag_id_int = bag_id.item() if isinstance(bag_id, torch.Tensor) else bag_id
+        mask = np.full(len(logits), -1, dtype=int)  # Initialize mask to -1 (not selected)
+        pred_list = [None] * len(logits)  # Initialize prediction list
+        combined_dict[bag_id_int] = [mask, pred_list]
 
-    # Set mask to 1 for selected top instances and include predictions
+    # Update predictions in combined_dict for all instances
+    for idx, (bag_id_int, pos) in enumerate(original_indices):
+        combined_dict[bag_id_int][1][pos] = predictions[idx]  # Update prediction
+
+    # Set mask based on selection and original sign
     for idx in top_indices:
         original_bag_id, original_position = original_indices[idx]
-        combined_dict[original_bag_id][0][original_position] = 1  # Update mask
-        combined_dict[original_bag_id][1][original_position] = predictions[idx]  # Update prediction
+        original_sign = logit_signs[idx]
+        # Update mask based on original sign: 0 if originally negative, 1 if positive
+        combined_dict[original_bag_id][0][original_position] = max(0, original_sign)
 
     return combined_dict
+
 
 
 class Args:
@@ -316,10 +331,10 @@ if __name__ == '__main__':
 
 
     # Create datasets
-    bag_dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False),list(range(0,10)))
-    bag_dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False),list(range(0,10)))
-    #bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
-    #bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
+    #bag_dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False),list(range(0,10)))
+    #bag_dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False),list(range(0,10)))
+    bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
+    bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
      
     # Create bag data loaders
     bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
@@ -327,13 +342,13 @@ if __name__ == '__main__':
 
 
     # Get Model
-    model = SupConResNet_custom(name=encoder_arch, head='mlp', num_classes=num_labels).cuda()
+    model = SupConResNet_custom(name=encoder_arch, head='mlp').cuda()
+    classifier = LinearClassifier(name=encoder_arch, num_classes=num_labels).cuda()
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total Parameters: {total_params}")        
         
     optimizer = Adam(model.parameters(), lr=args.learning_rate)
     BCE_loss = nn.BCEWithLogitsLoss()
-    CE_loss = nn.CrossEntropyLoss()
     genscl = GenSupConLossv2(temperature=0.07, contrast_mode='all', base_temperature=0.07)
     scaler = GradScaler()
     train_losses_over_epochs = []
@@ -344,11 +359,13 @@ if __name__ == '__main__':
     # Check if the model already exists
     model_folder = f"{env}/models/{model_name}/"
     model_path = f"{model_folder}/{model_name}.pth"
+    classifier_path = f"{model_folder}/{model_name}_classifier.pth"
     optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
     stats_path = f"{model_folder}/{model_name}_stats.pkl"
     
     if os.path.exists(model_path):
         model.load_state_dict(torch.load(model_path))
+        classifier.load_state_dict(torch.load(classifier_path))
         optimizer.load_state_dict(torch.load(optimizer_path))
         print(f"Loaded pre-existing model from {model_name}")
         
@@ -370,38 +387,48 @@ if __name__ == '__main__':
         print('Training Default')
         # Training phase
         model.train()
+        classifier.train()
+        
         train_bag_logits = {}
-        val_bag_logits = {}
         total_loss = 0.0
         total = 0
         correct = 0
 
         for (data, yb, instance_yb, id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)):
-            num_bags = len(data)
-            all_images = torch.cat(data, dim=0).cuda()
             yb = yb.half().cuda()
-            optimizer.zero_grad()
             
-            # Process all images and then split per bag
+            # Process all features for all images
+            all_images = torch.cat(data, dim=0).cuda()
+            optimizer.zero_grad()
             with autocast():
-                features, logits = model(all_images)
-                
+                features = model(all_images)
+            
+            # Classify on the bag level
+            num_bags = len(data)
             split_sizes = [bag.size(0) for bag in data]
-            logits_per_bag = torch.split(logits, split_sizes, dim=0)
-            #bag_max_output = torch.stack([logit.max(dim=0)[0] for logit in logits_per_bag])
-            bag_sum_output = torch.stack([logit.sum(dim=0) / logit.size(0) for logit in logits_per_bag])
+            logits_per_bag = torch.split(features, split_sizes, dim=0)
+            logits = torch.empty(num_bags, num_labels).cuda()
+            instance_logits = []
+            with autocast():
+                for i, h in enumerate(logits_per_bag):
+                    # Receive four values from the aggregator
+                    logits[i], instance_scores = classifier(h)
+                    instance_logits.append(instance_scores)
+                
+                # Get loss
+                batch_loss = BCE_loss(logits, yb)
+                
+                
             #print(logits)
             #print(yb)
-            #print(bag_sum_output)
-            with autocast():
-                batch_loss = BCE_loss(bag_sum_output, yb)
+            #print(batch_loss)    
+            
+            probabilities = torch.sigmoid(logits)
+            predictions = (probabilities > 0.5).float()
+            correct += (predictions == yb).sum().item()
                 
-            #print(batch_loss)
-            correct_preds = (bag_sum_output > 0.5).float() == yb
-            correct += correct_preds.sum().item()
-
             for i, bag_id in enumerate(id):
-                train_bag_logits[bag_id] = logits_per_bag[i].detach().cpu().numpy()
+                train_bag_logits[bag_id] = instance_logits[i].detach().cpu().numpy()
 
             total_loss += batch_loss.item() 
             total += num_bags
@@ -413,7 +440,7 @@ if __name__ == '__main__':
             #batch_loss.backward()
             #optimizer.step()
 
-        train_loss = total_loss / len(bag_dataloader_train)
+        train_loss = total_loss / total
         train_acc = correct / total
 
         # Evaluation phase
@@ -426,36 +453,42 @@ if __name__ == '__main__':
 
         with torch.no_grad():
             for (data, yb, instance_yb, id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)):
-                num_bags = len(data)
+                yb = yb.half().cuda()
+            
+                # Process all features for all images
                 all_images = torch.cat(data, dim=0).cuda()
-                yb = yb.cuda()
-
-                # Process all images and then split per bag
                 with autocast():
-                    features, logits = model(all_images)
-                split_sizes = [bag.size(0) for bag in data]
-                logits_per_bag = torch.split(logits, split_sizes, dim=0)
+                    features = model(all_images)
                 
+                # Classify on the bag level
+                num_bags = len(data)
+                split_sizes = [bag.size(0) for bag in data]
+                logits_per_bag = torch.split(features, split_sizes, dim=0)
+                logits = torch.empty(num_bags, num_labels).cuda()
+                instance_logits = []
+                with autocast():
+                    for i, h in enumerate(logits_per_bag):
+                        # Receive four values from the aggregator
+                        logits[i], instance_scores = classifier(h)
+                        instance_logits.append(instance_scores)
+                    
+                    # Get loss
+                    batch_loss = BCE_loss(logits, yb)
+                
+                probabilities = torch.sigmoid(logits)
+                predictions = (probabilities > 0.5).float()
+                correct += (predictions == yb).sum().item()
 
-                batch_loss = 0.0
-                for i, (bag_logit, bag_id) in enumerate(zip(logits_per_bag, id)):
-                    # Find the max sigmoid value for each bag
-                    bag_max_output = bag_logit.max(dim=0)[0]
-                    batch_loss += BCE_loss(bag_max_output, yb[i])
-                    predicted = (bag_max_output > 0.5).float()
-                    correct += (predicted == yb[i]).sum().item()
-
-                    # Store logits for each bag during validation, using id as key
-                    val_bag_logits[bag_id] = bag_logit.detach().cpu().numpy()
-
-                    all_targs.append(yb[i].item())
-                    all_preds.append(predicted.squeeze().tolist())
-
-                batch_loss /= num_bags
                 total_val_loss += batch_loss.item()
                 total += num_bags
+                
+                # Confusion Matrix data
+                all_targs.extend(yb.cpu().numpy())
+                if len(predictions.size()) == 0:
+                    predictions = predictions.view(1)
+                all_preds.extend(predictions.cpu().detach().numpy())
 
-        val_loss = total_val_loss / len(bag_dataloader_val)
+        val_loss = total_val_loss / total
         val_acc = correct / total
 
         train_losses_over_epochs.append(train_loss)
@@ -470,18 +503,15 @@ if __name__ == '__main__':
             
             
             
-        if True: #val_loss < val_loss_best:
+        if val_loss < val_loss_best:
             # Save the model
             val_loss_best = val_loss
-            save_state(epoch, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, model, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs)
+            save_state(epoch, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, model, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs, classifier=classifier)
             print("Saved checkpoint due to improved val_loss")
-        
-        
             
             # Get difficualy ratio
             predictions_ratio = prediction_anchor_scheduler(epoch, total_epochs, warmup_epochs, initial_ratio, final_ratio)
-            predictions_included = round(predictions_ratio * instance_batch_size)
-            selection_mask = create_selection_mask(train_bag_logits, val_bag_logits, predictions_included)
+            selection_mask = create_selection_mask(train_bag_logits, predictions_ratio)
             
             if epoch < warmup_epochs:
                 warmup_on = True
@@ -490,11 +520,11 @@ if __name__ == '__main__':
             
 
             # Used the instance predictions from bag training to update the Instance Dataloader
-            #instance_dataset_train = TUD.Subset(Instance_Dataset(bags_train, selection_mask, transform=train_transform, save_processed=False, warmup=warmup_on),list(range(0,100)))
-            instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, save_processed=False, warmup=warmup_on)
+            #instance_dataset_train = TUD.Subset(Instance_Dataset(bags_train, selection_mask, transform=train_transform, warmup=warmup_on),list(range(0,100)))
+            instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, warmup=warmup_on)
             instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_size=instance_batch_size, collate_fn = collate_instance, drop_last=True, shuffle = True)
             print('Training Feature Extractor')
-            print(f'Including Predictions: {predictions_ratio:.2f} ({predictions_included})')
+            
             
             # Generalized Supervised Contrastive Learning phase
             model.train()
@@ -525,8 +555,7 @@ if __name__ == '__main__':
                     # forward
                     optimizer.zero_grad()
                     with autocast():
-                        features, pred = model(images)
-                    features = F.normalize(features, dim=1)
+                        features = model(images)
                     zk, zq = torch.split(features, [bsz, bsz], dim=0)
                     
                     # get loss (no teacher)
@@ -534,8 +563,7 @@ if __name__ == '__main__':
                     loss = genscl([zk, zq], [l_q, l_k], (mapped_anchors, mapped_anchors))
                     losses.update(loss.item(), bsz)
 
-                    print(mapped_anchors)
-                    print(loss.item())
+                    #print(loss.item())
                     
                     # backward
                     scaler.scale(loss).backward()

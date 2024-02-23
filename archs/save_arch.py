@@ -114,9 +114,10 @@ def plot_Confusion(all_targs, all_preds, vocab, file_path):
     plt.close(fig)
 
 
-def save_state(e, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, bagmodel, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs):
+def save_state(e, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, bagmodel, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs, classifier = None):
     
     model_path = f"{model_folder}/{model_name}.pth"
+    classifier_path = f"{model_folder}/{model_name}_classifier.pth"
     optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
     stats_path = f"{model_folder}/{model_name}_stats.pkl"
     
@@ -128,6 +129,8 @@ def save_state(e, label_columns, train_acc, val_loss, val_acc, model_folder, mod
     
     # Save the model and optimizer
     torch.save(bagmodel.state_dict(), model_path)
+    if classifier:
+        torch.save(classifier.state_dict(), classifier_path)
     torch.save(optimizer.state_dict(), optimizer_path)
 
     # Initialize or load previous metrics
