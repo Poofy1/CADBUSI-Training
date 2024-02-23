@@ -150,11 +150,10 @@ model_dict = {
 
 class SupConResNet_custom(nn.Module):
     """backbone + projection head + classifier"""
-    def __init__(self, name='resnet18', head='mlp', feat_dim=128, num_classes=1):
+    def __init__(self, name='resnet18', head='mlp', feat_dim=128):
         super(SupConResNet_custom, self).__init__()
         model_fun, dim_in = model_dict[name]
         self.encoder = model_fun()
-        self.classifier = nn.Linear(feat_dim, num_classes)
         
         # Projection head
         if head == 'linear':
@@ -171,13 +170,48 @@ class SupConResNet_custom(nn.Module):
     def forward(self, x):      
         # Extract features using the encoder and the head
         feat = self.encoder(x)
-        feat = self.head(feat)
-        
-        # Get predictions and apply sigmoid
-        pred = self.classifier(feat)
-        #pred = torch.sigmoid(pred)
+        feat = F.normalize(self.head(feat), dim=1)
+        return feat
 
-        return feat, pred
+
+
+
+class LinearClassifier(nn.Module):
+    """Linear classifier"""
+    def __init__(self, name='resnet18', num_classes=1, feat_dim=128, L=128):
+        super(LinearClassifier, self).__init__()
+        self.fc = nn.Linear(feat_dim, num_classes)
+        
+        
+        # Attention mechanism components
+        self.attention_V = nn.Sequential(
+            nn.Linear(feat_dim, L),
+            nn.Tanh()
+        )
+        self.attention_U = nn.Sequential(
+            nn.Linear(feat_dim, L),
+            nn.Sigmoid()
+        )
+        self.attention_W = nn.Sequential(
+            nn.Linear(L, 1),
+        )
+
+    def forward(self, feat):
+        
+        # Gated-attention mechanism for feature aggregation
+        A_V = self.attention_V(feat)
+        A_U = self.attention_U(feat)
+        pre_softmax_scores = self.attention_W(A_V * A_U).squeeze()
+        attention_scores = F.softmax(pre_softmax_scores, dim=0)
+        aggregated_feat = torch.sum(feat * attention_scores.unsqueeze(-1), dim=0)
+
+        # Classifier prediction
+        bag_pred = self.fc(aggregated_feat.unsqueeze(0))  # Add batch dimension
+        
+        
+        return bag_pred, pre_softmax_scores
+
+
 
 
 '''class LinearBatchNorm(nn.Module):
@@ -228,14 +262,4 @@ class SupConResNet(nn.Module):
 
     def forward(self, x):
         return self.fc(self.encoder(x))
-
-
-class LinearClassifier(nn.Module):
-    """Linear classifier"""
-    def __init__(self, name='resnet50', num_classes=10):
-        super(LinearClassifier, self).__init__()
-        _, feat_dim = model_dict[name]
-        self.fc = nn.Linear(feat_dim, num_classes)
-
-    def forward(self, features):
-        return self.fc(features)'''
+'''
