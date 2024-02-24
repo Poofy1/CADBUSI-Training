@@ -72,7 +72,7 @@ class Instance_Dataset(TUD.Dataset):
         image_data_q = self.transform(img)
         image_data_k = self.transform(img)
 
-        return (image_data_q.half(), image_data_k.half()), instance_label, warmup_unconfident
+        return (image_data_q, image_data_k), instance_label, warmup_unconfident
 
 
     def __len__(self):
@@ -260,7 +260,7 @@ class Args:
 if __name__ == '__main__':
 
     # Config
-    model_name = 'Gen_ITS2CLR_2'
+    model_name = 'Gen_ITS2CLR_3'
     encoder_arch = 'resnet18'
     dataset_name = 'export_01_31_2024'
     label_columns = ['Has_Malignant']
@@ -268,12 +268,12 @@ if __name__ == '__main__':
     img_size = 350
     bag_batch_size = 2
     min_bag_size = 2
-    max_bag_size = 10
+    max_bag_size = 8
     instance_batch_size = 8
     model_folder = f"{env}/models/{model_name}/"
     
     #ITS2CLR Config
-    feature_extractor_train_count = 5
+    feature_extractor_train_count = 2
     initial_ratio = 0 # 0% preditions included
     final_ratio = 0.25 # 25% preditions included
     total_epochs = 500
@@ -310,6 +310,8 @@ if __name__ == '__main__':
     # Get Training Data
     bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
     num_labels = len(label_columns)
+    
+    instance_train, _ = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, 1, 100)
     
     
     train_transform = T.Compose([
@@ -395,13 +397,13 @@ if __name__ == '__main__':
         correct = 0
 
         for (data, yb, instance_yb, id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)):
-            yb = yb.half().cuda()
+            yb = yb.cuda()
             
             # Process all features for all images
             all_images = torch.cat(data, dim=0).cuda()
             optimizer.zero_grad()
-            with autocast():
-                features = model(all_images)
+            #with autocast():
+            features = model(all_images)
             
             # Classify on the bag level
             num_bags = len(data)
@@ -409,14 +411,14 @@ if __name__ == '__main__':
             logits_per_bag = torch.split(features, split_sizes, dim=0)
             logits = torch.empty(num_bags, num_labels).cuda()
             instance_logits = []
-            with autocast():
-                for i, h in enumerate(logits_per_bag):
-                    # Receive four values from the aggregator
-                    logits[i], instance_scores = classifier(h)
-                    instance_logits.append(instance_scores)
+            #with autocast():
+            for i, h in enumerate(logits_per_bag):
+                # Receive four values from the aggregator
+                logits[i], instance_scores = classifier(h)
+                instance_logits.append(instance_scores)
                 
-                # Get loss
-                batch_loss = BCE_loss(logits, yb)
+            # Get loss
+            batch_loss = BCE_loss(logits, yb)
                 
                 
             #print(logits)
@@ -433,12 +435,12 @@ if __name__ == '__main__':
             total_loss += batch_loss.item() 
             total += num_bags
 
-            scaler.scale(batch_loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            #scaler.scale(batch_loss).backward()
+            #scaler.step(optimizer)
+            #scaler.update()
             
-            #batch_loss.backward()
-            #optimizer.step()
+            batch_loss.backward()
+            optimizer.step()
 
         train_loss = total_loss / total
         train_acc = correct / total
@@ -453,12 +455,12 @@ if __name__ == '__main__':
 
         with torch.no_grad():
             for (data, yb, instance_yb, id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)):
-                yb = yb.half().cuda()
+                yb = yb.cuda()
             
                 # Process all features for all images
                 all_images = torch.cat(data, dim=0).cuda()
-                with autocast():
-                    features = model(all_images)
+                #with autocast():
+                features = model(all_images)
                 
                 # Classify on the bag level
                 num_bags = len(data)
@@ -466,14 +468,14 @@ if __name__ == '__main__':
                 logits_per_bag = torch.split(features, split_sizes, dim=0)
                 logits = torch.empty(num_bags, num_labels).cuda()
                 instance_logits = []
-                with autocast():
-                    for i, h in enumerate(logits_per_bag):
-                        # Receive four values from the aggregator
-                        logits[i], instance_scores = classifier(h)
-                        instance_logits.append(instance_scores)
-                    
-                    # Get loss
-                    batch_loss = BCE_loss(logits, yb)
+                #with autocast():
+                for i, h in enumerate(logits_per_bag):
+                    # Receive four values from the aggregator
+                    logits[i], instance_scores = classifier(h)
+                    instance_logits.append(instance_scores)
+                
+                # Get loss
+                batch_loss = BCE_loss(logits, yb)
                 
                 probabilities = torch.sigmoid(logits)
                 predictions = (probabilities > 0.5).float()
@@ -520,8 +522,8 @@ if __name__ == '__main__':
             
 
             # Used the instance predictions from bag training to update the Instance Dataloader
-            #instance_dataset_train = TUD.Subset(Instance_Dataset(bags_train, selection_mask, transform=train_transform, warmup=warmup_on),list(range(0,100)))
-            instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, warmup=warmup_on)
+            #instance_dataset_train = TUD.Subset(Instance_Dataset(instance_train, selection_mask, transform=train_transform, warmup=warmup_on),list(range(0,100)))
+            instance_dataset_train = Instance_Dataset(instance_train, selection_mask, transform=train_transform, warmup=warmup_on)
             instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_size=instance_batch_size, collate_fn = collate_instance, drop_last=True, shuffle = True)
             print('Training Feature Extractor')
             
@@ -554,8 +556,8 @@ if __name__ == '__main__':
                     
                     # forward
                     optimizer.zero_grad()
-                    with autocast():
-                        features = model(images)
+                    #with autocast():
+                    features = model(images)
                     zk, zq = torch.split(features, [bsz, bsz], dim=0)
                     
                     # get loss (no teacher)
@@ -566,9 +568,12 @@ if __name__ == '__main__':
                     #print(loss.item())
                     
                     # backward
-                    scaler.scale(loss).backward()
-                    scaler.step(optimizer)
-                    scaler.update()
+                    #scaler.scale(loss).backward()
+                    #scaler.step(optimizer)
+                    #scaler.update()
+                    
+                    loss.backward()
+                    optimizer.step()
                     
                 print(f'Gen_SCL Loss: {losses.avg:.5f}')
                 
