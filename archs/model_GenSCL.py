@@ -170,7 +170,7 @@ class SupConResNet_custom(nn.Module):
     def forward(self, x):      
         # Extract features using the encoder and the head
         feat = self.encoder(x)
-        feat = F.normalize(self.head(feat), dim=1)
+        feat = self.head(feat)
         return feat
 
 

@@ -6,6 +6,7 @@ from torch.cuda.amp import GradScaler, autocast
 from torch import nn
 from archs.save_arch import *
 from data.Gen_ITS2CLR_util import *
+from torch.utils.data import Sampler
 from torch.optim import Adam
 from data.format_data import *
 from archs.model_GenSCL import *
@@ -77,7 +78,33 @@ class Instance_Dataset(TUD.Dataset):
 
     def __len__(self):
         return len(self.images)
-    
+
+
+class WarmupSampler(Sampler):
+    def __init__(self, dataset, batch_size):
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.indices_0 = [i for i, mask in enumerate(self.dataset.warmup_mask) if mask == 0]
+        self.indices_1 = [i for i, mask in enumerate(self.dataset.warmup_mask) if mask == 1]
+
+    def __iter__(self):
+        total_batches = len(self.dataset) // self.batch_size
+
+        for _ in range(total_batches):
+            # Randomly decide how many mask 0s to include, ensuring at least 1
+            num_mask_0 = random.randint(1, max(1, min(len(self.indices_0), self.batch_size - 1)))
+            batch_mask_0 = random.sample(self.indices_0, num_mask_0)
+
+            # Fill the rest of the batch with mask 1s, if any space left
+            num_mask_1 = self.batch_size - num_mask_0
+            batch_mask_1 = random.sample(self.indices_1, num_mask_1) if num_mask_1 > 0 else []
+
+            batch = batch_mask_0 + batch_mask_1
+            random.shuffle(batch)
+            yield batch
+            
+    def __len__(self):
+        return len(self.dataset) // self.batch_size
     
 def collate_instance(batch):
     batch_data_q = []
@@ -157,7 +184,7 @@ class GenSupConLossv2(nn.Module):
         
         deno = torch.mm(anchor_norm, contrast_norm.T)
         mask = torch.mm(anchor_labels, contrast_labels.T) / deno # cosine similarity: [anchor_N, contrast_N]
-
+        
         logits_mask = torch.ones_like(mask)
         if self.contrast_mode == 'all':
             logits_mask.fill_diagonal_(0)
@@ -176,13 +203,13 @@ class GenSupConLossv2(nn.Module):
         exp_logits = torch.exp(logits) * logits_mask
         log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True))
         mean_log_prob_pos = (mask * log_prob).sum(1) / (mask.sum(1) + 1e-8)
-
+        
         # loss
         loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
         if anc_mask:
             select = torch.cat( anc_mask )
             loss = loss[select]
-
+            
         loss = loss.mean()
 
         return loss
@@ -269,7 +296,7 @@ if __name__ == '__main__':
     bag_batch_size = 2
     min_bag_size = 2
     max_bag_size = 8
-    instance_batch_size = 8
+    instance_batch_size =  8
     model_folder = f"{env}/models/{model_name}/"
     
     #ITS2CLR Config
@@ -505,7 +532,7 @@ if __name__ == '__main__':
             
             
             
-        if val_loss < val_loss_best:
+        if True: #val_loss < val_loss_best:
             # Save the model
             val_loss_best = val_loss
             save_state(epoch, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, model, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs, classifier=classifier)
@@ -520,11 +547,20 @@ if __name__ == '__main__':
             else:
                 warmup_on = False
             
-
+            warmup_on = True
+            
+            
+            
+            
             # Used the instance predictions from bag training to update the Instance Dataloader
             #instance_dataset_train = TUD.Subset(Instance_Dataset(instance_train, selection_mask, transform=train_transform, warmup=warmup_on),list(range(0,100)))
             instance_dataset_train = Instance_Dataset(instance_train, selection_mask, transform=train_transform, warmup=warmup_on)
-            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_size=instance_batch_size, collate_fn = collate_instance, drop_last=True, shuffle = True)
+            
+            if warmup_on:
+                sampler = WarmupSampler(instance_dataset_train, instance_batch_size)
+                instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=sampler, collate_fn = collate_instance)
+            else:
+                instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_size=instance_batch_size, collate_fn = collate_instance, drop_last=True, shuffle = True)
             print('Training Feature Extractor')
             
             
@@ -558,6 +594,7 @@ if __name__ == '__main__':
                     optimizer.zero_grad()
                     #with autocast():
                     features = model(images)
+                    features = F.normalize(features, dim=1)
                     zk, zq = torch.split(features, [bsz, bsz], dim=0)
                     
                     # get loss (no teacher)
@@ -565,8 +602,12 @@ if __name__ == '__main__':
                     loss = genscl([zk, zq], [l_q, l_k], (mapped_anchors, mapped_anchors))
                     losses.update(loss.item(), bsz)
 
-                    #print(loss.item())
-                    
+                    """print(mapped_anchors)
+                    print(loss.item())
+                    if math.isnan(loss.item()):
+                        print("Loss is NaN, stopping the script.")
+                        exit()  # Stops the script"""
+    
                     # backward
                     #scaler.scale(loss).backward()
                     #scaler.step(optimizer)
