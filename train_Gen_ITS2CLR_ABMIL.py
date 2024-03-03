@@ -11,6 +11,8 @@ from torch.optim import Adam
 from archs.backbone import create_timm_body
 from data.format_data import *
 from archs.model_GenSCL import *
+from archs.model_ABMIL import *
+from archs.backbone import create_timm_body
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -230,10 +232,10 @@ def create_selection_mask(train_bag_logits, include_ratio):
         bag_id_int = bag_id.item() if isinstance(bag_id, torch.Tensor) else bag_id
         
         for i, logit in enumerate(logits):
-            combined_logits.append(abs(logit))  # Use absolute value of logit
+            combined_logits.append(abs(logit.item()))  # Use absolute value of logit
             original_indices.append((bag_id_int, i))
-            logit_signs.append(np.sign(logit))  # Store original sign
-            predictions.append(logit)  # Store prediction/logit directly
+            logit_signs.append(np.sign(logit.item()))  # Store original sign
+            predictions.append(logit.item())  # Store prediction/logit directly
 
     total_predictions = len(combined_logits)
     predictions_included = int(total_predictions * include_ratio)  # Calculate number of predictions to include based on ratio
@@ -263,8 +265,47 @@ def create_selection_mask(train_bag_logits, include_ratio):
         combined_dict[original_bag_id][0][original_position] = max(0, original_sign)
 
     return combined_dict
+    
+    
+    
+class Embeddingmodel(nn.Module):
+    
+    def __init__(self, encoder, aggregator, nf, num_classes=1):
+        super(Embeddingmodel,self).__init__()
+        self.encoder = encoder
+        self.aggregator = aggregator
+        self.nf = nf
+        self.num_classes = num_classes
+        
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
 
+    def forward(self, input):
+        num_bags = len(input) # input = [bag #, image #, channel, height, width]
+        
+        # Concatenate all bags into a single tensor for batch processing
+        all_images = torch.cat(input, dim=0).cuda()  # Shape: [Total images in all bags, channel, height, width]
+        
+        # Calculate the embeddings for all images in one go
+        h_all = self.encoder(all_images)
 
+        feat = self.avgpool(h_all)
+        feat = torch.flatten(feat, 1)
+        
+        # Split the embeddings back into per-bag embeddings
+        split_sizes = [bag.size(0) for bag in input]
+        h_per_bag = torch.split(h_all, split_sizes, dim=0)
+        logits = torch.empty(num_bags, self.num_classes).cuda()
+        yhat_instances = []
+        
+        for i, h in enumerate(h_per_bag):
+            # Receive four values from the aggregator
+            yhat_bag, yhat_ins = self.aggregator(h)
+            
+            logits[i] = yhat_bag
+            yhat_instances.append(yhat_ins)
+        
+        return logits, yhat_instances, feat
+    
 
 class Args:
     def __init__(self, warm, start_epoch, warm_epochs, learning_rate, lr_decay_rate, num_classes, epochs, warmup_from, cosine, lr_decay_epochs, mix, mix_alpha, KD_temp, KD_alpha, teacher_path, teacher_ckpt):
@@ -288,20 +329,20 @@ class Args:
 if __name__ == '__main__':
 
     # Config
-    model_name = 'Gen_ITS2CLR_5'
+    model_name = 'test4'
     encoder_arch = 'resnet18'
     dataset_name = 'export_01_31_2024'
     label_columns = ['Has_Malignant']
     instance_columns = ['Reject Image', 'Malignant Lesion Present']   #['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
     img_size = 350
-    bag_batch_size = 2
+    bag_batch_size = 5
     min_bag_size = 2
-    max_bag_size = 8
-    instance_batch_size =  7
+    max_bag_size = 20
+    instance_batch_size =  50
     model_folder = f"{env}/models/{model_name}/"
     
     #ITS2CLR Config
-    feature_extractor_train_count = 1
+    feature_extractor_train_count = 2
     initial_ratio = 0 # 0% preditions included
     final_ratio = 0.25 # 25% preditions included
     total_epochs = 500
@@ -372,15 +413,19 @@ if __name__ == '__main__':
 
 
     # Get Model
-    model = SupConResNet_custom(name=encoder_arch, head='mlp').cuda()
-    print(model)
+    encoder = create_timm_body(encoder_arch)
+    nf = num_features_model( nn.Sequential(*encoder.children()))
+
+    # bag aggregator
+    aggregator = ABMIL_aggregate3(nf = nf)
+
+    # total model
+    model = Embeddingmodel(encoder, aggregator, nf = nf, num_classes = num_labels).cuda()
     
-    classifier = LinearClassifier(num_classes=num_labels).cuda()
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total Parameters: {total_params}")        
         
-    optimizer_model = Adam(model.parameters(), lr=args.learning_rate)
-    optimizer_classifier = Adam(classifier.parameters(), lr=args.learning_rate)
+    optimizer = Adam(model.parameters(), lr=args.learning_rate)
     BCE_loss = nn.BCELoss()
     genscl = GenSupConLossv2(temperature=0.07, contrast_mode='all', base_temperature=0.07)
     scaler = GradScaler()
@@ -398,8 +443,7 @@ if __name__ == '__main__':
     
     if os.path.exists(model_path):
         model.load_state_dict(torch.load(model_path))
-        classifier.load_state_dict(torch.load(classifier_path))
-        optimizer_model.load_state_dict(torch.load(optimizer_path))
+        optimizer.load_state_dict(torch.load(optimizer_path))
         print(f"Loaded pre-existing model from {model_name}")
         
         with open(stats_path, 'rb') as f:
@@ -420,114 +464,68 @@ if __name__ == '__main__':
         print('Training Default')
         # Training phase
         model.train()
-        classifier.train()
         
-        train_bag_logits = {}
         total_loss = 0.0
+        train_bag_logits = {}
+        total_acc = 0
         total = 0
         correct = 0
+        for (data, yb, instance_yb, id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)): 
+            xb, yb = data, yb.cuda()
+            
+            optimizer.zero_grad()
+            
+            outputs, instance_pred, _ = model(xb)
 
-        for (data, yb, instance_yb, id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)):
-            yb = yb.cuda()
+            loss = BCE_loss(outputs, yb)
+
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item() * len(xb)
+            predicted = (outputs > .5).float()
+            total += yb.size(0)
+            correct += (predicted == yb).sum().item()
             
-            # Process all features for all images
-            all_images = torch.cat(data, dim=0).cuda()
-            optimizer_model.zero_grad()
-            optimizer_classifier.zero_grad()
-            
-            #with autocast():
-            features = model(all_images)
-            
-            # Classify on the bag level
-            num_bags = len(data)
-            split_sizes = [bag.size(0) for bag in data]
-            logits_per_bag = torch.split(features, split_sizes, dim=0)
-            logits = torch.empty(num_bags, num_labels).cuda()
-            instance_logits = []
-            #with autocast():
-            for i, h in enumerate(logits_per_bag):
-                # Receive four values from the aggregator
-                logits[i], instance_scores = classifier(h)
-                instance_logits.append(instance_scores)
-                
-                
-            # Get loss
-            batch_loss = BCE_loss(logits, yb)
-                
-            #print(logits)
-            #print(instance_logits)
-            #print(batch_loss)
-            
-            #scaler.scale(batch_loss).backward()
-            #scaler.step(optimizer)
-            #scaler.update()
-            
-            batch_loss.backward()
-            optimizer_model.step()
-            optimizer_classifier.step()
-            
-            
-            probabilities = torch.sigmoid(logits)
-            predictions = (probabilities > 0.5).float()
-            correct += (predictions == yb).sum().item()
-                
             for i, bag_id in enumerate(id):
-                train_bag_logits[bag_id] = instance_logits[i].detach().cpu().numpy()
-
-            total_loss += batch_loss.item() 
-            total += num_bags
+                train_bag_logits[bag_id] = instance_pred[i].detach().cpu().numpy()
+            
 
         train_loss = total_loss / total
         train_acc = correct / total
 
+
         # Evaluation phase
         model.eval()
         total_val_loss = 0.0
+        total_val_acc = 0.0
         total = 0
         correct = 0
         all_targs = []
         all_preds = []
-
         with torch.no_grad():
-            for (data, yb, instance_yb, id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)):
-                yb = yb.cuda()
-            
-                # Process all features for all images
-                all_images = torch.cat(data, dim=0).cuda()
-                #with autocast():
-                features = model(all_images)
-                
-                # Classify on the bag level
-                num_bags = len(data)
-                split_sizes = [bag.size(0) for bag in data]
-                logits_per_bag = torch.split(features, split_sizes, dim=0)
-                logits = torch.empty(num_bags, num_labels).cuda()
-                instance_logits = []
-                #with autocast():
-                for i, h in enumerate(logits_per_bag):
-                    # Receive four values from the aggregator
-                    logits[i], instance_scores = classifier(h)
-                    instance_logits.append(instance_scores)
-                
-                
-                # Get loss
-                batch_loss = BCE_loss(logits, yb)
-                
-                probabilities = torch.sigmoid(logits)
-                predictions = (probabilities > 0.5).float()
-                correct += (predictions == yb).sum().item()
+            for (data, yb, instance_yb, id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
+                xb, yb = data, yb.cuda()
 
-                total_val_loss += batch_loss.item()
-                total += num_bags
+                outputs, instance_pred, _ = model(xb)
+                
+                
+                loss = BCE_loss(outputs, yb)
+                
+                total_val_loss += loss.item() * len(xb)
+                predicted = (outputs > .5).float()
+                total += yb.size(0)
+                correct += (predicted == yb).sum().item()
                 
                 # Confusion Matrix data
                 all_targs.extend(yb.cpu().numpy())
-                if len(predictions.size()) == 0:
-                    predictions = predictions.view(1)
-                all_preds.extend(predictions.cpu().detach().numpy())
+                if len(predicted.size()) == 0:
+                    predicted = predicted.view(1)
+                all_preds.extend(predicted.cpu().detach().numpy())
 
         val_loss = total_val_loss / total
         val_acc = correct / total
+
 
         train_losses_over_epochs.append(train_loss)
         valid_losses_over_epochs.append(val_loss)
@@ -541,10 +539,10 @@ if __name__ == '__main__':
             
             
             
-        if False: #val_loss < val_loss_best:
+        if val_loss < val_loss_best:
             # Save the model
             val_loss_best = val_loss
-            save_state(epoch, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, model, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs, classifier=classifier)
+            save_state(epoch, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, model, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs,)
             print("Saved checkpoint due to improved val_loss")
             
             # Get difficualy ratio
@@ -560,7 +558,6 @@ if __name__ == '__main__':
             
             
             # Used the instance predictions from bag training to update the Instance Dataloader
-            #instance_dataset_train = TUD.Subset(Instance_Dataset(instance_train, selection_mask, transform=train_transform, warmup=warmup_on),list(range(0,100)))
             instance_dataset_train = Instance_Dataset(instance_train, selection_mask, transform=train_transform, warmup=warmup_on)
             
             if warmup_on:
@@ -593,36 +590,31 @@ if __name__ == '__main__':
                     # image-based regularizations (lam 1 = no mixup)
                     im_q, y0a, y0b, lam0 = mix_fn(im_q, instance_labels, args.mix_alpha, args.mix)
                     im_k, y1a, y1b, lam1 = mix_fn(im_k, instance_labels, args.mix_alpha, args.mix)
-                    images = torch.cat([im_q, im_k], dim=0)
+                    #images = torch.cat([im_q, im_k], dim=0)
+                    images = [im_q, im_k]
                     l_q = mix_target(y0a, y0b, lam0, args.num_classes)
                     l_k = mix_target(y1a, y1b, lam1, args.num_classes)
                     
                     # forward
                     optimizer.zero_grad()
-                    #with autocast():
-                    features = model(images)
+                    _, _, features = model(images)
                     features = F.normalize(features, dim=1)
                     zk, zq = torch.split(features, [bsz, bsz], dim=0)
                     
                     # get loss (no teacher)
                     mapped_anchors = ~unconfident_mask.bool()
                     loss = genscl([zk, zq], [l_q, l_k], (mapped_anchors, mapped_anchors))
+                    #print(loss)
                     losses.update(loss.item(), bsz)
 
-                    """print(mapped_anchors)
-                    print(loss.item())
                     if math.isnan(loss.item()):
+                        print(mapped_anchors)
+                        print(loss.item())
                         print("Loss is NaN, stopping the script.")
-                        exit()  # Stops the script"""
+                        exit()  # Stops the script
     
-                    # backward
-                    #scaler.scale(loss).backward()
-                    #scaler.step(optimizer)
-                    #scaler.update()
-                    
+
                     loss.backward()
                     optimizer.step()
                     
                 print(f'Gen_SCL Loss: {losses.avg:.5f}')
-                
-                

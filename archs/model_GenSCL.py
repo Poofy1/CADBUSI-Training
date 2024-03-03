@@ -7,6 +7,7 @@ Adapted from: https://github.com/bearpaw/pytorch-classification
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchvision.models as models
 
 
 class BasicBlock(nn.Module):
@@ -178,7 +179,7 @@ class SupConResNet_custom(nn.Module):
 
 class LinearClassifier(nn.Module):
     """Linear classifier"""
-    def __init__(self, name='resnet18', num_classes=1, feat_dim=128, L=128):
+    def __init__(self, num_classes=1, feat_dim=128, L=128):
         super(LinearClassifier, self).__init__()
         self.fc = nn.Linear(feat_dim, num_classes)
         
@@ -195,24 +196,30 @@ class LinearClassifier(nn.Module):
         self.attention_W = nn.Sequential(
             nn.Linear(L, 1),
         )
-
-    def forward(self, feat):
         
-        # Gated-attention mechanism for feature aggregation
-        A_V = self.attention_V(feat)
-        A_U = self.attention_U(feat)
-        pre_softmax_scores = self.attention_W(A_V * A_U).squeeze()
-        attention_scores = F.softmax(pre_softmax_scores, dim=0)
-        aggregated_feat = torch.sum(feat * attention_scores.unsqueeze(-1), dim=0)
+        self.fc = nn.Sequential(
+            nn.Linear(feat_dim, num_classes),
+            nn.Sigmoid()
+        )
 
-        # Classifier prediction
-        bag_pred = self.fc(aggregated_feat.unsqueeze(0))  # Add batch dimension
+    def forward(self, v):
         
+        # Gated-attention mechanism
+        #v = torch.max(v, dim=2).values  
+        #v = torch.max(v, dim=2).values  
         
-        return bag_pred, pre_softmax_scores
+        A_V = self.attention_V(v)  # KxL
+        A_U = self.attention_U(v)  # KxL
+        instance_scores = self.attention_W(A_V * A_U) # element wise multiplication # KxATTENTION_BRANCHES
+        A = torch.transpose(instance_scores, 1, 0)  # ATTENTION_BRANCHESxK
+        A = F.softmax(A, dim=1)  # softmax over K
 
+        Z = torch.mm(A, v)  # ATTENTION_BRANCHESxM
 
-
+        Y_prob = self.fc(Z)
+        
+        return Y_prob, instance_scores
+    
 
 '''class LinearBatchNorm(nn.Module):
     """Implements BatchNorm1d by BatchNorm2d, for SyncBN purpose"""

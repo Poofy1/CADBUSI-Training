@@ -74,7 +74,7 @@ class EmbeddingBagModel(nn.Module):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'ABMIL_12_26_2'
+    model_name = 'test'
     encoder_arch = 'resnet18'
     dataset_name = 'export_01_31_2024'
     label_columns = ['Has_Malignant']
@@ -181,6 +181,8 @@ if __name__ == '__main__':
             optimizer.zero_grad()
             
             outputs, _, _, _ = bagmodel(xb)
+            
+            print(outputs)
 
 
             loss = loss_func(outputs, yb)
