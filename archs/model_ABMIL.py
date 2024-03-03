@@ -26,13 +26,13 @@ class ABMIL_aggregate(nn.Module):
             nn.Linear(self.nf, self.L),
             nn.Sigmoid()
         )
-
+ 
         self.attention_W = nn.Sequential(
             nn.Linear(self.L, self.num_classes),
         )
 
     def forward(self, h):
-
+        
         saliency_maps = self.saliency_layer(h)  # Generate saliency maps using a convolutional layer
         map_flatten = saliency_maps.flatten(start_dim=-2, end_dim=-1) 
         
@@ -51,7 +51,7 @@ class ABMIL_aggregate(nn.Module):
 
         # Apply softmax across the correct dimension (assuming the last dimension represents instances)
         attention_scores = nn.functional.softmax(pre_softmax_scores.squeeze() , dim=0)
-        
+
         # Aggregate individual predictions to get the final bag prediction
         yhat_bag = (attention_scores * yhat_instance).sum(dim=0)
         return yhat_bag, saliency_maps, yhat_instance, attention_scores
