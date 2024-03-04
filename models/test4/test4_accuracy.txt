@@ -52,3 +52,9 @@ Training Accuracy:
 Validation Accuracy:
   Overall: 0.7890
 
+Epoch 15
+Training Accuracy:
+  Overall: 0.7812
+Validation Accuracy:
+  Overall: 0.8138
+
