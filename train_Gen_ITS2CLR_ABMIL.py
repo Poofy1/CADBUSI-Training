@@ -26,6 +26,8 @@ class Instance_Dataset(TUD.Dataset):
         self.images = []
         self.final_labels = []
         self.warmup_mask = []
+        
+        
 
         for bag_id, bag_info in bags_dict.items():
             images = bag_info['images']
@@ -39,11 +41,12 @@ class Instance_Dataset(TUD.Dataset):
                 selection_mask_labels, _ = selection_mask[bag_id_key]
             else: 
                 selection_mask_labels = None
+                
+            #print(selection_mask_labels)
             
             for idx, (img, label) in enumerate(zip(images, image_labels)):
                 image_label = None
                 warmup_mask_value = 0
-
                 
                 if not self.warmup:
                     # Only include confident instances (selection_mask) or negative bags or instance labels
@@ -380,7 +383,6 @@ if __name__ == '__main__':
     bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
     num_labels = len(label_columns)
     
-    instance_train, _ = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, 1, 100)
     
     
     train_transform = T.Compose([
@@ -547,6 +549,7 @@ if __name__ == '__main__':
             
             # Get difficualy ratio
             predictions_ratio = prediction_anchor_scheduler(epoch, total_epochs, warmup_epochs, initial_ratio, final_ratio)
+            #predictions_ratio = .9
             selection_mask = create_selection_mask(train_bag_logits, predictions_ratio)
             
             if epoch < warmup_epochs:
@@ -558,7 +561,7 @@ if __name__ == '__main__':
             
             
             # Used the instance predictions from bag training to update the Instance Dataloader
-            instance_dataset_train = Instance_Dataset(instance_train, selection_mask, transform=train_transform, warmup=warmup_on)
+            instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, warmup=warmup_on)
             
             if warmup_on:
                 sampler = WarmupSampler(instance_dataset_train, instance_batch_size)
