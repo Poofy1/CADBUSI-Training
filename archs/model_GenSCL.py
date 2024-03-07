@@ -247,10 +247,6 @@ class ABMIL_aggregate3(nn.Module):
 
     def forward(self, v):
         
-        # Gated-attention mechanism
-        v = torch.max(v, dim=2).values  
-        v = torch.max(v, dim=2).values  
-        
         A_V = self.attention_V(v)  # KxL
         A_U = self.attention_U(v)  # KxL
         instance_scores = self.attention_W(A_V * A_U) # element wise multiplication # KxATTENTION_BRANCHES

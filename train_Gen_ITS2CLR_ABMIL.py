@@ -279,10 +279,8 @@ class Embeddingmodel(nn.Module):
         self.aggregator = aggregator
         self.nf = nf
         self.num_classes = num_classes
-        
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
 
-    def forward(self, input):
+    def forward(self, input, pred_on = False):
         num_bags = len(input) # input = [bag #, image #, channel, height, width]
         
         # Concatenate all bags into a single tensor for batch processing
@@ -290,22 +288,25 @@ class Embeddingmodel(nn.Module):
         
         # Calculate the embeddings for all images in one go
         h_all = self.encoder(all_images)
+        feat = torch.max(h_all, dim=2).values  
+        feat = torch.max(feat, dim=2).values  
 
-        feat = self.avgpool(h_all)
-        feat = torch.flatten(feat, 1)
-        
-        # Split the embeddings back into per-bag embeddings
-        split_sizes = [bag.size(0) for bag in input]
-        h_per_bag = torch.split(h_all, split_sizes, dim=0)
-        logits = torch.empty(num_bags, self.num_classes).cuda()
-        yhat_instances = []
-        
-        for i, h in enumerate(h_per_bag):
-            # Receive four values from the aggregator
-            yhat_bag, yhat_ins = self.aggregator(h)
+        if pred_on:
+            # Split the embeddings back into per-bag embeddings
+            split_sizes = [bag.size(0) for bag in input]
+            h_per_bag = torch.split(feat, split_sizes, dim=0)
+            logits = torch.empty(num_bags, self.num_classes).cuda()
+            yhat_instances = []
             
-            logits[i] = yhat_bag
-            yhat_instances.append(yhat_ins)
+            for i, h in enumerate(h_per_bag):
+                # Receive four values from the aggregator
+                yhat_bag, yhat_ins = self.aggregator(h)
+                
+                logits[i] = yhat_bag
+                yhat_instances.append(yhat_ins)
+        else:
+            logits = None
+            yhat_instances = None
         
         return logits, yhat_instances, feat
     
@@ -332,24 +333,25 @@ class Args:
 if __name__ == '__main__':
 
     # Config
-    model_name = 'test4'
+    model_name = 'test5'
     encoder_arch = 'resnet18'
     dataset_name = 'export_01_31_2024'
     label_columns = ['Has_Malignant']
     instance_columns = ['Reject Image', 'Malignant Lesion Present']   #['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
     img_size = 350
-    bag_batch_size = 5
+    bag_batch_size = 4
     min_bag_size = 2
-    max_bag_size = 20
+    max_bag_size = 25
     instance_batch_size =  50
     model_folder = f"{env}/models/{model_name}/"
     
     #ITS2CLR Config
-    feature_extractor_train_count = 2
+    feature_extractor_train_count = 5
     initial_ratio = 0 # 0% preditions included
-    final_ratio = 0.25 # 25% preditions included
-    total_epochs = 500
-    warmup_epochs = 10
+    final_ratio = 0.75 # 25% preditions included
+    total_epochs = 100
+    warmup_epochs = 1
+    kick_start = True
     
     args = Args(
         warm=True,
@@ -477,7 +479,7 @@ if __name__ == '__main__':
             
             optimizer.zero_grad()
             
-            outputs, instance_pred, _ = model(xb)
+            outputs, instance_pred, _ = model(xb, pred_on = True)
 
             loss = BCE_loss(outputs, yb)
 
@@ -509,7 +511,7 @@ if __name__ == '__main__':
             for (data, yb, instance_yb, id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
                 xb, yb = data, yb.cuda()
 
-                outputs, instance_pred, _ = model(xb)
+                outputs, instance_pred, _ = model(xb, pred_on = True)
                 
                 
                 loss = BCE_loss(outputs, yb)
@@ -541,11 +543,14 @@ if __name__ == '__main__':
             
             
             
-        if val_loss < val_loss_best:
+        if val_loss < val_loss_best or kick_start:
+            kick_start = False
+            
             # Save the model
-            val_loss_best = val_loss
-            save_state(epoch, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, model, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs,)
-            print("Saved checkpoint due to improved val_loss")
+            if val_loss < val_loss_best:
+                val_loss_best = val_loss
+                save_state(epoch, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, model, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs,)
+                print("Saved checkpoint due to improved val_loss")
             
             # Get difficualy ratio
             predictions_ratio = prediction_anchor_scheduler(epoch, total_epochs, warmup_epochs, initial_ratio, final_ratio)
