@@ -2,7 +2,7 @@ import os, pickle
 from fastai.vision.all import *
 import torch.utils.data as TUD
 from tqdm import tqdm
-from torch.cuda.amp import GradScaler, autocast
+from torch.cuda.amp import GradScaler
 from torch import nn
 from archs.save_arch import *
 from data.Gen_ITS2CLR_util import *
@@ -11,7 +11,6 @@ from torch.optim import Adam
 from archs.backbone import create_timm_body
 from data.format_data import *
 from archs.model_GenSCL import *
-from archs.model_ABMIL import *
 from archs.backbone import create_timm_body
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
@@ -271,78 +270,24 @@ def create_selection_mask(train_bag_logits, include_ratio):
     
     
     
-class Embeddingmodel(nn.Module):
-    
-    def __init__(self, encoder, aggregator, nf, num_classes=1):
-        super(Embeddingmodel,self).__init__()
-        self.encoder = encoder
-        self.aggregator = aggregator
-        self.nf = nf
-        self.num_classes = num_classes
 
-    def forward(self, input, pred_on = False):
-        num_bags = len(input) # input = [bag #, image #, channel, height, width]
-        
-        # Concatenate all bags into a single tensor for batch processing
-        all_images = torch.cat(input, dim=0).cuda()  # Shape: [Total images in all bags, channel, height, width]
-        
-        # Calculate the embeddings for all images in one go
-        h_all = self.encoder(all_images)
-        feat = torch.max(h_all, dim=2).values  
-        feat = torch.max(feat, dim=2).values  
-
-        if pred_on:
-            # Split the embeddings back into per-bag embeddings
-            split_sizes = [bag.size(0) for bag in input]
-            h_per_bag = torch.split(feat, split_sizes, dim=0)
-            logits = torch.empty(num_bags, self.num_classes).cuda()
-            yhat_instances = []
-            
-            for i, h in enumerate(h_per_bag):
-                # Receive four values from the aggregator
-                yhat_bag, yhat_ins = self.aggregator(h)
-                
-                logits[i] = yhat_bag
-                yhat_instances.append(yhat_ins)
-        else:
-            logits = None
-            yhat_instances = None
-        
-        return logits, yhat_instances, feat
     
 
-class Args:
-    def __init__(self, warm, start_epoch, warm_epochs, learning_rate, lr_decay_rate, num_classes, epochs, warmup_from, cosine, lr_decay_epochs, mix, mix_alpha, KD_temp, KD_alpha, teacher_path, teacher_ckpt):
-        self.warm = warm
-        self.start_epoch = start_epoch
-        self.warm_epochs = warm_epochs
-        self.learning_rate = learning_rate
-        self.lr_decay_rate = lr_decay_rate
-        self.num_classes = num_classes
-        self.epochs = epochs
-        self.warmup_from = warmup_from
-        self.cosine = cosine
-        self.lr_decay_epochs = lr_decay_epochs
-        self.mix = mix
-        self.mix_alpha = mix_alpha
-        self.KD_temp = KD_temp
-        self.KD_alpha = KD_alpha
-        self.teacher_path = teacher_path
-        self.teacher_ckpt = teacher_ckpt
+
 
 if __name__ == '__main__':
 
     # Config
-    model_name = 'test5'
-    encoder_arch = 'resnet18'
-    dataset_name = 'export_01_31_2024'
+    model_name = 'test6'
+    encoder_arch = 'resnet50'
+    dataset_name = 'export_03_09_2024'
     label_columns = ['Has_Malignant']
-    instance_columns = ['Reject Image', 'Malignant Lesion Present']   #['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
+    instance_columns = ['Malignant Lesion Present']   #['Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
     img_size = 350
-    bag_batch_size = 4
+    bag_batch_size = 3
     min_bag_size = 2
     max_bag_size = 25
-    instance_batch_size =  50
+    instance_batch_size =  25
     model_folder = f"{env}/models/{model_name}/"
     
     #ITS2CLR Config
@@ -353,14 +298,15 @@ if __name__ == '__main__':
     warmup_epochs = 1
     kick_start = True
     
+    #GenSCL Config
     args = Args(
         warm=True,
         start_epoch=0,
         warm_epochs = warmup_epochs,
         learning_rate=0.001,
         lr_decay_rate=0.1,
-        num_classes = 2,
-        epochs=50,
+        num_classes = len(label_columns) + 1,
+        epochs=total_epochs,
         warmup_from=0.001,
         cosine=True,
         lr_decay_epochs=[30, 40],
@@ -372,16 +318,10 @@ if __name__ == '__main__':
         teacher_ckpt='teacher_ITS2CLR.pth'
     )
     
-    
-
-    # Paths
-    export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
-    cropped_images = f"F:/Temp_SSD_Data/{dataset_name}_{img_size}_images/"
-    #export_location = '/home/paperspace/cadbusi-LFS/export_09_28_2023/'
-    #cropped_images = f"/home/paperspace/Temp_Data/{img_size}_images/"
-    
 
     # Get Training Data
+    export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
+    cropped_images = f"F:/Temp_SSD_Data/{dataset_name}_{img_size}_images/"
     bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
     num_labels = len(label_columns)
     
@@ -416,14 +356,10 @@ if __name__ == '__main__':
     bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True)
 
 
-    # Get Model
+    # Create Model
     encoder = create_timm_body(encoder_arch)
     nf = num_features_model( nn.Sequential(*encoder.children()))
-
-    # bag aggregator
-    aggregator = ABMIL_aggregate3(nf = nf)
-
-    # total model
+    aggregator = Linear_Classifier(nf = nf)
     model = Embeddingmodel(encoder, aggregator, nf = nf, num_classes = num_labels).cuda()
     
     total_params = sum(p.numel() for p in model.parameters())
@@ -614,13 +550,6 @@ if __name__ == '__main__':
                     loss = genscl([zk, zq], [l_q, l_k], (mapped_anchors, mapped_anchors))
                     #print(loss)
                     losses.update(loss.item(), bsz)
-
-                    if math.isnan(loss.item()):
-                        print(mapped_anchors)
-                        print(loss.item())
-                        print("Loss is NaN, stopping the script.")
-                        exit()  # Stops the script
-    
 
                     loss.backward()
                     optimizer.step()
