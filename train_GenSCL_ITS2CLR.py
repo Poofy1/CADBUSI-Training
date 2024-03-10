@@ -9,9 +9,10 @@ from data.Gen_ITS2CLR_util import *
 from torch.utils.data import Sampler
 from torch.optim import Adam
 from archs.backbone import create_timm_body
+from torchvision.models import efficientnet_v2_s
+from torchvision.models import efficientnet_b3, EfficientNet_B3_Weights
 from data.format_data import *
 from archs.model_GenSCL import *
-from archs.backbone import create_timm_body
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -279,14 +280,13 @@ if __name__ == '__main__':
 
     # Config
     model_name = 'test6'
-    encoder_arch = 'resnet50'
     dataset_name = 'export_03_09_2024'
     label_columns = ['Has_Malignant']
     instance_columns = ['Malignant Lesion Present']   #['Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
-    img_size = 350
-    bag_batch_size = 3
+    img_size = 300
+    bag_batch_size = 2
     min_bag_size = 2
-    max_bag_size = 25
+    max_bag_size = 20
     instance_batch_size =  25
     model_folder = f"{env}/models/{model_name}/"
     
@@ -357,10 +357,13 @@ if __name__ == '__main__':
 
 
     # Create Model
-    encoder = create_timm_body(encoder_arch)
-    nf = num_features_model( nn.Sequential(*encoder.children()))
-    aggregator = Linear_Classifier(nf = nf)
-    model = Embeddingmodel(encoder, aggregator, nf = nf, num_classes = num_labels).cuda()
+    #encoder = create_timm_body("resnet18")
+    #encoder = efficientnet_v2_s(weights=EfficientNet_V2_S_Weights.DEFAULT)
+    encoder = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
+    encoder.classifier = nn.Identity()  # Remove the original classifier
+    encoder.avgpool = nn.Identity()  # Remove the average pooling layer
+    
+    model = Embeddingmodel(encoder = encoder, num_classes = num_labels).cuda()
     
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total Parameters: {total_params}")        
