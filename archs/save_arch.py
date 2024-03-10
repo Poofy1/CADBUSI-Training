@@ -49,12 +49,17 @@ def save_accuracy_to_file(epoch, train_acc, val_acc, label_columns, file_path):
         file.write("\n")  # Add a newline for separation between epochs
 
 
-def plot_single_roc_curve(all_tpr, all_fpr, save_path):
+def plot_single_roc_curve(all_fpr, all_tpr, save_path):
     plt.figure(figsize=(10, 6))
     
-    # Plot ROC curve for each epoch
-    for i in range(len(all_tpr)):
-        plt.plot(all_fpr[i], all_tpr[i], label=f'ROC curve at Epoch {i+1}')
+    # Check if all_fpr and all_tpr are lists of lists for multiple epochs or single lists for one epoch
+    if isinstance(all_fpr[0], list):
+        # Multiple epochs: Iterate over each epoch
+        for i in range(len(all_tpr)):
+            plt.plot(all_fpr[i], all_tpr[i], label=f'ROC curve at Epoch {i+1}')
+    else:
+        # Single epoch: Directly plot
+        plt.plot(all_fpr, all_tpr, label='ROC curve')
 
     # Add a red dotted diagonal line (random classifier)
     plt.plot([0, 1], [0, 1], color='red', linestyle='--', label='Random (AUC = 0.5)')
@@ -95,11 +100,14 @@ def plot_Confusion(all_targs, all_preds, vocab, file_path):
     # Compute the confusion matrix
     cm = confusion_matrix(all_targs, all_preds)
     
+    # Normalize the confusion matrix by the total number of predictions
+    cm_normalized = cm.astype('float') / cm.sum()
+    
     # Create a new figure
     fig, ax = plt.subplots(figsize=(8, 6))
 
-    # Plot the confusion matrix
-    sns.heatmap(cm, annot=True, fmt="d", cmap='Blues', xticklabels=vocab, yticklabels=vocab, ax=ax)
+    # Plot the normalized confusion matrix
+    sns.heatmap(cm_normalized, annot=True, fmt=".3f", cmap='Blues', xticklabels=vocab, yticklabels=vocab, ax=ax)
     
     # Invert the y-axis to make it display correctly
     ax.invert_yaxis()

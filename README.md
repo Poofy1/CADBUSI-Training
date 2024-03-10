@@ -53,17 +53,12 @@ Inside the export folder should exist a `/Export/images/` to hold the images tha
 
 ### InstanceData.csv (Optional)
 
-This file `/Export/InstanceData.csv` is optional but can provide some labels for image instances for bags. If this is being used it must have this format: `Reject Image, {User Labels}, ImageName`
+This file `/Export/InstanceData.csv` is optional but can provide some labels for image instances for bags. If this is being used it must include these columns: `{User Labels}, ImageName`
 Example: 
 ```
-Reject Image, Benign Lesion Present, Malignant Lesion Present, ImageName
-False, False, True, 2900_3081_left_0.png
+Benign Lesion Present, Malignant Lesion Present, ImageName
+False, True, 2900_3081_left_0.png
 ```
-
-#### 'Reject Image'
-- Type: Boolean
-- Description: Indicates if we will be training with or without this image.
-- Set to True if you find this image inadequate to train on, False if it is fine to be included in the training set. 
 
 #### User Labels (e.g., 'Has_Malignant', 'Has_Benign')
 - Type: Boolean (True or False)

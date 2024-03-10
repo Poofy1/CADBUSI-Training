@@ -5,6 +5,25 @@ import math
 import wandb
 import datetime
 
+class Args:
+    def __init__(self, warm, start_epoch, warm_epochs, learning_rate, lr_decay_rate, num_classes, epochs, warmup_from, cosine, lr_decay_epochs, mix, mix_alpha, KD_temp, KD_alpha, teacher_path, teacher_ckpt):
+        self.warm = warm
+        self.start_epoch = start_epoch
+        self.warm_epochs = warm_epochs
+        self.learning_rate = learning_rate
+        self.lr_decay_rate = lr_decay_rate
+        self.num_classes = num_classes
+        self.epochs = epochs
+        self.warmup_from = warmup_from
+        self.cosine = cosine
+        self.lr_decay_epochs = lr_decay_epochs
+        self.mix = mix
+        self.mix_alpha = mix_alpha
+        self.KD_temp = KD_temp
+        self.KD_alpha = KD_alpha
+        self.teacher_path = teacher_path
+        self.teacher_ckpt = teacher_ckpt
+
 def mix_fn(x, y, alpha, kind):
     if kind == 'mixup':
         return mixup_data(x, y, alpha)

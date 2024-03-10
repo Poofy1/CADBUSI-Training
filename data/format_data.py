@@ -200,58 +200,50 @@ def create_bags(data, min_size, max_size, root_dir, label_columns, instance_colu
         if isinstance(instance_data, pd.DataFrame):
             for _, row in instance_data.iterrows():
                 image_name = row['ImageName']
-                # Process labels, translating booleans to integers and excluding 'Reject Image'
+                # Process labels, translating booleans to integers
                 labels = []
                 for col in instance_columns:
-                    if col != 'Reject Image' and col in instance_data.columns:
+                    if col in instance_data.columns:
                         label_value = row[col]
                         if isinstance(label_value, bool):
                             labels.append(int(label_value))  # Convert boolean to int
                         else:
                             labels.append(label_value)  # Keep as is for non-boolean values
                 
-                # Store the labels along with a flag indicating whether to reject the image
-                image_label_map[image_name] = {
-                    'labels': labels,
-                    'reject_image': row['Reject Image'] if 'Reject Image' in instance_columns else False
-                }
-
+                # Store the labels
+                image_label_map[image_name] = labels
+    
     total_rows = len(data)
-
+    
     for _, row in tqdm(data.iterrows(), total=total_rows):
         image_files = ast.literal_eval(row['Images'])
-
+    
         bag_files = []
         image_labels = []
-
+    
         for img_name in image_files:
-            # Default labels and rejection status if image_label_map is not used
-            default_labels = [None] * (len(instance_columns) - 1 if instance_columns else 0)  # Use None for non-existing labels
-            image_info = image_label_map.get(img_name, {'labels': default_labels, 'reject_image': False})
-
-            # Skip image if marked for rejection
-            if image_info['reject_image']:
-                continue
-
+            # Get labels from image_label_map or use default labels if not available
+            labels = image_label_map.get(img_name, [None] * len(instance_columns)) if instance_columns else []
+    
             full_path = os.path.join(root_dir, img_name)
             bag_files.append(full_path)
-
-            # Append [None] or the labels based on content, translating booleans to integers
-            image_labels.append(image_info['labels'] if any(label is not None for label in image_info['labels']) else [None])
-
+    
+            # Append [None] or the labels based on content
+            image_labels.append(labels if any(label is not None for label in labels) else [None])
+    
         # Skip bags outside the size range
         if not (min_size <= len(bag_files) <= max_size):
             continue
-
+    
         # Extract labels from data
         bag_labels = [int(row[label]) for label in label_columns if label in data.columns]
-
+    
         bags_dict[row['ID']] = {
             'bag_labels': bag_labels, 
             'images': bag_files,
             'image_labels': image_labels
         }
-
+    
     return bags_dict  # ID : {'bag_labels': [...], 'images': [...], 'image_labels': [...]}
 
 
