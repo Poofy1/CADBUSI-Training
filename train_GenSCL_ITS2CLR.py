@@ -2,7 +2,7 @@ import os, pickle
 from fastai.vision.all import *
 import torch.utils.data as TUD
 from tqdm import tqdm
-from torch.cuda.amp import GradScaler
+import pickle
 from torch import nn
 from archs.save_arch import *
 from data.Gen_ITS2CLR_util import *
@@ -279,7 +279,10 @@ def create_selection_mask(train_bag_logits, include_ratio):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'test6'
+    model_name = '03_09_2024_01'
+    #dataset_name = 'cifar10'
+    #label_columns = ['Has_Truck']
+    #instance_columns = ['']
     dataset_name = 'export_03_09_2024'
     label_columns = ['Has_Malignant']
     instance_columns = ['Malignant Lesion Present']   #['Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
@@ -287,13 +290,13 @@ if __name__ == '__main__':
     bag_batch_size = 2
     min_bag_size = 2
     max_bag_size = 20
-    instance_batch_size =  25
+    instance_batch_size =  15
     model_folder = f"{env}/models/{model_name}/"
     
     #ITS2CLR Config
     feature_extractor_train_count = 5
-    initial_ratio = 0 # 0% preditions included
-    final_ratio = 0.75 # 25% preditions included
+    initial_ratio = 0.1 # 10% preditions included
+    final_ratio = 0.75 # 75% preditions included
     total_epochs = 100
     warmup_epochs = 1
     kick_start = True
@@ -346,8 +349,8 @@ if __name__ == '__main__':
 
 
     # Create datasets
-    #bag_dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False),list(range(0,10)))
-    #bag_dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False),list(range(0,10)))
+    #bag_dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False),list(range(0,1000)))
+    #bag_dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False),list(range(0,1000)))
     bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
     bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
      
@@ -357,13 +360,24 @@ if __name__ == '__main__':
 
 
     # Create Model
-    #encoder = create_timm_body("resnet18")
-    #encoder = efficientnet_v2_s(weights=EfficientNet_V2_S_Weights.DEFAULT)
-    encoder = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
-    encoder.classifier = nn.Identity()  # Remove the original classifier
-    encoder.avgpool = nn.Identity()  # Remove the average pooling layer
+    encoder = create_timm_body("resnet18")
+    nf = num_features_model( nn.Sequential(*encoder.children()))
     
-    model = Embeddingmodel(encoder = encoder, num_classes = num_labels).cuda()
+    
+
+    #encoder = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
+    #encoder.classifier = nn.Identity()  # Remove the original classifier
+    #encoder.avgpool = nn.Identity()  # Remove the average pooling layer
+    #dummy_output = encoder.features(torch.randn(1, 3, 224, 224))
+    #nf = dummy_output.shape[1] # Gets the number of the output features
+    
+    #print(encoder)
+    #print(nf)
+    
+    with open('model_architecture.txt', 'w') as f:
+        print(encoder, file=f)
+    
+    model = Embeddingmodel(encoder = encoder, nf = nf, num_classes = num_labels).cuda()
     
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total Parameters: {total_params}")        
@@ -371,7 +385,6 @@ if __name__ == '__main__':
     optimizer = Adam(model.parameters(), lr=args.learning_rate)
     BCE_loss = nn.BCELoss()
     genscl = GenSupConLossv2(temperature=0.07, contrast_mode='all', base_temperature=0.07)
-    scaler = GradScaler()
     train_losses_over_epochs = []
     valid_losses_over_epochs = []
     epoch_start = 0
@@ -395,6 +408,10 @@ if __name__ == '__main__':
             valid_losses_over_epochs = saved_stats['valid_losses']
             epoch_start = saved_stats['epoch']
             val_loss_best = saved_stats['val_loss']
+            
+        # Load the selection_mask dictionary from the file
+        with open('selection_mask.pkl', 'rb') as file:
+            selection_mask = pickle.load(file)
     else:
         print(f"{model_name} does not exist, creating new instance")
         os.makedirs(model_folder, exist_ok=True)
@@ -419,8 +436,11 @@ if __name__ == '__main__':
             optimizer.zero_grad()
             
             outputs, instance_pred, _ = model(xb, pred_on = True)
+            #print(outputs)
+            
 
             loss = BCE_loss(outputs, yb)
+            #print(loss)
 
             loss.backward()
             optimizer.step()
@@ -481,80 +501,83 @@ if __name__ == '__main__':
             
             
             
-            
-        if val_loss < val_loss_best or kick_start:
-            kick_start = False
-            
-            # Save the model
-            if val_loss < val_loss_best:
-                val_loss_best = val_loss
-                save_state(epoch, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, model, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs,)
-                print("Saved checkpoint due to improved val_loss")
+
+        # Save the model
+        if val_loss < val_loss_best:
+            val_loss_best = val_loss
+            save_state(epoch, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, model, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs,)
+            print("Saved checkpoint due to improved val_loss")
             
             # Get difficualy ratio
             predictions_ratio = prediction_anchor_scheduler(epoch, total_epochs, warmup_epochs, initial_ratio, final_ratio)
             #predictions_ratio = .9
             selection_mask = create_selection_mask(train_bag_logits, predictions_ratio)
+            print("Created new sudo labels")
             
-            if epoch < warmup_epochs:
-                warmup_on = True
-            else:
-                warmup_on = False
+            # Save selection
+            with open(f'{model_folder}/selection_mask.pkl', 'wb') as file:
+                pickle.dump(selection_mask, file)
+        
+        
+        
+        # Contrastive Learning
+        
+        if epoch < warmup_epochs:
+            warmup_on = True
+        else:
+            warmup_on = False
+        
+        # Used the instance predictions from bag training to update the Instance Dataloader
+        instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, warmup=warmup_on)
+        
+        if warmup_on:
+            sampler = WarmupSampler(instance_dataset_train, instance_batch_size)
+            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=sampler, collate_fn = collate_instance)
+        else:
+            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_size=instance_batch_size, collate_fn = collate_instance, drop_last=True, shuffle = True)
+        print('Training Feature Extractor')
+        
+        
+        # Generalized Supervised Contrastive Learning phase
+        model.train()
+        for i in range(feature_extractor_train_count): 
+            losses = AverageMeter()
             
-            
-            
-            
-            # Used the instance predictions from bag training to update the Instance Dataloader
-            instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, warmup=warmup_on)
-            
-            if warmup_on:
-                sampler = WarmupSampler(instance_dataset_train, instance_batch_size)
-                instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=sampler, collate_fn = collate_instance)
-            else:
-                instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_size=instance_batch_size, collate_fn = collate_instance, drop_last=True, shuffle = True)
-            print('Training Feature Extractor')
-            
-            
-            # Generalized Supervised Contrastive Learning phase
-            model.train()
-            for i in range(feature_extractor_train_count): 
-                losses = AverageMeter()
+            epoch_loss = 0.0
+            total_loss = 0
+
+            # Iterate over the training data
+            for idx, (images, instance_labels, unconfident_mask) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
+                warmup_learning_rate(args, epoch, idx, len(instance_dataloader_train), optimizer)
                 
-                epoch_loss = 0.0
-                total_loss = 0
+                # Data preparation 
+                bsz = instance_labels.shape[0]
+                im_q, im_k = images
+                im_q = im_q.cuda(non_blocking=True)
+                im_k = im_k.cuda(non_blocking=True)
+                instance_labels = instance_labels.cuda(non_blocking=True)
+                
+                # image-based regularizations (lam 1 = no mixup)
+                im_q, y0a, y0b, lam0 = mix_fn(im_q, instance_labels, args.mix_alpha, args.mix)
+                im_k, y1a, y1b, lam1 = mix_fn(im_k, instance_labels, args.mix_alpha, args.mix)
+                #images = torch.cat([im_q, im_k], dim=0)
+                images = [im_q, im_k]
+                l_q = mix_target(y0a, y0b, lam0, args.num_classes)
+                l_k = mix_target(y1a, y1b, lam1, args.num_classes)
+                
+                # forward
+                optimizer.zero_grad()
+                _, _, features = model(images)
+                features = F.normalize(features, dim=1)
+                zk, zq = torch.split(features, [bsz, bsz], dim=0)
+                
+                # get loss (no teacher)
+                mapped_anchors = ~unconfident_mask.bool()
+                loss = genscl([zk, zq], [l_q, l_k], (mapped_anchors, mapped_anchors))
+                #print(loss)
+                losses.update(loss.item(), bsz)
 
-                # Iterate over the training data
-                for idx, (images, instance_labels, unconfident_mask) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
-                    warmup_learning_rate(args, epoch, idx, len(instance_dataloader_train), optimizer)
-                    
-                    # Data preparation 
-                    bsz = instance_labels.shape[0]
-                    im_q, im_k = images
-                    im_q = im_q.cuda(non_blocking=True)
-                    im_k = im_k.cuda(non_blocking=True)
-                    instance_labels = instance_labels.cuda(non_blocking=True)
-                    
-                    # image-based regularizations (lam 1 = no mixup)
-                    im_q, y0a, y0b, lam0 = mix_fn(im_q, instance_labels, args.mix_alpha, args.mix)
-                    im_k, y1a, y1b, lam1 = mix_fn(im_k, instance_labels, args.mix_alpha, args.mix)
-                    #images = torch.cat([im_q, im_k], dim=0)
-                    images = [im_q, im_k]
-                    l_q = mix_target(y0a, y0b, lam0, args.num_classes)
-                    l_k = mix_target(y1a, y1b, lam1, args.num_classes)
-                    
-                    # forward
-                    optimizer.zero_grad()
-                    _, _, features = model(images)
-                    features = F.normalize(features, dim=1)
-                    zk, zq = torch.split(features, [bsz, bsz], dim=0)
-                    
-                    # get loss (no teacher)
-                    mapped_anchors = ~unconfident_mask.bool()
-                    loss = genscl([zk, zq], [l_q, l_k], (mapped_anchors, mapped_anchors))
-                    #print(loss)
-                    losses.update(loss.item(), bsz)
-
-                    loss.backward()
-                    optimizer.step()
-                    
-                print(f'Gen_SCL Loss: {losses.avg:.5f}')
+                loss.backward()
+                optimizer.step()
+                
+            print(f'Gen_SCL Loss: {losses.avg:.5f}')

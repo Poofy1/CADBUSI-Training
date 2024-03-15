@@ -76,11 +76,14 @@ if __name__ == '__main__':
     # Config
     model_name = 'test'
     encoder_arch = 'resnet18'
-    dataset_name = 'export_01_31_2024'
-    label_columns = ['Has_Malignant']
-    instance_columns = ['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
-    img_size = 350
-    batch_size = 5
+    dataset_name = 'cifar10'
+    label_columns = ['Has_Truck']
+    instance_columns = ['']
+    #dataset_name = 'export_01_31_2024'
+    #label_columns = ['Has_Malignant']
+    #instance_columns = ['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
+    img_size = 32
+    batch_size = 15
     min_bag_size = 2
     max_bag_size = 20
     epochs = 500
@@ -97,13 +100,13 @@ if __name__ == '__main__':
     num_labels = len(label_columns)
     
     train_transform = T.Compose([
-                    T.RandomVerticalFlip(),
-                    T.RandomHorizontalFlip(),
+                    #T.RandomVerticalFlip(),
+                    #T.RandomHorizontalFlip(),
                     #T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
-                    T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
+                    #T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
                     CLAHETransform(),
                     T.ToTensor(),
-                    GaussianNoise(mean=0, std=0.015),  # Add slight noise
+                    #GaussianNoise(mean=0, std=0.015),  # Add slight noise
                     T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                 ])
     val_transform = T.Compose([
