@@ -279,7 +279,7 @@ def create_selection_mask(train_bag_logits, include_ratio):
 if __name__ == '__main__':
 
     # Config
-    model_name = '03_09_2024_01'
+    model_name = '03_09_2024_ENTEST'
     #dataset_name = 'cifar10'
     #label_columns = ['Has_Truck']
     #instance_columns = ['']
@@ -295,8 +295,8 @@ if __name__ == '__main__':
     
     #ITS2CLR Config
     feature_extractor_train_count = 5
-    initial_ratio = 0.1 # 10% preditions included
-    final_ratio = 0.75 # 75% preditions included
+    initial_ratio = 0.0 # --% preditions included
+    final_ratio = 0.8 # --% preditions included
     total_epochs = 100
     warmup_epochs = 1
     kick_start = True
@@ -337,7 +337,7 @@ if __name__ == '__main__':
                 T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
                 CLAHETransform(),
                 T.ToTensor(),
-                GaussianNoise(mean=0, std=0.015), 
+                #GaussianNoise(mean=0, std=0.015), 
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
     
@@ -349,35 +349,33 @@ if __name__ == '__main__':
 
 
     # Create datasets
-    #bag_dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False),list(range(0,1000)))
-    #bag_dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False),list(range(0,1000)))
-    bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
-    bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
+    bag_dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False),list(range(0,1000)))
+    bag_dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False),list(range(0,1000)))
+    #bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
+    #bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
      
     # Create bag data loaders
     bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
     bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True)
 
 
-    # Create Model
+    # Resnet
     encoder = create_timm_body("resnet18")
     nf = num_features_model( nn.Sequential(*encoder.children()))
     
     
-
+    # Efficent Net 
     #encoder = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
     #encoder.classifier = nn.Identity()  # Remove the original classifier
     #encoder.avgpool = nn.Identity()  # Remove the average pooling layer
     #dummy_output = encoder.features(torch.randn(1, 3, 224, 224))
     #nf = dummy_output.shape[1] # Gets the number of the output features
+    # Replace the last fully connected layer with a new one
+    #num_features = encoder.classifier[1].in_features
+    #encoder.classifier[1] = nn.Linear(num_features, 512)
+    #nf = 512
     
-    #print(encoder)
-    #print(nf)
-    
-    with open('model_architecture.txt', 'w') as f:
-        print(encoder, file=f)
-    
-    model = Embeddingmodel(encoder = encoder, nf = nf, num_classes = num_labels).cuda()
+    model = Embeddingmodel(encoder = encoder, nf = nf, num_classes = num_labels, efficient_net = False).cuda()
     
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total Parameters: {total_params}")        
@@ -396,6 +394,8 @@ if __name__ == '__main__':
     classifier_path = f"{model_folder}/{model_name}_classifier.pth"
     optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
     stats_path = f"{model_folder}/{model_name}_stats.pkl"
+    with open(f'{model_folder}model_architecture.txt', 'w') as f:
+        print(encoder, file=f)
     
     if os.path.exists(model_path):
         model.load_state_dict(torch.load(model_path))
@@ -410,7 +410,7 @@ if __name__ == '__main__':
             val_loss_best = saved_stats['val_loss']
             
         # Load the selection_mask dictionary from the file
-        with open('selection_mask.pkl', 'rb') as file:
+        with open(f'{model_folder}/selection_mask.pkl', 'rb') as file:
             selection_mask = pickle.load(file)
     else:
         print(f"{model_name} does not exist, creating new instance")

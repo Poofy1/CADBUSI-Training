@@ -4,9 +4,10 @@ import torch.nn.functional as F
 
 
 class Embeddingmodel(nn.Module):
-    def __init__(self, encoder, nf, num_classes=1):
+    def __init__(self, encoder, nf, num_classes=1, efficient_net = False):
         super(Embeddingmodel, self).__init__()
         self.encoder = encoder
+        self.efficient_net = efficient_net
         
         self.num_classes = num_classes
         self.nf = nf
@@ -20,11 +21,12 @@ class Embeddingmodel(nn.Module):
         # Shape: [Total images in all bags, channel, height, width]
         
         # Calculate the embeddings for all images in one go
-        h_all = self.encoder(all_images)
+        feat = self.encoder(all_images)
         
-        # Max pooling
-        v = torch.max(h_all, dim=2).values  
-        feat = torch.max(v, dim=2).values 
+        if not self.efficient_net:
+            # Max pooling
+            feat = torch.max(feat, dim=2).values  
+            feat = torch.max(feat, dim=2).values 
         
          
         if pred_on:
@@ -43,6 +45,8 @@ class Embeddingmodel(nn.Module):
             yhat_instances = None
 
         return logits, yhat_instances, feat
+    
+    
     
 class Linear_Classifier(nn.Module):
     """Linear classifier"""
@@ -87,48 +91,3 @@ class Linear_Classifier(nn.Module):
         
         return Y_prob, instance_scores
 
-
-
-
-
-
-class Embeddingmodel_GenSCL2(nn.Module):
-    def __init__(self, encoder, nf, num_classes=1):
-        super(Embeddingmodel_GenSCL2, self).__init__()
-        self.encoder = encoder
-        
-        self.num_classes = num_classes
-        self.nf = nf
-        
-        self.aggregator = Linear_Classifier(nf = self.nf, num_classes = num_classes)
-
-    def forward(self, input, pred_on=False):
-        num_bags = len(input) # input = [bag #, image #, channel, height, width]
-        
-        all_images = torch.cat(input, dim=0).cuda() # Concatenate all bags into a single tensor for batch processing
-        # Shape: [Total images in all bags, channel, height, width]
-        
-        # Calculate the embeddings for all images in one go
-        h_all = self.encoder.features(all_images)
-        
-        # Max pooling
-        v = torch.max(h_all, dim=2).values  
-        feat = torch.max(v, dim=2).values 
-        
-         
-        if pred_on:
-            # Split the embeddings back into per-bag embeddings
-            split_sizes = [bag.size(0) for bag in input]
-            h_per_bag = torch.split(feat, split_sizes, dim=0)
-            logits = torch.empty(num_bags, self.num_classes).cuda()
-            yhat_instances = []
-            for i, h in enumerate(h_per_bag):
-                # Receive four values from the aggregator
-                yhat_bag, yhat_ins = self.aggregator(h)
-                logits[i] = yhat_bag
-                yhat_instances.append(yhat_ins)
-        else:
-            logits = None
-            yhat_instances = None
-
-        return logits, yhat_instances, feat
