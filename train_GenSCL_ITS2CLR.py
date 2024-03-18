@@ -9,7 +9,6 @@ from data.Gen_ITS2CLR_util import *
 from torch.utils.data import Sampler
 from torch.optim import Adam
 from archs.backbone import create_timm_body
-from torchvision.models import efficientnet_v2_s
 from torchvision.models import efficientnet_b3, EfficientNet_B3_Weights
 from data.format_data import *
 from archs.model_GenSCL import *
@@ -279,27 +278,27 @@ def create_selection_mask(train_bag_logits, include_ratio):
 if __name__ == '__main__':
 
     # Config
-    model_name = '03_09_2024_ENTEST'
-    #dataset_name = 'cifar10'
-    #label_columns = ['Has_Truck']
-    #instance_columns = ['']
-    dataset_name = 'export_03_09_2024'
-    label_columns = ['Has_Malignant']
-    instance_columns = ['Malignant Lesion Present']   #['Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
-    img_size = 300
-    bag_batch_size = 2
+    model_name = 'cifar10_Gen_SCL_2'
+    dataset_name = 'cifar10'
+    label_columns = ['Has_Truck']
+    instance_columns = ['']
+    #dataset_name = 'export_03_09_2024'
+    #label_columns = ['Has_Malignant']
+    #instance_columns = ['Malignant Lesion Present']   #['Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
+    img_size = 32 #300
+    bag_batch_size = 20 #2
     min_bag_size = 2
-    max_bag_size = 20
-    instance_batch_size =  15
+    max_bag_size = 20 #20
+    instance_batch_size =  100 #12
+    use_efficient_net = False
     model_folder = f"{env}/models/{model_name}/"
     
     #ITS2CLR Config
     feature_extractor_train_count = 5
-    initial_ratio = 0.0 # --% preditions included
-    final_ratio = 0.8 # --% preditions included
-    total_epochs = 100
+    initial_ratio = 0.25 # --% preditions included
+    final_ratio = 0.90 # --% preditions included
+    total_epochs = 25
     warmup_epochs = 1
-    kick_start = True
     
     #GenSCL Config
     args = Args(
@@ -334,10 +333,10 @@ if __name__ == '__main__':
                 T.RandomVerticalFlip(),
                 T.RandomHorizontalFlip(),
                 T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
-                T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
+                #T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
                 CLAHETransform(),
                 T.ToTensor(),
-                #GaussianNoise(mean=0, std=0.015), 
+                ####GaussianNoise(mean=0, std=0.015), 
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
     
@@ -349,33 +348,30 @@ if __name__ == '__main__':
 
 
     # Create datasets
-    bag_dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False),list(range(0,1000)))
-    bag_dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False),list(range(0,1000)))
-    #bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
-    #bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
+    #bag_dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False),list(range(0,1000)))
+    #bag_dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False),list(range(0,1000)))
+    bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
+    bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
      
     # Create bag data loaders
     bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
     bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True)
 
 
-    # Resnet
-    encoder = create_timm_body("resnet18")
-    nf = num_features_model( nn.Sequential(*encoder.children()))
+    # Get Model
+    if use_efficient_net:
+        encoder = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
+        nf = 512
+        # Replace the last fully connected layer with a new one
+        num_features = encoder.classifier[1].in_features
+        encoder.classifier[1] = nn.Linear(num_features, nf)
+        
+    else:
+        encoder = create_timm_body("resnet18")
+        nf = num_features_model( nn.Sequential(*encoder.children()))
     
-    
-    # Efficent Net 
-    #encoder = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
-    #encoder.classifier = nn.Identity()  # Remove the original classifier
-    #encoder.avgpool = nn.Identity()  # Remove the average pooling layer
-    #dummy_output = encoder.features(torch.randn(1, 3, 224, 224))
-    #nf = dummy_output.shape[1] # Gets the number of the output features
-    # Replace the last fully connected layer with a new one
-    #num_features = encoder.classifier[1].in_features
-    #encoder.classifier[1] = nn.Linear(num_features, 512)
-    #nf = 512
-    
-    model = Embeddingmodel(encoder = encoder, nf = nf, num_classes = num_labels, efficient_net = False).cuda()
+
+    model = Embeddingmodel(encoder = encoder, nf = nf, num_classes = num_labels, efficient_net = use_efficient_net).cuda()
     
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total Parameters: {total_params}")        
@@ -394,8 +390,7 @@ if __name__ == '__main__':
     classifier_path = f"{model_folder}/{model_name}_classifier.pth"
     optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
     stats_path = f"{model_folder}/{model_name}_stats.pkl"
-    with open(f'{model_folder}model_architecture.txt', 'w') as f:
-        print(encoder, file=f)
+    hot_start = False
     
     if os.path.exists(model_path):
         model.load_state_dict(torch.load(model_path))
@@ -409,119 +404,126 @@ if __name__ == '__main__':
             epoch_start = saved_stats['epoch']
             val_loss_best = saved_stats['val_loss']
             
+        with open(f'{model_folder}model_architecture.txt', 'w') as f:
+            print(encoder, file=f)
+            
         # Load the selection_mask dictionary from the file
-        with open(f'{model_folder}/selection_mask.pkl', 'rb') as file:
-            selection_mask = pickle.load(file)
+        if os.path.exists(f'{model_folder}/selection_mask.pkl'):
+            with open(f'{model_folder}/selection_mask.pkl', 'rb') as file:
+                selection_mask = pickle.load(file)
+            hot_start = True
     else:
         print(f"{model_name} does not exist, creating new instance")
         os.makedirs(model_folder, exist_ok=True)
         val_loss_best = 99999
+        selection_mask = None
 
 
     # Training loop
     for epoch in range(epoch_start, total_epochs):
         
-        print('Training Default')
-        # Training phase
-        model.train()
-        
-        total_loss = 0.0
-        train_bag_logits = {}
-        total_acc = 0
-        total = 0
-        correct = 0
-        for (data, yb, instance_yb, id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)): 
-            xb, yb = data, yb.cuda()
+        if not hot_start: # Skip MIL for first epoch if we are continuing training
             
-            optimizer.zero_grad()
+            print('Training Default')
+            # Training phase
+            model.train()
             
-            outputs, instance_pred, _ = model(xb, pred_on = True)
-            #print(outputs)
-            
-
-            loss = BCE_loss(outputs, yb)
-            #print(loss)
-
-            loss.backward()
-            optimizer.step()
-
-            total_loss += loss.item() * len(xb)
-            predicted = (outputs > .5).float()
-            total += yb.size(0)
-            correct += (predicted == yb).sum().item()
-            
-            for i, bag_id in enumerate(id):
-                train_bag_logits[bag_id] = instance_pred[i].detach().cpu().numpy()
-            
-
-        train_loss = total_loss / total
-        train_acc = correct / total
-
-
-        # Evaluation phase
-        model.eval()
-        total_val_loss = 0.0
-        total_val_acc = 0.0
-        total = 0
-        correct = 0
-        all_targs = []
-        all_preds = []
-        with torch.no_grad():
-            for (data, yb, instance_yb, id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
+            total_loss = 0.0
+            train_bag_logits = {}
+            total_acc = 0
+            total = 0
+            correct = 0
+            for (data, yb, instance_yb, id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)): 
                 xb, yb = data, yb.cuda()
-
+                
+                optimizer.zero_grad()
+                
                 outputs, instance_pred, _ = model(xb, pred_on = True)
-                
-                
+                #print(outputs)
+
                 loss = BCE_loss(outputs, yb)
-                
-                total_val_loss += loss.item() * len(xb)
+                #print(loss)
+
+                loss.backward()
+                optimizer.step()
+
+                total_loss += loss.item() * len(xb)
                 predicted = (outputs > .5).float()
                 total += yb.size(0)
                 correct += (predicted == yb).sum().item()
                 
-                # Confusion Matrix data
-                all_targs.extend(yb.cpu().numpy())
-                if len(predicted.size()) == 0:
-                    predicted = predicted.view(1)
-                all_preds.extend(predicted.cpu().detach().numpy())
+                for i, bag_id in enumerate(id):
+                    train_bag_logits[bag_id] = instance_pred[i].detach().cpu().numpy()
+                
 
-        val_loss = total_val_loss / total
-        val_acc = correct / total
+            train_loss = total_loss / total
+            train_acc = correct / total
 
 
-        train_losses_over_epochs.append(train_loss)
-        valid_losses_over_epochs.append(val_loss)
-        
-        print(f"Epoch {epoch+1} | Acc   | Loss")
-        print(f"Train   | {train_acc:.4f} | {train_loss:.4f}")
-        print(f"Val     | {val_acc:.4f} | {val_loss:.4f}")
-            
-            
-            
-            
-            
+            # Evaluation phase
+            model.eval()
+            total_val_loss = 0.0
+            total_val_acc = 0.0
+            total = 0
+            correct = 0
+            all_targs = []
+            all_preds = []
+            with torch.no_grad():
+                for (data, yb, instance_yb, id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
+                    xb, yb = data, yb.cuda()
 
-        # Save the model
-        if val_loss < val_loss_best:
-            val_loss_best = val_loss
-            save_state(epoch, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, model, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs,)
-            print("Saved checkpoint due to improved val_loss")
+                    outputs, instance_pred, _ = model(xb, pred_on = True)
+                    
+                    
+                    loss = BCE_loss(outputs, yb)
+                    
+                    total_val_loss += loss.item() * len(xb)
+                    predicted = (outputs > .5).float()
+                    total += yb.size(0)
+                    correct += (predicted == yb).sum().item()
+                    
+                    # Confusion Matrix data
+                    all_targs.extend(yb.cpu().numpy())
+                    if len(predicted.size()) == 0:
+                        predicted = predicted.view(1)
+                    all_preds.extend(predicted.cpu().detach().numpy())
+
+            val_loss = total_val_loss / total
+            val_acc = correct / total
+
+
+            train_losses_over_epochs.append(train_loss)
+            valid_losses_over_epochs.append(val_loss)
             
-            # Get difficualy ratio
-            predictions_ratio = prediction_anchor_scheduler(epoch, total_epochs, warmup_epochs, initial_ratio, final_ratio)
-            #predictions_ratio = .9
-            selection_mask = create_selection_mask(train_bag_logits, predictions_ratio)
-            print("Created new sudo labels")
-            
-            # Save selection
-            with open(f'{model_folder}/selection_mask.pkl', 'wb') as file:
-                pickle.dump(selection_mask, file)
+            print(f"Epoch {epoch+1} | Acc   | Loss")
+            print(f"Train   | {train_acc:.4f} | {train_loss:.4f}")
+            print(f"Val     | {val_acc:.4f} | {val_loss:.4f}")
+                
+                
+                
+                
+                
+
+            # Save the model
+            if val_loss < val_loss_best:
+                val_loss_best = val_loss
+                save_state(epoch, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, model, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs,)
+                print("Saved checkpoint due to improved val_loss")
+                
+                # Create selection mask
+                predictions_ratio = prediction_anchor_scheduler(epoch, total_epochs, warmup_epochs, initial_ratio, final_ratio)
+                #predictions_ratio = .9
+                selection_mask = create_selection_mask(train_bag_logits, predictions_ratio)
+                print("Created new sudo labels")
+                
+                # Save selection
+                with open(f'{model_folder}/selection_mask.pkl', 'wb') as file:
+                    pickle.dump(selection_mask, file)
         
         
         
         # Contrastive Learning
-        
+        hot_start = False
         if epoch < warmup_epochs:
             warmup_on = True
         else:
