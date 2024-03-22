@@ -12,6 +12,7 @@ __pycache__/
 *.json
 *.ini
 *.zip
+*.pkl
 #*.pth
 
 # Distribution / packaging

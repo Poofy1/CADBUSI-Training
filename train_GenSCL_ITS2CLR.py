@@ -278,18 +278,18 @@ def create_selection_mask(train_bag_logits, include_ratio):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'cifar10_Gen_SCL_2'
-    dataset_name = 'cifar10'
-    label_columns = ['Has_Truck']
-    instance_columns = ['']
-    #dataset_name = 'export_03_09_2024'
-    #label_columns = ['Has_Malignant']
-    #instance_columns = ['Malignant Lesion Present']   #['Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
-    img_size = 32 #300
-    bag_batch_size = 20 #2
+    model_name = '03_18_2024_Res50_01'
+    #dataset_name = 'cifar10'
+    #label_columns = ['Has_Truck']
+    #instance_columns = ['']
+    dataset_name = 'export_03_18_2024'
+    label_columns = ['Has_Malignant']
+    instance_columns = ['Malignant Lesion Present']   #['Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
+    img_size = 300
+    bag_batch_size = 4
     min_bag_size = 2
-    max_bag_size = 20 #20
-    instance_batch_size =  100 #12
+    max_bag_size = 25
+    instance_batch_size =  30
     use_efficient_net = False
     model_folder = f"{env}/models/{model_name}/"
     
@@ -297,7 +297,7 @@ if __name__ == '__main__':
     feature_extractor_train_count = 5
     initial_ratio = 0.25 # --% preditions included
     final_ratio = 0.90 # --% preditions included
-    total_epochs = 25
+    total_epochs = 50
     warmup_epochs = 1
     
     #GenSCL Config
@@ -333,7 +333,7 @@ if __name__ == '__main__':
                 T.RandomVerticalFlip(),
                 T.RandomHorizontalFlip(),
                 T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
-                #T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
+                T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
                 CLAHETransform(),
                 T.ToTensor(),
                 ####GaussianNoise(mean=0, std=0.015), 
@@ -550,7 +550,7 @@ if __name__ == '__main__':
 
             # Iterate over the training data
             for idx, (images, instance_labels, unconfident_mask) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
-                warmup_learning_rate(args, epoch, idx, len(instance_dataloader_train), optimizer)
+                #warmup_learning_rate(args, epoch, idx, len(instance_dataloader_train), optimizer)
                 
                 # Data preparation 
                 bsz = instance_labels.shape[0]
