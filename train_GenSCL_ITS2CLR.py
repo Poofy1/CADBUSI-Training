@@ -278,7 +278,7 @@ def create_selection_mask(train_bag_logits, include_ratio):
 if __name__ == '__main__':
 
     # Config
-    model_name = '03_18_2024_Res50_01'
+    model_name = '03_18_2024_Res18_01'
     #dataset_name = 'cifar10'
     #label_columns = ['Has_Truck']
     #instance_columns = ['']
@@ -286,10 +286,10 @@ if __name__ == '__main__':
     label_columns = ['Has_Malignant']
     instance_columns = ['Malignant Lesion Present']   #['Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
     img_size = 300
-    bag_batch_size = 4
+    bag_batch_size = 5
     min_bag_size = 2
     max_bag_size = 25
-    instance_batch_size =  30
+    instance_batch_size =  35
     use_efficient_net = False
     model_folder = f"{env}/models/{model_name}/"
     
@@ -440,8 +440,24 @@ if __name__ == '__main__':
                 
                 outputs, instance_pred, _ = model(xb, pred_on = True)
                 #print(outputs)
+                
+                # Calculate bag-level loss
+                bag_loss = BCE_loss(outputs, yb)
 
-                loss = BCE_loss(outputs, yb)
+                # Calculate instance-level loss for labeled instances
+                instance_loss = 0.0
+                num_labeled_instances = 0
+                for i in range(len(instance_pred)):
+                    for j in range(len(instance_yb[i])):
+                        if instance_yb[i][j] != -1:  # -1 indicates no label
+                            instance_loss += BCE_loss(instance_pred[i][j], instance_yb[i][j].float().cuda().squeeze())
+                            num_labeled_instances += 1
+
+                if num_labeled_instances > 0:
+                    instance_loss /= num_labeled_instances
+                
+                # Combine bag-level and instance-level losses
+                loss = bag_loss + instance_loss
                 #print(loss)
 
                 loss.backward()
