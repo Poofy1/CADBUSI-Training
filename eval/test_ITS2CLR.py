@@ -20,6 +20,93 @@ val_transform = T.Compose([
             T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
 
+class Instance_Dataset(TUD.Dataset):
+    def __init__(self, bags_dict, selection_mask, transform=None, warmup=True):
+        self.transform = transform
+        self.warmup = warmup 
+        self.images = []
+        self.final_labels = []
+        self.warmup_mask = []
+        self.bag_ids = []
+        
+        
+
+        for bag_id, bag_info in bags_dict.items():
+            images = bag_info['images']
+            image_labels = bag_info['image_labels']
+            bag_label = bag_info['bag_labels'][0]  # Assuming each bag has a single label
+            
+            bag_id_key = bag_id.item() if isinstance(bag_id, torch.Tensor) else bag_id
+            
+            
+            if bag_id_key in selection_mask:
+                selection_mask_labels, _ = selection_mask[bag_id_key]
+            else: 
+                selection_mask_labels = None
+                
+            #print(selection_mask_labels)
+            
+            for idx, (img, label) in enumerate(zip(images, image_labels)):
+                image_label = None
+                warmup_mask_value = 0
+                
+                if not self.warmup:
+                    # Only include confident instances (selection_mask) or negative bags or instance labels
+                    if label[0] is not None:
+                        image_label = label[0]
+                    elif selection_mask_labels is not None and selection_mask_labels[idx] != -1:
+                        image_label = selection_mask_labels[idx]
+                    elif bag_label == 0:
+                        image_label = 0
+                else:
+                    # Include all data but replace with image_labels if present
+                    if label[0] is not None:
+                        image_label = label[0]
+                    else:
+                        image_label = bag_label  # Use bag label if instance label is not present
+                        if bag_label == 1:
+                            warmup_mask_value = 1 # Set warmup mask to 1 for instances without label[0] and bag_label is 1
+                
+                if image_label is not None:
+                    self.images.append(img)
+                    self.final_labels.append(image_label)
+                    self.warmup_mask.append(warmup_mask_value)
+                    self.bag_ids.append(bag_id_key)
+
+    def __getitem__(self, index):
+        img_path = self.images[index]
+        instance_label = self.final_labels[index]
+        warmup_unconfident = self.warmup_mask[index]
+        ids = self.bag_ids[index]
+        
+        img = Image.open(img_path).convert("RGB")
+        image_data_q = self.transform(img)
+
+        return image_data_q, instance_label, warmup_unconfident, ids
+
+
+    def __len__(self):
+        return len(self.images)
+    
+def collate_instance(batch):
+    batch_data_q = []
+    batch_labels = []
+    batch_unconfident = []
+    batch_ids = []
+
+    for image_data_q, bag_label, warmup_unconfident, ids in batch:
+        batch_data_q.append(image_data_q)
+        batch_labels.append(bag_label)
+        batch_unconfident.append(warmup_unconfident)
+        batch_ids.append(ids)
+
+    # Stack the images and labels
+    batch_data_q = torch.stack(batch_data_q)
+    batch_labels = torch.tensor(batch_labels, dtype=torch.long)
+    batch_unconfident = torch.tensor(batch_unconfident, dtype=torch.long)
+    batch_ids = torch.tensor(batch_ids, dtype=torch.long)
+
+    return batch_data_q, batch_labels, batch_unconfident, batch_ids
 
 def test_dataset(output_path, label_columns, instance_columns):
     # Load data
@@ -31,34 +118,40 @@ def test_dataset(output_path, label_columns, instance_columns):
 
     # Now use the combined data for the dataset
     #dataset_combined = TUD.Subset(BagOfImagesDataset(combined_dict, transform=val_transform, save_processed=False),list(range(0,50)))
-    dataset_combined = BagOfImagesDataset(combined_dict, transform=val_transform, save_processed=False)
-    combined_dl = TUD.DataLoader(dataset_combined, batch_size=1, collate_fn = collate_bag, drop_last=True)
+    #dataset_combined = BagOfImagesDataset(combined_dict, transform=val_transform, save_processed=False)
+    #dataset_combined = TUD.Subset(Instance_Dataset(combined_dict, [], transform=val_transform, warmup=True),list(range(0,10000)))
+    dataset_combined = Instance_Dataset(combined_dict, [], transform=val_transform, warmup=True)
+    combined_dl = TUD.DataLoader(dataset_combined, batch_size=1, collate_fn = collate_instance, drop_last=True)
     
     bag_data = {}
     criterion = nn.BCELoss()
 
     with torch.no_grad():
-        for (data, yb, instance_yb, id) in tqdm(combined_dl, total=len(combined_dl)):
-            xb, yb = data, yb.cuda()
+        for (images, instance_labels, unconfident_mask, id) in tqdm(combined_dl, total=len(combined_dl)):
+            xb, yb = [images], instance_labels.cuda()
             
             outputs, instance_pred, features = model(xb, pred_on=True)
+            
+            outputs = outputs.squeeze(0)
+            yb = yb.to(outputs.dtype)
+            
             loss = criterion(outputs, yb)
             bag_id = id.item()
             
             if bag_id not in bag_data:
                 bag_data[bag_id] = {
-                    'predictions': [],
                     'instance_predictions': [],
                     'features': np.empty((0, features.shape[1])),
                     'losses': [],
-                    'labels': []
+                    'labels': [],
+                    'unconfident_mask': []
                 }
 
-                bag_data[bag_id]['predictions'].append(outputs.cpu().tolist())
-                bag_data[bag_id]['losses'].append(loss.item())
-                bag_data[bag_id]['labels'].append(yb.cpu().numpy().tolist())
-                bag_data[bag_id]['features'] = np.concatenate((bag_data[bag_id]['features'], features.cpu().numpy()))
-                bag_data[bag_id]['instance_predictions'].append(instance_pred)
+            bag_data[bag_id]['losses'].append(loss.item())
+            bag_data[bag_id]['labels'].append(yb.cpu().numpy().tolist())
+            bag_data[bag_id]['features'] = np.concatenate((bag_data[bag_id]['features'], features.cpu().numpy()))
+            bag_data[bag_id]['instance_predictions'].append(outputs)
+            bag_data[bag_id]['unconfident_mask'].append(unconfident_mask)
     
     # Save the bag_data dictionary to disk
     with open(f'{output_path}/bag_data.pkl', 'wb') as f:
@@ -134,55 +227,82 @@ if __name__ == '__main__':
     
     
     # Analyzing Data
-    
-    
-    # Create a new array containing all features and corresponding labels
+    import umap
+    from sklearn.metrics import silhouette_score
+    import plotly.graph_objects as go
+
+    # Create a new array containing all features, instance predictions, and corresponding labels
     all_features = []
+    all_instance_predictions = []
     all_labels = []
+    all_unconfident = []
     for bag_id, data in bag_data.items():
         all_features.append(data['features'])
+        all_instance_predictions.extend([pred.cpu() for pred in data['instance_predictions']])  # Move tensors to CPU
         all_labels.extend([data['labels'][0][0]] * len(data['features']))
-
+        all_unconfident.extend(data['unconfident_mask'])
     all_features = np.concatenate(all_features)
+    all_instance_predictions = np.concatenate([pred.numpy() for pred in all_instance_predictions])  # Convert tensors to NumPy arrays
     all_labels = np.ravel(all_labels)
-    
+    all_unconfident = np.ravel(all_unconfident)
     print(all_features.shape)
 
-    # Apply PCA to reduce dimensionality
-    pca = PCA(n_components=100)
-    features_pca = pca.fit_transform(all_features)
-    
-    print(features_pca.shape)
-
-    # Randomly sample a subset of data points
-    num_samples = 5000  # Adjust this based on your needs
-    random_indices = np.random.choice(features_pca.shape[0], num_samples, replace=False)
-    features_subset = features_pca[random_indices]
-    labels_subset = all_labels[random_indices]
-
-    print(features_subset.shape)
-    
-    # Apply t-SNE to the subset of features
-    tsne = TSNE(n_components=3, perplexity=30, learning_rate=200, n_iter=1000)
-    features_3d = tsne.fit_transform(features_subset)
-    
+    # Apply UMAP to the features
+    umap_model = umap.UMAP(n_components=3, n_neighbors=15, min_dist=0.1)
+    features_3d = umap_model.fit_transform(all_features)
     print(features_3d.shape)
 
-    # Create a 3D scatter plot of the features, color-coded by labels
-    fig = plt.figure(figsize=(8, 8))
-    ax = fig.add_subplot(111, projection='3d')
+    # Create combined labels array
+    combined_labels = np.zeros_like(all_labels, dtype=int)
+    combined_labels[(all_unconfident == 0) & (all_labels == 0)] = 0  # Confident Negative
+    combined_labels[(all_unconfident == 1) & (all_instance_predictions < 0.5)] = 1  # Unconfident Negative
+    combined_labels[(all_unconfident == 0) & (all_labels == 1)] = 2  # Confident Positive
+    combined_labels[(all_unconfident == 1) & (all_instance_predictions >= 0.5)] = 3  # Unconfident Positive
 
-    colors = ['red', 'blue']
-    labels = ['Negative', 'Positive']
 
-    for label in [0, 1]:
-        mask = labels_subset == label
-        ax.scatter(features_3d[mask, 0], features_3d[mask, 1], features_3d[mask, 2], c=colors[label], label=labels[label])
+    # Calculate the silhouette score
+    silhouette_avg = silhouette_score(features_3d, combined_labels)
+    print(f"Silhouette score: {silhouette_avg}")
 
-    ax.set_xlabel('t-SNE Dimension 1')
-    ax.set_ylabel('t-SNE Dimension 2')
-    ax.set_zlabel('t-SNE Dimension 3')
-    ax.legend()
-    plt.tight_layout()
-    plt.savefig(f'{output_path}/features_3d_plot_labeled.png')
-    plt.show()
+    # Downsample the data points
+    num_samples = 5000  # Adjust this value based on your desired number of points to plot
+    random_indices = np.random.choice(features_3d.shape[0], num_samples, replace=False)
+    features_subset = features_3d[random_indices]
+    combined_labels_subset = combined_labels[random_indices]
+
+    # Create a 3D scatter plot using Plotly
+    traces = [
+        go.Scatter3d(
+            x=features_subset[combined_labels_subset == label, 0],
+            y=features_subset[combined_labels_subset == label, 1],
+            z=features_subset[combined_labels_subset == label, 2],
+            mode='markers',
+            marker=dict(
+                size=3,
+                color=color,
+                opacity=0.8
+            ),
+            name=label_name
+        )
+        for label, color, label_name in zip(
+            [1, 3, 0, 2],  # Reordered labels: Unconfident Negative, Unconfident Positive, Confident Negative, Confident Positive
+            ['lightblue', 'lightcoral', 'blue', 'red'],
+            ['Unconfident Negative', 'Unconfident Positive', 'Confident Negative', 'Confident Positive']
+        )
+    ]
+
+    fig = go.Figure(data=traces)
+
+    fig.update_layout(
+        title='3D Scatter Plot of Features',
+        scene=dict(
+            xaxis_title='UMAP Dimension 1',
+            yaxis_title='UMAP Dimension 2',
+            zaxis_title='UMAP Dimension 3'
+        ),
+        width=800,
+        height=800
+    )
+
+    fig.write_html(f'{output_path}/features_3d_plot_labeled_unconfident_umap.html')
+    fig.show()

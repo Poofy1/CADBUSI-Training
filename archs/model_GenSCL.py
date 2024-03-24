@@ -89,5 +89,7 @@ class Linear_Classifier(nn.Module):
 
         Y_prob = self.fc(Z)
         
+        instance_scores = torch.sigmoid(instance_scores.squeeze())
+        
         return Y_prob, instance_scores
 
