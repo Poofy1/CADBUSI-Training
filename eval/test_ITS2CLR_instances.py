@@ -163,7 +163,7 @@ def test_dataset(output_path, label_columns, instance_columns):
 if __name__ == '__main__':
 
     # Config
-    model_name = '03_18_2024_Res50_01'
+    model_name = '03_18_2024_Res18_01'
     dataset_name = 'export_03_18_2024'
     label_columns = ['Has_Malignant']
     instance_columns = ['Malignant Lesion Present']   #['Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
@@ -185,48 +185,79 @@ if __name__ == '__main__':
     # Get Training Data
     num_labels = len(label_columns)
 
-    # Get Model
-    if use_efficient_net:
-        encoder = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
-        nf = 512
-        # Replace the last fully connected layer with a new one
-        num_features = encoder.classifier[1].in_features
-        encoder.classifier[1] = nn.Linear(num_features, nf)
-        
-    else:
-        encoder = create_timm_body("resnet50")
-        nf = num_features_model( nn.Sequential(*encoder.children()))
     
-
-    model = Embeddingmodel(encoder = encoder, nf = nf, num_classes = num_labels, efficient_net = use_efficient_net).cuda()
-    
-    
-    
-    
-    
-    total_params = sum(p.numel() for p in model.parameters())
-    print(f"Total Parameters: {total_params}")        
-        
-    BCE_loss = nn.BCELoss()
-    genscl = GenSupConLossv2(temperature=0.07, contrast_mode='all', base_temperature=0.07)
-    
-    # Check if the model already exists
-    model_folder = f"{parent_dir}/models/{model_name}/"
-    model_path = f'{model_folder}/{model_name}.pth'
-    model.load_state_dict(torch.load(model_path))
-    print(f"Loaded pre-existing model from {model_name}")
-
 
 
     if os.path.exists(f'{output_path}/bag_data.pkl'):
         with open(f'{output_path}/bag_data.pkl', 'rb') as f:
             bag_data = pickle.load(f)
     else:
+        
+        # Get Model
+        if use_efficient_net:
+            encoder = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
+            nf = 512
+            # Replace the last fully connected layer with a new one
+            num_features = encoder.classifier[1].in_features
+            encoder.classifier[1] = nn.Linear(num_features, nf)
+            
+        else:
+            encoder = create_timm_body("resnet18")
+            nf = num_features_model( nn.Sequential(*encoder.children()))
+        
+
+        model = Embeddingmodel(encoder = encoder, nf = nf, num_classes = num_labels, efficient_net = use_efficient_net).cuda()
+        
+        
+        
+        
+        
+        total_params = sum(p.numel() for p in model.parameters())
+        print(f"Total Parameters: {total_params}")        
+            
+        BCE_loss = nn.BCELoss()
+        genscl = GenSupConLossv2(temperature=0.07, contrast_mode='all', base_temperature=0.07)
+        
+        # Check if the model already exists
+        model_folder = f"{parent_dir}/models/{model_name}/"
+        model_path = f'{model_folder}/{model_name}.pth'
+        model.load_state_dict(torch.load(model_path))
+        print(f"Loaded pre-existing model from {model_name}")
+
+
         bag_data = test_dataset(output_path, label_columns, instance_columns)
         
     
     
-    # Analyzing Data
+    # Find the worst performing images with unconfidence 0
+    worst_performing_images = []
+    num_worst_images = 10  # Adjust this value to the desired number of worst performing images
+
+    for bag_id, data in bag_data.items():
+        instance_predictions = data['instance_predictions']
+        labels = data['labels']
+        unconfident_mask = data['unconfident_mask']
+        
+        for i, (pred, label, unconfident) in enumerate(zip(instance_predictions, labels, unconfident_mask)):
+            if unconfident.item() == 0:  # Check if unconfidence is 0
+                pred_value = pred.item()  # Convert tensor to scalar value
+                label_value = label[0]  # Assuming labels are in the format [label_value]
+                
+                # Calculate the absolute difference between prediction and label
+                diff = abs(pred_value - label_value)
+                
+                worst_performing_images.append((diff, bag_id, i))
+
+    # Sort the worst performing images based on the absolute difference in descending order
+    worst_performing_images.sort(reverse=True)
+
+    # Print the worst performing images with unconfidence 0
+    print("Worst Performing Images with Unconfidence 0:")
+    for diff, bag_id, img_increment in worst_performing_images[:num_worst_images]:
+        print(f"Bag ID: {bag_id}, Image Increment: {img_increment}, Difference: {diff:.4f}")
+        
+    
+    # GETTING UMAP
     import umap
     from sklearn.metrics import silhouette_score
     import plotly.graph_objects as go
