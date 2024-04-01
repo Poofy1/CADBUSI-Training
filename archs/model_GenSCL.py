@@ -4,31 +4,30 @@ import torch.nn.functional as F
 
 
 class Embeddingmodel(nn.Module):
-    def __init__(self, encoder, nf, num_classes=1, efficient_net = False):
+    def __init__(self, encoder, nf, num_classes=1, efficient_net=False):
         super(Embeddingmodel, self).__init__()
         self.encoder = encoder
         self.efficient_net = efficient_net
-        
         self.num_classes = num_classes
         self.nf = nf
-        
-        self.aggregator = Linear_Classifier(nf = self.nf, num_classes = num_classes)
+        self.aggregator = Linear_Classifier(nf=self.nf, num_classes=num_classes)
+        self.projector = nn.Sequential(
+            nn.Linear(512, 512),
+            nn.ReLU(inplace=True),
+            nn.Linear(512, 256)
+        )
 
-    def forward(self, input, pred_on=False):
+    def forward(self, input, projector=False, pred_on = False):
         num_bags = len(input) # input = [bag #, image #, channel, height, width]
-        
-        all_images = torch.cat(input, dim=0).cuda() # Concatenate all bags into a single tensor for batch processing
-        # Shape: [Total images in all bags, channel, height, width]
-        
+        all_images = torch.cat(input, dim=0).cuda()  # Concatenate all bags into a single tensor for batch processing
+
         # Calculate the embeddings for all images in one go
         feat = self.encoder(all_images)
-        
         if not self.efficient_net:
             # Max pooling
-            feat = torch.max(feat, dim=2).values  
-            feat = torch.max(feat, dim=2).values 
-        
-         
+            feat = torch.max(feat, dim=2).values
+            feat = torch.max(feat, dim=2).values
+
         if pred_on:
             # Split the embeddings back into per-bag embeddings
             split_sizes = [bag.size(0) for bag in input]
@@ -43,6 +42,10 @@ class Embeddingmodel(nn.Module):
         else:
             logits = None
             yhat_instances = None
+            
+        if projector:
+            feat = self.projector(feat)
+            
 
         return logits, yhat_instances, feat
     
@@ -72,7 +75,15 @@ class Linear_Classifier(nn.Module):
             nn.Linear(nf, num_classes),
             nn.Sigmoid()
         )
-
+        
+        
+    def reset_parameters(self):
+        # Reset the parameters of all the submodules in the Linear_Classifier
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                module.reset_parameters()
+        
+        
     def forward(self, v):
         
         # Gated-attention mechanism
