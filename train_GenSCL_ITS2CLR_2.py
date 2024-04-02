@@ -26,8 +26,6 @@ class Instance_Dataset(TUD.Dataset):
         self.final_labels = []
         self.warmup_mask = []
         
-        
-
         for bag_id, bag_info in bags_dict.items():
             images = bag_info['images']
             image_labels = bag_info['image_labels']
@@ -45,19 +43,14 @@ class Instance_Dataset(TUD.Dataset):
                 image_label = None
                 warmup_mask_value = 0
                 
-                #print(label)
-                
                 if not self.warmup:
                     # Only include confident instances (selection_mask) or negative bags or instance labels
                     if label[0] is not None:
                         image_label = label[0]
-                        print(0)
                     elif selection_mask_labels is not None and selection_mask_labels[idx] != -1:
                         image_label = selection_mask_labels[idx]
-                        print(1)
                     elif bag_label == 0:
                         image_label = 0
-                        print(2)
                 else:
                     # Include all data but replace with image_labels if present
                     if label[0] is not None:
@@ -274,13 +267,30 @@ def create_selection_mask(train_bag_logits, include_ratio):
     
     
 
+def load_state(stats_path, target_folder):
+    selection_mask = []
     
+    with open(stats_path, 'rb') as f:
+        saved_stats = pickle.load(f)
+        train_losses = saved_stats['train_losses']
+        valid_losses = saved_stats['valid_losses']
+        epoch = saved_stats['epoch']
+        val_loss_best = saved_stats['val_loss']
+    
+    # Load the selection_mask dictionary from the file
+    if os.path.exists(f'{target_folder}/selection_mask.pkl'):
+        with open(f'{target_folder}/selection_mask.pkl', 'rb') as file:
+            selection_mask = pickle.load(file)
+            
+    return train_losses, valid_losses, epoch, val_loss_best, selection_mask
 
 
 
 if __name__ == '__main__':
 
     # Config
+    pretrained_name = "03_18_2024_Res18_Head"
+    
     """model_name = 'cifar10_Res18_02'
     dataset_name = 'cifar10'
     label_columns = ['Has_Truck']
@@ -300,7 +310,6 @@ if __name__ == '__main__':
     max_bag_size = 25
     instance_batch_size =  50
     use_efficient_net = False
-    model_folder = f"{env}/models/{model_name}/"
     
     #ITS2CLR Config
     feature_extractor_train_count = 5
@@ -308,29 +317,15 @@ if __name__ == '__main__':
     initial_ratio = 0.25 # --% preditions included
     final_ratio = 0.90 # --% preditions included
     total_epochs = 20
-    warmup_epochs = 2
-    
-    #GenSCL Config
-    args = Args(
-        warm=True,
-        start_epoch=0,
-        warm_epochs = warmup_epochs,
-        learning_rate=0.001,
-        lr_decay_rate=0.1,
-        num_classes = len(label_columns) + 1,
-        epochs=total_epochs,
-        warmup_from=0.001,
-        cosine=True,
-        lr_decay_epochs=[30, 40],
-        mix='mixup',
-        mix_alpha=0.2,
-        KD_temp=4,
-        KD_alpha=0.9,
-        teacher_path=model_folder,
-        teacher_ckpt='teacher_ITS2CLR.pth'
-    )
-    
 
+    warmup_epochs = 20
+    
+    learning_rate=0.001
+    mix_alpha=0.2
+    mix='mixup'
+    num_classes = len(label_columns) + 1
+
+    
     # Get Training Data
     export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
     cropped_images = f"F:/Temp_SSD_Data/{dataset_name}_{img_size}_images/"
@@ -341,9 +336,9 @@ if __name__ == '__main__':
     
     train_transform = T.Compose([
                 ###T.RandomVerticalFlip(),
-                #T.RandomHorizontalFlip(),
-                #T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
-                #T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
+                T.RandomHorizontalFlip(),
+                T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
+                T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
                 CLAHETransform(),
                 T.ToTensor(),
                 ###GaussianNoise(mean=0, std=0.015), 
@@ -386,42 +381,35 @@ if __name__ == '__main__':
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total Parameters: {total_params}")        
         
-    optimizer = Adam(model.parameters(), lr=args.learning_rate)
+    optimizer = Adam(model.parameters(), lr=learning_rate)
     BCE_loss = nn.BCELoss()
     genscl = GenSupConLossv2(temperature=0.07, contrast_mode='all', base_temperature=0.07)
-    train_losses_over_epochs = []
-    valid_losses_over_epochs = []
-    epoch_start = 0
-    
+    train_losses = []
+    valid_losses = []
 
     # Check if the model already exists
     model_folder = f"{env}/models/{model_name}/"
     model_path = f"{model_folder}/{model_name}.pth"
-    classifier_path = f"{model_folder}/{model_name}_classifier.pth"
     optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
     stats_path = f"{model_folder}/{model_name}_stats.pkl"
-    hot_start = False
+    
+    head_folder = f"{env}/models/{pretrained_name}/"
+    head_path = f"{head_folder}/{pretrained_name}.pth"
+    head_optimizer_path = f"{head_folder}/{pretrained_name}_optimizer.pth"
+    head_stats_path = f"{head_folder}/{pretrained_name}_stats.pkl"
     
     val_loss_best = 99999
     selection_mask = []
-        
+    epoch = 0
+    warmup = False
+
     if os.path.exists(model_path):
         model.load_state_dict(torch.load(model_path))
         optimizer.load_state_dict(torch.load(optimizer_path))
         print(f"Loaded pre-existing model from {model_name}")
+
+        train_losses, valid_losses, epoch, val_loss_best, selection_mask = load_state(stats_path, model_path)
         
-        with open(stats_path, 'rb') as f:
-            saved_stats = pickle.load(f)
-            train_losses_over_epochs = saved_stats['train_losses']
-            valid_losses_over_epochs = saved_stats['valid_losses']
-            epoch_start = saved_stats['epoch']
-            val_loss_best = saved_stats['val_loss']
-            
-        # Load the selection_mask dictionary from the file
-        if os.path.exists(f'{model_folder}/selection_mask.pkl'):
-            with open(f'{model_folder}/selection_mask.pkl', 'rb') as file:
-                selection_mask = pickle.load(file)
-            hot_start = True
     else:
         print(f"{model_name} does not exist, creating new instance")
         os.makedirs(model_folder, exist_ok=True)
@@ -429,46 +417,55 @@ if __name__ == '__main__':
         with open(f'{model_folder}model_architecture.txt', 'w') as f:
             print(encoder, file=f)
             
+        if os.path.exists(head_path):
+            model.load_state_dict(torch.load(head_path))
+            optimizer.load_state_dict(torch.load(head_optimizer_path))
+            print(f"Loaded pre-trained model from {pretrained_name}")
+            
+            train_losses, valid_losses, epoch, val_loss_best, selection_mask = load_state(head_stats_path, head_folder)
+        else:
+            warmup = True
+            os.makedirs(head_folder, exist_ok=True)
+            
+            with open(f'{head_folder}model_architecture.txt', 'w') as f:
+                print(encoder, file=f)
+            
         
 
 
     # Training loop
-    epoch = epoch_start
     while epoch < total_epochs:
         
-        # Contrastive Learning
-        if epoch < warmup_epochs:
-            warmup_on = True
-        else:
-            warmup_on = False
-        
+
         # Used the instance predictions from bag training to update the Instance Dataloader
-        instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, warmup=warmup_on)
+        instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, warmup=warmup)
         
-        if warmup_on:
+        if warmup:
             sampler = WarmupSampler(instance_dataset_train, instance_batch_size)
             instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=sampler, collate_fn = collate_instance)
         else:
             instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_size=instance_batch_size, collate_fn = collate_instance, drop_last=True, shuffle = True)
-        print('Training Feature Extractor')
         
+        print('Training Feature Extractor')
+        print(f'Warmup Mode: {warmup}')
         # Unfreeze encoder
         for param in model.encoder.parameters():
             param.requires_grad = True
     
         # Generalized Supervised Contrastive Learning phase
+        if warmup:
+            target_count = warmup_epochs
+        else:
+            target_count = feature_extractor_train_count
+        
+        
         model.train()
-        for i in range(feature_extractor_train_count): 
+        for i in range(target_count): 
             losses = AverageMeter()
-            
-            epoch_loss = 0.0
-            total_loss = 0
 
             # Iterate over the training data
             for idx, (images, instance_labels, unconfident_mask) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
-                warmup_learning_rate(args, epoch, idx, len(instance_dataloader_train), optimizer)
-                
-                
+                #warmup_learning_rate(args, epoch, idx, len(instance_dataloader_train), optimizer)
                 
                 # Data preparation 
                 bsz = instance_labels.shape[0]
@@ -478,12 +475,12 @@ if __name__ == '__main__':
                 instance_labels = instance_labels.cuda(non_blocking=True)
                 
                 # image-based regularizations (lam 1 = no mixup)
-                im_q, y0a, y0b, lam0 = mix_fn(im_q, instance_labels, args.mix_alpha, args.mix)
-                im_k, y1a, y1b, lam1 = mix_fn(im_k, instance_labels, args.mix_alpha, args.mix)
+                im_q, y0a, y0b, lam0 = mix_fn(im_q, instance_labels, mix_alpha, mix)
+                im_k, y1a, y1b, lam1 = mix_fn(im_k, instance_labels, mix_alpha, mix)
                 #images = torch.cat([im_q, im_k], dim=0)
                 images = [im_q, im_k]
-                l_q = mix_target(y0a, y0b, lam0, args.num_classes)
-                l_k = mix_target(y1a, y1b, lam1, args.num_classes)
+                l_q = mix_target(y0a, y0b, lam0, num_classes)
+                l_k = mix_target(y1a, y1b, lam1, num_classes)
                 
                 # forward
                 optimizer.zero_grad()
@@ -493,17 +490,13 @@ if __name__ == '__main__':
                 
                 # get loss (no teacher)
                 mapped_anchors = ~unconfident_mask.bool()
-                print(instance_labels)
-                print(unconfident_mask)
-                print(mapped_anchors)
                 loss = genscl([zk, zq], [l_q, l_k], (mapped_anchors, mapped_anchors))
-                #print(loss)
                 losses.update(loss.item(), bsz)
 
                 loss.backward()
                 optimizer.step()
                 
-            print(f'Gen_SCL Loss: {losses.avg:.5f}')
+            print(f'[{i+1}/{target_count}] Gen_SCL Loss: {losses.avg:.5f}')
 
 
 
@@ -585,10 +578,10 @@ if __name__ == '__main__':
             val_loss = total_val_loss / total
             val_acc = correct / total
 
-            train_losses_over_epochs.append(train_loss)
-            valid_losses_over_epochs.append(val_loss)
+            train_losses.append(train_loss)
+            valid_losses.append(val_loss)
 
-            print(f"Epoch {epoch+1} | Acc | Loss")
+            print(f"[{i+1}/{MIL_train_count}] | Acc | Loss")
             print(f"Train | {train_acc:.4f} | {train_loss:.4f}")
             print(f"Val | {val_acc:.4f} | {val_loss:.4f}")
                         
@@ -599,11 +592,18 @@ if __name__ == '__main__':
             # Save the model
             if val_loss < val_loss_best:
                 val_loss_best = val_loss
-                save_state(epoch, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, model, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs,)
+                if warmup:
+                    target_folder = head_folder
+                    target_name = pretrained_name
+                else:
+                    target_folder = model_folder
+                    target_name = model_name
+                
+                save_state(epoch, label_columns, train_acc, val_loss, val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, train_losses, valid_losses,)
                 print("Saved checkpoint due to improved val_loss")
                 
                 # Create selection mask
-                predictions_ratio = prediction_anchor_scheduler(epoch, total_epochs, warmup_epochs, initial_ratio, final_ratio)
+                predictions_ratio = prediction_anchor_scheduler(epoch, total_epochs, 0, initial_ratio, final_ratio)
                 #predictions_ratio = .9
                 selection_mask = create_selection_mask(train_bag_logits, predictions_ratio)
                 print("Created new sudo labels")
@@ -611,14 +611,9 @@ if __name__ == '__main__':
                 epoch += 1
                 
                 # Save selection
-                with open(f'{model_folder}/selection_mask.pkl', 'wb') as file:
+                with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
                     pickle.dump(selection_mask, file)
         
-        
-        
-        
-        
-        
-        
-        
-        
+    if warmup:
+        print("Warmup Phase Finished")
+        warmup = False

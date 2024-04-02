@@ -194,6 +194,8 @@ def create_bags(data, min_size, max_size, root_dir, label_columns, instance_colu
     
     image_label_map = {}
     
+    
+    
     # Check if instance_data and instance_columns are provided and valid
     if instance_data is not None and instance_columns is not None:
         # Process instance_data only if it's a valid DataFrame
