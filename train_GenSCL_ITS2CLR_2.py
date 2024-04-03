@@ -318,7 +318,7 @@ if __name__ == '__main__':
     final_ratio = 0.90 # --% preditions included
     total_epochs = 20
 
-    warmup_epochs = 20
+    warmup_epochs = 15
     
     learning_rate=0.001
     mix_alpha=0.2
@@ -460,7 +460,7 @@ if __name__ == '__main__':
         
         
         model.train()
-        for i in range(target_count): 
+        """for i in range(target_count): 
             losses = AverageMeter()
 
             # Iterate over the training data
@@ -496,7 +496,7 @@ if __name__ == '__main__':
                 loss.backward()
                 optimizer.step()
                 
-            print(f'[{i+1}/{target_count}] Gen_SCL Loss: {losses.avg:.5f}')
+            print(f'[{i+1}/{target_count}] Gen_SCL Loss: {losses.avg:.5f}')"""
 
 
 
@@ -541,6 +541,9 @@ if __name__ == '__main__':
                 predicted = (outputs > 0.5).float()
                 total += yb.size(0)
                 correct += (predicted == yb).sum().item()
+                
+                for i, bag_id in enumerate(id):
+                    train_bag_logits[bag_id] = instance_pred[i].detach().cpu().numpy()
 
             train_loss = total_loss / total
             train_acc = correct / total
@@ -614,6 +617,6 @@ if __name__ == '__main__':
                 with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
                     pickle.dump(selection_mask, file)
         
-    if warmup:
-        print("Warmup Phase Finished")
-        warmup = False
+        if warmup:
+            print("Warmup Phase Finished")
+            warmup = False
