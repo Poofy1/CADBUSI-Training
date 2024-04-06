@@ -1,6 +1,0 @@
-Epoch 5
-Training Accuracy:
-  Overall: 0.7500
-Validation Accuracy:
-  Overall: 0.8600
-
