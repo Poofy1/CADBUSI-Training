@@ -224,6 +224,8 @@ def create_selection_mask(train_bag_logits, include_ratio):
     predictions = []  # To store predictions alongside logits
     logit_signs = []  # To store the original sign of each logit
     
+    print(train_bag_logits)
+    
     # Loop through train_bag_logits to process logits
     for bag_id, logits in train_bag_logits.items():
         # Convert tensor bag_id to integer if necessary
@@ -262,6 +264,8 @@ def create_selection_mask(train_bag_logits, include_ratio):
         # Update mask based on original sign: 0 if originally negative, 1 if positive
         combined_dict[original_bag_id][0][original_position] = max(0, original_sign)
 
+    print(combined_dict)
+    
     return combined_dict
     
     
@@ -289,18 +293,20 @@ def load_state(stats_path, target_folder):
 if __name__ == '__main__':
 
     # Config
-    pretrained_name = "03_18_2024_Res18_Head"
     
-    """model_name = 'cifar10_Res18_02'
+    pretrained_name = "cifar10_Head"
+    model_name = 'cifar10_Res18_02'
     dataset_name = 'cifar10'
     label_columns = ['Has_Truck']
     instance_columns = ['']
     img_size = 32
-    bag_batch_size = 20
+    bag_batch_size = 30
     min_bag_size = 2
     max_bag_size = 25
-    instance_batch_size =  100"""
-    model_name = '03_18_2024_Res18_02'
+    instance_batch_size =  200
+    
+    """pretrained_name = "03_18_2024_Res18_Head_3"
+    model_name = '03_18_2024_Res18_04'
     dataset_name = 'export_03_18_2024'
     label_columns = ['Has_Malignant']
     instance_columns = ['Malignant Lesion Present']   #['Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
@@ -308,14 +314,14 @@ if __name__ == '__main__':
     bag_batch_size = 10
     min_bag_size = 2
     max_bag_size = 25
-    instance_batch_size =  50
+    instance_batch_size =  50"""
     use_efficient_net = False
     
     #ITS2CLR Config
-    feature_extractor_train_count = 5
+    feature_extractor_train_count = 6
     MIL_train_count = 10
-    initial_ratio = 0.25 # --% preditions included
-    final_ratio = 0.90 # --% preditions included
+    initial_ratio = 0.4 # --% preditions included
+    final_ratio = 0.95 # --% preditions included
     total_epochs = 20
 
     warmup_epochs = 15
@@ -332,9 +338,20 @@ if __name__ == '__main__':
     bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
     num_labels = len(label_columns)
     
-    
-    
     train_transform = T.Compose([
+                T.RandomVerticalFlip(),
+                T.RandomHorizontalFlip(),
+                T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
+                T.ToTensor(),
+                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
+    
+    val_transform = T.Compose([
+                T.ToTensor(),
+                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
+    
+    """train_transform = T.Compose([
                 ###T.RandomVerticalFlip(),
                 T.RandomHorizontalFlip(),
                 T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
@@ -349,14 +366,14 @@ if __name__ == '__main__':
                 CLAHETransform(),
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
+            ])"""
 
 
     # Create datasets
-    #bag_dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
-    #bag_dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
-    bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
-    bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
+    bag_dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
+    bag_dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
+    #bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=True)
+    #bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
      
     # Create bag data loaders
     bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
@@ -408,7 +425,7 @@ if __name__ == '__main__':
         optimizer.load_state_dict(torch.load(optimizer_path))
         print(f"Loaded pre-existing model from {model_name}")
 
-        train_losses, valid_losses, epoch, val_loss_best, selection_mask = load_state(stats_path, model_path)
+        train_losses, valid_losses, epoch, val_loss_best, selection_mask = load_state(stats_path, model_folder)
         
     else:
         print(f"{model_name} does not exist, creating new instance")
@@ -436,7 +453,6 @@ if __name__ == '__main__':
     # Training loop
     while epoch < total_epochs:
         
-
         # Used the instance predictions from bag training to update the Instance Dataloader
         instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, warmup=warmup)
         
@@ -477,7 +493,6 @@ if __name__ == '__main__':
                 # image-based regularizations (lam 1 = no mixup)
                 im_q, y0a, y0b, lam0 = mix_fn(im_q, instance_labels, mix_alpha, mix)
                 im_k, y1a, y1b, lam1 = mix_fn(im_k, instance_labels, mix_alpha, mix)
-                #images = torch.cat([im_q, im_k], dim=0)
                 images = [im_q, im_k]
                 l_q = mix_target(y0a, y0b, lam0, num_classes)
                 l_k = mix_target(y1a, y1b, lam1, num_classes)
@@ -542,8 +557,8 @@ if __name__ == '__main__':
                 total += yb.size(0)
                 correct += (predicted == yb).sum().item()
                 
-                for i, bag_id in enumerate(id):
-                    train_bag_logits[bag_id] = instance_pred[i].detach().cpu().numpy()
+                for instance_id, bag_id in enumerate(id):
+                    train_bag_logits[bag_id] = instance_pred[instance_id].detach().cpu().numpy()
 
             train_loss = total_loss / total
             train_acc = correct / total
@@ -593,7 +608,7 @@ if __name__ == '__main__':
             
 
             # Save the model
-            if val_loss < val_loss_best:
+            if True:#val_loss < val_loss_best:
                 val_loss_best = val_loss
                 if warmup:
                     target_folder = head_folder
