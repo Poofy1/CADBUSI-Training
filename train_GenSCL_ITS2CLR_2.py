@@ -219,55 +219,47 @@ class GenSupConLossv2(nn.Module):
 
 
 def create_selection_mask(train_bag_logits, include_ratio):
-    combined_logits = []
+    combined_probs = []
     original_indices = []
-    predictions = []  # To store predictions alongside logits
-    logit_signs = []  # To store the original sign of each logit
+    predictions = []
     
-    print(train_bag_logits)
-    
-    # Loop through train_bag_logits to process logits
-    for bag_id, logits in train_bag_logits.items():
+    # Loop through train_bag_logits to process probabilities
+    for bag_id, probs in train_bag_logits.items():
         # Convert tensor bag_id to integer if necessary
         bag_id_int = bag_id.item() if isinstance(bag_id, torch.Tensor) else bag_id
-        
-        for i, logit in enumerate(logits):
-            combined_logits.append(abs(logit.item()))  # Use absolute value of logit
+        for i, prob in enumerate(probs):
+            combined_probs.append(prob.item())
             original_indices.append((bag_id_int, i))
-            logit_signs.append(np.sign(logit.item()))  # Store original sign
-            predictions.append(logit.item())  # Store prediction/logit directly
+            predictions.append(prob.item())
 
-    total_predictions = len(combined_logits)
-    predictions_included = int(total_predictions * include_ratio)  # Calculate number of predictions to include based on ratio
-    
+    total_predictions = len(combined_probs)
+    predictions_included = int(total_predictions * include_ratio)
     print(f'Including Predictions: {include_ratio:.2f} ({predictions_included})')
 
-    # Rank instances based on their logit values
-    top_indices = np.argsort(-np.array(combined_logits))[:predictions_included]
+    # Rank instances based on their confidence (distance from 0.5)
+    confidence_scores = np.abs(np.array(combined_probs) - 0.5)
+    top_indices = np.argsort(-confidence_scores)[:predictions_included]
 
     # Initialize combined_dict with all -1 for masks (not selected by default) and placeholders for predictions
     combined_dict = {}
-    for bag_id, logits in train_bag_logits.items():
+    for bag_id, probs in train_bag_logits.items():
         bag_id_int = bag_id.item() if isinstance(bag_id, torch.Tensor) else bag_id
-        mask = np.full(len(logits), -1, dtype=int)  # Initialize mask to -1 (not selected)
-        pred_list = [None] * len(logits)  # Initialize prediction list
+        mask = np.full(len(probs), -1, dtype=int)  # Initialize mask to -1 (not selected)
+        pred_list = [None] * len(probs)  # Initialize prediction list
         combined_dict[bag_id_int] = [mask, pred_list]
 
     # Update predictions in combined_dict for all instances
     for idx, (bag_id_int, pos) in enumerate(original_indices):
         combined_dict[bag_id_int][1][pos] = predictions[idx]  # Update prediction
 
-    # Set mask based on selection and original sign
+    # Set mask based on selection
     for idx in top_indices:
         original_bag_id, original_position = original_indices[idx]
-        original_sign = logit_signs[idx]
-        # Update mask based on original sign: 0 if originally negative, 1 if positive
-        combined_dict[original_bag_id][0][original_position] = max(0, original_sign)
+        prob = combined_probs[idx]
+        # Update mask based on probability: 0 if below 0.5, 1 if above 0.5
+        combined_dict[original_bag_id][0][original_position] = int(prob > 0.5)
 
-    print(combined_dict)
-    
     return combined_dict
-    
     
     
 
@@ -294,7 +286,7 @@ if __name__ == '__main__':
 
     # Config
     
-    pretrained_name = "cifar10_Head"
+    """pretrained_name = "cifar10_Head_2"
     model_name = 'cifar10_Res18_02'
     dataset_name = 'cifar10'
     label_columns = ['Has_Truck']
@@ -303,9 +295,9 @@ if __name__ == '__main__':
     bag_batch_size = 30
     min_bag_size = 2
     max_bag_size = 25
-    instance_batch_size =  200
+    instance_batch_size =  200"""
     
-    """pretrained_name = "03_18_2024_Res18_Head_3"
+    pretrained_name = "03_18_2024_Res18_Head_2"
     model_name = '03_18_2024_Res18_04'
     dataset_name = 'export_03_18_2024'
     label_columns = ['Has_Malignant']
@@ -314,14 +306,14 @@ if __name__ == '__main__':
     bag_batch_size = 10
     min_bag_size = 2
     max_bag_size = 25
-    instance_batch_size =  50"""
+    instance_batch_size =  50
     use_efficient_net = False
     
     #ITS2CLR Config
     feature_extractor_train_count = 6
-    MIL_train_count = 10
-    initial_ratio = 0.4 # --% preditions included
-    final_ratio = 0.95 # --% preditions included
+    MIL_train_count = 8
+    initial_ratio = 0.3 # --% preditions included
+    final_ratio = 0.85 # --% preditions included
     total_epochs = 20
 
     warmup_epochs = 15
@@ -338,7 +330,7 @@ if __name__ == '__main__':
     bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
     num_labels = len(label_columns)
     
-    train_transform = T.Compose([
+    """train_transform = T.Compose([
                 T.RandomVerticalFlip(),
                 T.RandomHorizontalFlip(),
                 T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
@@ -349,9 +341,9 @@ if __name__ == '__main__':
     val_transform = T.Compose([
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
+            ])"""
     
-    """train_transform = T.Compose([
+    train_transform = T.Compose([
                 ###T.RandomVerticalFlip(),
                 T.RandomHorizontalFlip(),
                 T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
@@ -366,14 +358,14 @@ if __name__ == '__main__':
                 CLAHETransform(),
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])"""
+            ])
 
 
     # Create datasets
-    bag_dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
-    bag_dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
-    #bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=True)
-    #bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
+    #bag_dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
+    #bag_dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
+    bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=True)
+    bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
      
     # Create bag data loaders
     bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
@@ -447,14 +439,13 @@ if __name__ == '__main__':
             with open(f'{head_folder}model_architecture.txt', 'w') as f:
                 print(encoder, file=f)
             
-        
-
 
     # Training loop
     while epoch < total_epochs:
         
         # Used the instance predictions from bag training to update the Instance Dataloader
         instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, warmup=warmup)
+        print(f'Warmup Mode: {warmup}')
         
         if warmup:
             sampler = WarmupSampler(instance_dataset_train, instance_batch_size)
@@ -462,8 +453,10 @@ if __name__ == '__main__':
         else:
             instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_size=instance_batch_size, collate_fn = collate_instance, drop_last=True, shuffle = True)
         
+        
+
         print('Training Feature Extractor')
-        print(f'Warmup Mode: {warmup}')
+        
         # Unfreeze encoder
         for param in model.encoder.parameters():
             param.requires_grad = True
@@ -476,7 +469,7 @@ if __name__ == '__main__':
         
         
         model.train()
-        """for i in range(target_count): 
+        for i in range(target_count): 
             losses = AverageMeter()
 
             # Iterate over the training data
@@ -511,9 +504,7 @@ if __name__ == '__main__':
                 loss.backward()
                 optimizer.step()
                 
-            print(f'[{i+1}/{target_count}] Gen_SCL Loss: {losses.avg:.5f}')"""
-
-
+            print(f'[{i+1}/{target_count}] Gen_SCL Loss: {losses.avg:.5f}')
 
 
 
@@ -608,7 +599,7 @@ if __name__ == '__main__':
             
 
             # Save the model
-            if True:#val_loss < val_loss_best:
+            if val_loss < val_loss_best:
                 val_loss_best = val_loss
                 if warmup:
                     target_folder = head_folder
@@ -635,3 +626,13 @@ if __name__ == '__main__':
         if warmup:
             print("Warmup Phase Finished")
             warmup = False
+            
+            
+            
+            
+            
+            
+            
+            
+            
+        
