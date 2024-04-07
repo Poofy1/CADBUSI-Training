@@ -55,3 +55,59 @@ class ABMIL_aggregate(nn.Module):
         # Aggregate individual predictions to get the final bag prediction
         yhat_bag = (attention_scores * yhat_instance).sum(dim=0)
         return yhat_bag, saliency_maps, yhat_instance, attention_scores
+
+
+
+
+class Linear_Classifier(nn.Module):
+    """Linear classifier"""
+    def __init__(self, nf, num_classes=1, L=128):
+        super(Linear_Classifier, self).__init__()
+        self.fc = nn.Linear(nf, num_classes)
+        
+        
+        # Attention mechanism components
+        self.attention_V = nn.Sequential(
+            nn.Linear(nf, L),
+            nn.Tanh()
+        )
+        self.attention_U = nn.Sequential(
+            nn.Linear(nf, L),
+            nn.Sigmoid()
+        )
+        self.attention_W = nn.Sequential(
+            nn.Linear(L, 1),
+        )
+        
+        self.fc = nn.Sequential(
+            nn.Linear(nf, num_classes),
+            nn.Sigmoid()
+        )
+        
+        
+    def reset_parameters(self):
+        # Reset the parameters of all the submodules in the Linear_Classifier
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                module.reset_parameters()
+        
+        
+    def forward(self, v):
+        
+        # Gated-attention mechanism
+        v = torch.max(v, dim=2).values  
+        v = torch.max(v, dim=2).values  
+        
+        A_V = self.attention_V(v)  # KxL
+        A_U = self.attention_U(v)  # KxL
+        instance_scores = self.attention_W(A_V * A_U) # element wise multiplication # KxATTENTION_BRANCHES
+        A = torch.transpose(instance_scores, 1, 0)  # ATTENTION_BRANCHESxK
+        A = F.softmax(A, dim=1)  # softmax over K
+
+        Z = torch.mm(A, v)  # ATTENTION_BRANCHESxM
+
+        Y_prob = self.fc(Z)
+        
+        instance_scores = torch.sigmoid(instance_scores.squeeze())
+        
+        return Y_prob, [], instance_scores, []

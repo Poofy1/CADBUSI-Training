@@ -74,7 +74,7 @@ class EmbeddingBagModel(nn.Module):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'test'
+    model_name = 'cifar10_ABMIL_2'
     encoder_arch = 'resnet18'
     dataset_name = 'cifar10'
     label_columns = ['Has_Truck']
@@ -83,9 +83,9 @@ if __name__ == '__main__':
     #label_columns = ['Has_Malignant']
     #instance_columns = ['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
     img_size = 32
-    batch_size = 15
+    batch_size = 30
     min_bag_size = 2
-    max_bag_size = 20
+    max_bag_size = 25
     epochs = 500
     lr = 0.001
 
@@ -100,17 +100,16 @@ if __name__ == '__main__':
     num_labels = len(label_columns)
     
     train_transform = T.Compose([
-                    #T.RandomVerticalFlip(),
-                    #T.RandomHorizontalFlip(),
-                    #T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
-                    #T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
-                    CLAHETransform(),
+                    T.RandomVerticalFlip(),
+                    T.RandomHorizontalFlip(),
+                    T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
+                    #CLAHETransform(),
                     T.ToTensor(),
                     #GaussianNoise(mean=0, std=0.015),  # Add slight noise
                     T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                 ])
     val_transform = T.Compose([
-                CLAHETransform(),
+                #CLAHETransform(),
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
@@ -133,7 +132,8 @@ if __name__ == '__main__':
     
     # bag aggregator
     aggregator = ABMIL_aggregate( nf = nf, num_classes = num_labels, pool_patches = 6, L = 128)
-
+    #aggregator = Linear_Classifier(nf= nf, num_classes = num_labels)
+    
     # total model
     bagmodel = EmbeddingBagModel(encoder, aggregator, num_classes = num_labels).cuda()
     total_params = sum(p.numel() for p in bagmodel.parameters())
@@ -184,9 +184,6 @@ if __name__ == '__main__':
             optimizer.zero_grad()
             
             outputs, _, _, _ = bagmodel(xb)
-            
-            print(outputs)
-
 
             loss = loss_func(outputs, yb)
 
