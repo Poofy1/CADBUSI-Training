@@ -57,7 +57,7 @@ class Instance_Dataset(TUD.Dataset):
                     else:
                         image_label = bag_label  # Use bag label if instance label is not present
                         if bag_label == 1:
-                            warmup_mask_value = 0 # Set warmup mask to 1 for instances without label[0] and bag_label is 1
+                            warmup_mask_value = 0 # Set warmup mask to 0 for instances without label[0] and bag_label is 1
                 
                 if image_label is not None:
                     self.images.append(img)
@@ -284,7 +284,7 @@ def load_state(stats_path, target_folder):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'cifar10_061'
+    model_version = '01'
     dataset_name = 'cifar10'
     
     label_columns = ['Has_Truck']
@@ -313,11 +313,11 @@ if __name__ == '__main__':
     initial_ratio = .3 #0.3 # --% preditions included
     final_ratio = .85 #0.85 # --% preditions included
     total_epochs = 20
-    warmup_epochs = 1
+    warmup_epochs = 15
     
-    arch = "resnet50"
+    arch = "resnet18"
     pretrained_arch = False
-    reset_aggregator = False # Reset the model.aggregator weights after contrastive learning
+    reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
     
     learning_rate=0.001
     mix_alpha=0.2
@@ -385,24 +385,27 @@ if __name__ == '__main__':
     train_losses = []
     valid_losses = []
 
+    model_name = f"{dataset_name}_{arch}_{model_version}"
+    pretrained_name = f"Head_{model_name}"
+    
+    
     # Check if the model already exists
     model_folder = f"{env}/models/{model_name}/"
     model_path = f"{model_folder}/{model_name}.pth"
     optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
     stats_path = f"{model_folder}/{model_name}_stats.pkl"
     
-    pretrained_name = f"Head_{model_name}"
     head_folder = f"{env}/models/{pretrained_name}/"
     head_path = f"{head_folder}/{pretrained_name}.pth"
     head_optimizer_path = f"{head_folder}/{pretrained_name}_optimizer.pth"
-    head_stats_path = f"{head_folder}/{pretrained_name}_stats.pkl"
     
     val_loss_best = 99999
     selection_mask = []
     epoch = 0
     warmup = False
+    pickup_warmup = False
 
-    if os.path.exists(model_path):
+    if os.path.exists(model_path): # If main model exists
         model.load_state_dict(torch.load(model_path))
         optimizer.load_state_dict(torch.load(optimizer_path))
         print(f"Loaded pre-existing model from {model_name}")
@@ -438,13 +441,12 @@ if __name__ == '__main__':
         }
         
 
-        if os.path.exists(head_path):
+        if os.path.exists(head_path):  # If main head model exists
+            pickup_warmup = True
             os.makedirs(model_folder, exist_ok=True)
             model.load_state_dict(torch.load(head_path))
             optimizer.load_state_dict(torch.load(head_optimizer_path))
             print(f"Loaded pre-trained model from {pretrained_name}")
-            
-            train_losses, valid_losses, epoch, val_loss_best, selection_mask = load_state(head_stats_path, head_folder)
             
             config_path = f"{model_folder}/config.json"
             with open(config_path, 'w') as f:
@@ -453,8 +455,8 @@ if __name__ == '__main__':
                 
             with open(f'{model_folder}model_architecture.txt', 'w') as f:
                 print(model, file=f)
-            
-        else:
+             
+        else: # If main head model DOES NOT exists
             warmup = True
             os.makedirs(head_folder, exist_ok=True)
 
@@ -470,69 +472,81 @@ if __name__ == '__main__':
     # Training loop
     while epoch < total_epochs:
         
-        
-        # Used the instance predictions from bag training to update the Instance Dataloader
-        instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, warmup=warmup)
         print(f'Warmup Mode: {warmup}')
         
-        if warmup:
-            sampler = WarmupSampler(instance_dataset_train, instance_batch_size)
-            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=sampler, collate_fn = collate_instance)
-        else:
-            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_size=instance_batch_size, collate_fn = collate_instance, drop_last=True, shuffle = True)
-        
-        
-
-        print('Training Feature Extractor')
-        
-        # Unfreeze encoder
-        for param in model.encoder.parameters():
-            param.requires_grad = True
-    
-        # Generalized Supervised Contrastive Learning phase
-        if warmup:
-            target_count = warmup_epochs
-        else:
-            target_count = feature_extractor_train_count
-        
-        
-        model.train()
-        for i in range(target_count): 
-            losses = AverageMeter()
-
-            # Iterate over the training data
-            for idx, (images, instance_labels, confident_mask) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
-                #warmup_learning_rate(args, epoch, idx, len(instance_dataloader_train), optimizer)
-                
-                # Data preparation 
-                bsz = instance_labels.shape[0]
-                im_q, im_k = images
-                im_q = im_q.cuda(non_blocking=True)
-                im_k = im_k.cuda(non_blocking=True)
-                instance_labels = instance_labels.cuda(non_blocking=True)
-                
-                # image-based regularizations (lam 1 = no mixup)
-                im_q, y0a, y0b, lam0 = mix_fn(im_q, instance_labels, mix_alpha, mix)
-                im_k, y1a, y1b, lam1 = mix_fn(im_k, instance_labels, mix_alpha, mix)
-                images = [im_q, im_k]
-                l_q = mix_target(y0a, y0b, lam0, num_classes)
-                l_k = mix_target(y1a, y1b, lam1, num_classes)
-                
-                # forward
-                optimizer.zero_grad()
-                _, _, features = model(images, projector=True)
-                zk, zq = torch.split(features, [bsz, bsz], dim=0)
-                
-                # get loss (no teacher)
-                loss = genscl([zk, zq], [l_q, l_k], (confident_mask, confident_mask))
-                losses.update(loss.item(), bsz)
-
-                loss.backward()
-                optimizer.step()
-                
-            print(f'[{i+1}/{target_count}] Gen_SCL Loss: {losses.avg:.5f}')
+        if not pickup_warmup: # Are we resuming from a head model?
+            
+            # Used the instance predictions from bag training to update the Instance Dataloader
+            instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, warmup=warmup)
+            
+            if warmup:
+                sampler = WarmupSampler(instance_dataset_train, instance_batch_size)
+                instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=sampler, collate_fn = collate_instance)
+            else:
+                instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_size=instance_batch_size, collate_fn = collate_instance, drop_last=True, shuffle = True)
+            
             
 
+            print('Training Feature Extractor')
+            
+            # Unfreeze encoder
+            for param in model.encoder.parameters():
+                param.requires_grad = True
+        
+            # Generalized Supervised Contrastive Learning phase
+            if warmup:
+                target_count = warmup_epochs
+            else:
+                target_count = feature_extractor_train_count
+            
+            
+            model.train()
+            for i in range(target_count): 
+                losses = AverageMeter()
+
+                # Iterate over the training data
+                for idx, (images, instance_labels, confident_mask) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
+                    #warmup_learning_rate(args, epoch, idx, len(instance_dataloader_train), optimizer)
+                    
+                    # Data preparation 
+                    bsz = instance_labels.shape[0]
+                    im_q, im_k = images
+                    im_q = im_q.cuda(non_blocking=True)
+                    im_k = im_k.cuda(non_blocking=True)
+                    instance_labels = instance_labels.cuda(non_blocking=True)
+                    
+                    # image-based regularizations (lam 1 = no mixup)
+                    im_q, y0a, y0b, lam0 = mix_fn(im_q, instance_labels, mix_alpha, mix)
+                    im_k, y1a, y1b, lam1 = mix_fn(im_k, instance_labels, mix_alpha, mix)
+                    images = [im_q, im_k]
+                    l_q = mix_target(y0a, y0b, lam0, num_classes)
+                    l_k = mix_target(y1a, y1b, lam1, num_classes)
+                    
+                    # forward
+                    optimizer.zero_grad()
+                    _, _, features = model(images, projector=True)
+                    zk, zq = torch.split(features, [bsz, bsz], dim=0)
+                    
+                    # get loss (no teacher)
+                    loss = genscl([zk, zq], [l_q, l_k], (confident_mask, confident_mask))
+                    losses.update(loss.item(), bsz)
+
+                    loss.backward()
+                    optimizer.step()
+                    
+                print(f'[{i+1}/{target_count}] Gen_SCL Loss: {losses.avg:.5f}')
+            
+            
+        if pickup_warmup: 
+            pickup_warmup = False
+        if warmup:
+            # Save the model and optimizer
+            torch.save(model.state_dict(), head_path)
+            torch.save(optimizer.state_dict(), head_optimizer_path)
+            
+            print("Warmup Phase Finished")
+            warmup = False
+        
 
 
 
@@ -651,9 +665,6 @@ if __name__ == '__main__':
                 with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
                     pickle.dump(selection_mask, file)
         
-        if warmup:
-            print("Warmup Phase Finished")
-            warmup = False
             
             
             
