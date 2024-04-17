@@ -3,14 +3,15 @@ from fastai.vision.all import *
 import torch.utils.data as TUD
 from tqdm import tqdm
 import pickle
-import json
 from torch import nn
 from archs.save_arch import *
 from data.Gen_ITS2CLR_util import *
 from torch.utils.data import Sampler
 from torch.optim import Adam
+from archs.backbone import create_timm_body
+from torchvision.models import efficientnet_b3, EfficientNet_B3_Weights
 from data.format_data import *
-from archs.model_GenSCL import *
+from archs.model_GenSCL_DSMIL import *
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -40,7 +41,7 @@ class Instance_Dataset(TUD.Dataset):
 
             for idx, (img, label) in enumerate(zip(images, image_labels)):
                 image_label = None
-                warmup_mask_value = 1
+                warmup_mask_value = 0
                 
                 if not self.warmup:
                     # Only include confident instances (selection_mask) or negative bags or instance labels
@@ -57,7 +58,7 @@ class Instance_Dataset(TUD.Dataset):
                     else:
                         image_label = bag_label  # Use bag label if instance label is not present
                         if bag_label == 1:
-                            warmup_mask_value = 0 # Set warmup mask to 1 for instances without label[0] and bag_label is 1
+                            warmup_mask_value = 1 # Set warmup mask to 1 for instances without label[0] and bag_label is 1
                 
                 if image_label is not None:
                     self.images.append(img)
@@ -67,13 +68,13 @@ class Instance_Dataset(TUD.Dataset):
     def __getitem__(self, index):
         img_path = self.images[index]
         instance_label = self.final_labels[index]
-        warmup_confident = self.warmup_mask[index]
+        warmup_unconfident = self.warmup_mask[index]
         
         img = Image.open(img_path).convert("RGB")
         image_data_q = self.transform(img)
         image_data_k = self.transform(img)
 
-        return (image_data_q, image_data_k), instance_label, warmup_confident
+        return (image_data_q, image_data_k), instance_label, warmup_unconfident
 
 
     def __len__(self):
@@ -284,9 +285,10 @@ def load_state(stats_path, target_folder):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'cifar10_061'
-    dataset_name = 'cifar10'
     
+    pretrained_name = "cifar10_Head_7"
+    model_name = 'cifar10_07'
+    dataset_name = 'cifar10'
     label_columns = ['Has_Truck']
     instance_columns = ['']
     img_size = 32
@@ -295,8 +297,8 @@ if __name__ == '__main__':
     max_bag_size = 25
     instance_batch_size =  200
     
-    """pretrained_name = "03_18_2024_Res50_Head_5"
-    model_name = '03_18_2024_Res50_05'
+    """pretrained_name = "03_18_2024_Res18_Head_06"
+    model_name = '03_18_2024_Res18_06'
     dataset_name = 'export_03_18_2024'
     label_columns = ['Has_Malignant']
     instance_columns = ['Malignant Lesion Present']   #['Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
@@ -309,15 +311,14 @@ if __name__ == '__main__':
     
     #ITS2CLR Config
     feature_extractor_train_count = 6
-    MIL_train_count = 8
-    initial_ratio = .3 #0.3 # --% preditions included
-    final_ratio = .85 #0.85 # --% preditions included
+    MIL_train_count = 15
+    initial_ratio = 0.3 # --% preditions included
+    final_ratio = 0.85 # --% preditions included
     total_epochs = 20
-    warmup_epochs = 1
     
-    arch = "resnet50"
-    pretrained_arch = False
-    reset_aggregator = False # Reset the model.aggregator weights after contrastive learning
+    confidence_threshold = .70
+
+    warmup_epochs = 15
     
     learning_rate=0.001
     mix_alpha=0.2
@@ -374,7 +375,19 @@ if __name__ == '__main__':
 
 
     # Get Model
-    model = Embeddingmodel(arch, pretrained_arch, num_classes = num_labels).cuda()
+    if use_efficient_net:
+        encoder = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
+        nf = 512
+        # Replace the last fully connected layer with a new one
+        num_features = encoder.classifier[1].in_features
+        encoder.classifier[1] = nn.Linear(num_features, nf)
+        
+    else:
+        encoder = create_timm_body("resnet50", pretrained=False)
+        nf = num_features_model( nn.Sequential(*encoder.children()))
+    
+
+    model = Embeddingmodel(encoder = encoder, nf = nf, num_classes = num_labels, efficient_net = use_efficient_net).cuda()
     
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total Parameters: {total_params}")        
@@ -391,7 +404,6 @@ if __name__ == '__main__':
     optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
     stats_path = f"{model_folder}/{model_name}_stats.pkl"
     
-    pretrained_name = f"Head_{model_name}"
     head_folder = f"{env}/models/{pretrained_name}/"
     head_path = f"{head_folder}/{pretrained_name}.pth"
     head_optimizer_path = f"{head_folder}/{pretrained_name}_optimizer.pth"
@@ -411,60 +423,24 @@ if __name__ == '__main__':
         
     else:
         print(f"{model_name} does not exist, creating new instance")
+        os.makedirs(model_folder, exist_ok=True)
         
-        
-        # Save the current configuration as a human-readable file
-        config = {
-            "dataset_name": dataset_name,
-            "arch": arch,
-            "pretrained_arch": pretrained_arch,
-            "label_columns": label_columns,
-            "instance_columns": instance_columns,
-            "img_size": img_size,
-            "bag_batch_size": bag_batch_size,
-            "min_bag_size": min_bag_size,
-            "max_bag_size": max_bag_size,
-            "instance_batch_size": instance_batch_size,
-            "use_efficient_net": use_efficient_net,
-            "feature_extractor_train_count": feature_extractor_train_count,
-            "MIL_train_count": MIL_train_count,
-            "initial_ratio": initial_ratio,
-            "final_ratio": final_ratio,
-            "total_epochs": total_epochs,
-            "reset_aggregator": reset_aggregator,
-            "warmup_epochs": warmup_epochs,
-            "learning_rate": learning_rate,
-            "mix_alpha": mix_alpha
-        }
-        
-
+        with open(f'{model_folder}model_architecture.txt', 'w') as f:
+            print(encoder, file=f)
+            
         if os.path.exists(head_path):
-            os.makedirs(model_folder, exist_ok=True)
             model.load_state_dict(torch.load(head_path))
             optimizer.load_state_dict(torch.load(head_optimizer_path))
             print(f"Loaded pre-trained model from {pretrained_name}")
             
             train_losses, valid_losses, epoch, val_loss_best, selection_mask = load_state(head_stats_path, head_folder)
-            
-            config_path = f"{model_folder}/config.json"
-            with open(config_path, 'w') as f:
-                json.dump(config, f, indent=4)
-            
-                
-            with open(f'{model_folder}model_architecture.txt', 'w') as f:
-                print(model, file=f)
-            
         else:
             warmup = True
             os.makedirs(head_folder, exist_ok=True)
-
-                
-            config_path = f"{head_folder}/config.txt"
-            with open(config_path, 'w') as f:
-                json.dump(config, f, indent=4)
             
             with open(f'{head_folder}model_architecture.txt', 'w') as f:
-                print(model, file=f)
+                print(encoder, file=f)
+            
             
     
     # Training loop
@@ -501,7 +477,7 @@ if __name__ == '__main__':
             losses = AverageMeter()
 
             # Iterate over the training data
-            for idx, (images, instance_labels, confident_mask) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
+            for idx, (images, instance_labels, unconfident_mask) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
                 #warmup_learning_rate(args, epoch, idx, len(instance_dataloader_train), optimizer)
                 
                 # Data preparation 
@@ -524,7 +500,8 @@ if __name__ == '__main__':
                 zk, zq = torch.split(features, [bsz, bsz], dim=0)
                 
                 # get loss (no teacher)
-                loss = genscl([zk, zq], [l_q, l_k], (confident_mask, confident_mask))
+                mapped_anchors = ~unconfident_mask.bool()
+                loss = genscl([zk, zq], [l_q, l_k], (mapped_anchors, mapped_anchors))
                 losses.update(loss.item(), bsz)
 
                 loss.backward()
@@ -538,9 +515,7 @@ if __name__ == '__main__':
 
         print('Training Aggregator')
         
-        if reset_aggregator:
-            model.aggregator.reset_parameters() 
-
+        #model.aggregator.reset_parameters() # Reset the model.aggregator weights before training
         
         # Freeze the encoder
         for param in model.encoder.parameters():
@@ -563,6 +538,7 @@ if __name__ == '__main__':
                 
                 outputs, instance_pred, _ = model(xb, pred_on = True)
                 #print(outputs)
+                #print(instance_pred)
                 
 
                 # Calculate bag-level loss

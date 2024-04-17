@@ -74,8 +74,8 @@ class EmbeddingBagModel(nn.Module):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'cifar10_ABMIL_2'
-    encoder_arch = 'resnet18'
+    model_name = 'cifar10_ABMIL_5'
+    encoder_arch = 'resnet50'
     dataset_name = 'cifar10'
     label_columns = ['Has_Truck']
     instance_columns = ['']
@@ -103,6 +103,7 @@ if __name__ == '__main__':
                     T.RandomVerticalFlip(),
                     T.RandomHorizontalFlip(),
                     T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
+                    #T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
                     #CLAHETransform(),
                     T.ToTensor(),
                     #GaussianNoise(mean=0, std=0.015),  # Add slight noise
@@ -127,12 +128,12 @@ if __name__ == '__main__':
     train_dl =  TUD.DataLoader(dataset_train, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
     val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
 
-    encoder = create_timm_body(encoder_arch)
+    encoder = create_timm_body(encoder_arch, pretrained=False)
     nf = num_features_model( nn.Sequential(*encoder.children()))
     
     # bag aggregator
-    aggregator = ABMIL_aggregate( nf = nf, num_classes = num_labels, pool_patches = 6, L = 128)
-    #aggregator = Linear_Classifier(nf= nf, num_classes = num_labels)
+    #aggregator = ABMIL_aggregate( nf = nf, num_classes = num_labels, pool_patches = 6, L = 128)
+    aggregator = Linear_Classifier(nf= nf, num_classes = num_labels)
     
     # total model
     bagmodel = EmbeddingBagModel(encoder, aggregator, num_classes = num_labels).cuda()
