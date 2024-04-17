@@ -11,7 +11,7 @@ from torch.optim import Adam
 from archs.backbone import create_timm_body
 from torchvision.models import efficientnet_b3, EfficientNet_B3_Weights
 from data.format_data import *
-from archs.model_GenSCL import *
+from archs.model_GenSCL_DSMIL import *
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -286,8 +286,8 @@ if __name__ == '__main__':
 
     # Config
     
-    """pretrained_name = "cifar10_Head_2"
-    model_name = 'cifar10_Res18_02'
+    pretrained_name = "cifar10_Head_7"
+    model_name = 'cifar10_07'
     dataset_name = 'cifar10'
     label_columns = ['Has_Truck']
     instance_columns = ['']
@@ -295,26 +295,28 @@ if __name__ == '__main__':
     bag_batch_size = 30
     min_bag_size = 2
     max_bag_size = 25
-    instance_batch_size =  200"""
+    instance_batch_size =  200
     
-    pretrained_name = "03_18_2024_Res18_Head_2"
-    model_name = '03_18_2024_Res18_04'
+    """pretrained_name = "03_18_2024_Res18_Head_06"
+    model_name = '03_18_2024_Res18_06'
     dataset_name = 'export_03_18_2024'
     label_columns = ['Has_Malignant']
     instance_columns = ['Malignant Lesion Present']   #['Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
     img_size = 300
-    bag_batch_size = 10
+    bag_batch_size = 5
     min_bag_size = 2
     max_bag_size = 25
-    instance_batch_size =  50
+    instance_batch_size =  25"""
     use_efficient_net = False
     
     #ITS2CLR Config
     feature_extractor_train_count = 6
-    MIL_train_count = 8
+    MIL_train_count = 15
     initial_ratio = 0.3 # --% preditions included
     final_ratio = 0.85 # --% preditions included
     total_epochs = 20
+    
+    confidence_threshold = .70
 
     warmup_epochs = 15
     
@@ -330,7 +332,7 @@ if __name__ == '__main__':
     bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
     num_labels = len(label_columns)
     
-    """train_transform = T.Compose([
+    train_transform = T.Compose([
                 T.RandomVerticalFlip(),
                 T.RandomHorizontalFlip(),
                 T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
@@ -341,9 +343,9 @@ if __name__ == '__main__':
     val_transform = T.Compose([
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])"""
+            ])
     
-    train_transform = T.Compose([
+    """train_transform = T.Compose([
                 ###T.RandomVerticalFlip(),
                 T.RandomHorizontalFlip(),
                 T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
@@ -358,7 +360,7 @@ if __name__ == '__main__':
                 CLAHETransform(),
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
+            ])"""
 
 
     # Create datasets
@@ -381,7 +383,7 @@ if __name__ == '__main__':
         encoder.classifier[1] = nn.Linear(num_features, nf)
         
     else:
-        encoder = create_timm_body("resnet18")
+        encoder = create_timm_body("resnet50", pretrained=False)
         nf = num_features_model( nn.Sequential(*encoder.children()))
     
 
@@ -439,9 +441,11 @@ if __name__ == '__main__':
             with open(f'{head_folder}model_architecture.txt', 'w') as f:
                 print(encoder, file=f)
             
-
+            
+    
     # Training loop
     while epoch < total_epochs:
+        
         
         # Used the instance predictions from bag training to update the Instance Dataloader
         instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, warmup=warmup)
@@ -493,7 +497,6 @@ if __name__ == '__main__':
                 # forward
                 optimizer.zero_grad()
                 _, _, features = model(images, projector=True)
-                features = F.normalize(features, dim=1)
                 zk, zq = torch.split(features, [bsz, bsz], dim=0)
                 
                 # get loss (no teacher)
@@ -505,14 +508,14 @@ if __name__ == '__main__':
                 optimizer.step()
                 
             print(f'[{i+1}/{target_count}] Gen_SCL Loss: {losses.avg:.5f}')
-
+            
 
 
 
 
         print('Training Aggregator')
         
-        model.aggregator.reset_parameters() # Reset the model.aggregator weights before training
+        #model.aggregator.reset_parameters() # Reset the model.aggregator weights before training
         
         # Freeze the encoder
         for param in model.encoder.parameters():
@@ -535,6 +538,7 @@ if __name__ == '__main__':
                 
                 outputs, instance_pred, _ = model(xb, pred_on = True)
                 #print(outputs)
+                #print(instance_pred)
                 
 
                 # Calculate bag-level loss
@@ -627,6 +631,22 @@ if __name__ == '__main__':
             print("Warmup Phase Finished")
             warmup = False
             
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+        
             
             
             

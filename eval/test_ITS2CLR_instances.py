@@ -163,14 +163,13 @@ def test_dataset(output_path, label_columns, instance_columns):
 if __name__ == '__main__':
 
     # Config
-    model_name = '03_18_2024_Res18_01'
-    dataset_name = 'export_03_18_2024'
-    label_columns = ['Has_Malignant']
-    instance_columns = ['Malignant Lesion Present']   #['Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
-    img_size = 300
+    model_name = 'cifar10_Res18_03'
+    dataset_name = 'cifar10'
+    label_columns = ['Has_Truck']
+    instance_columns = ['']   #['Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
+    img_size = 32
     min_bag_size = 2
     max_bag_size = 25
-    instance_batch_size =  30
     use_efficient_net = False
     model_folder = f"{env}/models/{model_name}/"
     lr = 0.001
@@ -260,28 +259,32 @@ if __name__ == '__main__':
     # GETTING UMAP
     import umap
     from sklearn.metrics import silhouette_score
-    import plotly.graph_objects as go
+    import matplotlib.pyplot as plt
 
     # Create a new array containing all features, instance predictions, and corresponding labels
     all_features = []
     all_instance_predictions = []
     all_labels = []
     all_unconfident = []
+
     for bag_id, data in bag_data.items():
         all_features.append(data['features'])
         all_instance_predictions.extend([pred.cpu() for pred in data['instance_predictions']])  # Move tensors to CPU
         all_labels.extend([data['labels'][0][0]] * len(data['features']))
         all_unconfident.extend(data['unconfident_mask'])
+
     all_features = np.concatenate(all_features)
     all_instance_predictions = np.concatenate([pred.numpy() for pred in all_instance_predictions])  # Convert tensors to NumPy arrays
     all_labels = np.ravel(all_labels)
     all_unconfident = np.ravel(all_unconfident)
+
     print(all_features.shape)
 
     # Apply UMAP to the features
-    umap_model = umap.UMAP(n_components=3, n_neighbors=15, min_dist=0.1)
-    features_3d = umap_model.fit_transform(all_features)
-    print(features_3d.shape)
+    umap_model = umap.UMAP(n_components=2, n_neighbors=15, min_dist=0.1)
+    features_2d = umap_model.fit_transform(all_features)
+
+    print(features_2d.shape)
 
     # Create combined labels array
     combined_labels = np.zeros_like(all_labels, dtype=int)
@@ -290,50 +293,32 @@ if __name__ == '__main__':
     combined_labels[(all_unconfident == 0) & (all_labels == 1)] = 2  # Confident Positive
     combined_labels[(all_unconfident == 1) & (all_instance_predictions >= 0.5)] = 3  # Unconfident Positive
 
-
     # Calculate the silhouette score
-    silhouette_avg = silhouette_score(features_3d, combined_labels)
+    silhouette_avg = silhouette_score(features_2d, combined_labels)
     print(f"Silhouette score: {silhouette_avg}")
 
     # Downsample the data points
     num_samples = 5000  # Adjust this value based on your desired number of points to plot
-    random_indices = np.random.choice(features_3d.shape[0], num_samples, replace=False)
-    features_subset = features_3d[random_indices]
+    random_indices = np.random.choice(features_2d.shape[0], num_samples, replace=False)
+    features_subset = features_2d[random_indices]
     combined_labels_subset = combined_labels[random_indices]
 
-    # Create a 3D scatter plot using Plotly
-    traces = [
-        go.Scatter3d(
-            x=features_subset[combined_labels_subset == label, 0],
-            y=features_subset[combined_labels_subset == label, 1],
-            z=features_subset[combined_labels_subset == label, 2],
-            mode='markers',
-            marker=dict(
-                size=3,
-                color=color,
-                opacity=0.8
-            ),
-            name=label_name
-        )
-        for label, color, label_name in zip(
-            [1, 3, 0, 2],  # Reordered labels: Unconfident Negative, Unconfident Positive, Confident Negative, Confident Positive
-            ['lightblue', 'lightcoral', 'blue', 'red'],
-            ['Unconfident Negative', 'Unconfident Positive', 'Confident Negative', 'Confident Positive']
-        )
-    ]
+    # Create a 2D scatter plot using Matplotlib
+    colors = ['blue', 'lightblue', 'red', 'lightcoral']
+    labels = ['Confident Negative', 'Unconfident Negative', 'Confident Positive', 'Unconfident Positive']
 
-    fig = go.Figure(data=traces)
+    plt.figure(figsize=(8, 6))
+    for label, color in zip(range(4), colors):
+        plt.scatter(features_subset[combined_labels_subset == label, 0],
+                    features_subset[combined_labels_subset == label, 1],
+                    c=color, label=labels[label], alpha=0.8, s=10)
 
-    fig.update_layout(
-        title='3D Scatter Plot of Features',
-        scene=dict(
-            xaxis_title='UMAP Dimension 1',
-            yaxis_title='UMAP Dimension 2',
-            zaxis_title='UMAP Dimension 3'
-        ),
-        width=800,
-        height=800
-    )
+    plt.xlabel('UMAP Dimension 1')
+    plt.ylabel('UMAP Dimension 2')
+    plt.title('2D Scatter Plot of Features')
+    plt.legend()
+    plt.tight_layout()
 
-    fig.write_html(f'{output_path}/features_3d_plot_labeled_unconfident_umap.html')
-    fig.show()
+    # Save the plot as an image
+    plt.savefig(f'{output_path}/features_2d_plot_labeled_unconfident_umap.png', dpi=300)
+    plt.show()

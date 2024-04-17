@@ -1,0 +1,60 @@
+Epoch 1
+Training Accuracies:
+  Has_Truck: 0.5655
+Validation Accuracies:
+  Has_Truck: 0.6077
+
+Epoch 2
+Training Accuracies:
+  Has_Truck: 0.6319
+Validation Accuracies:
+  Has_Truck: 0.6889
+
+Epoch 3
+Training Accuracies:
+  Has_Truck: 0.6968
+Validation Accuracies:
+  Has_Truck: 0.7338
+
+Epoch 6
+Training Accuracies:
+  Has_Truck: 0.7859
+Validation Accuracies:
+  Has_Truck: 0.7808
+
+Epoch 7
+Training Accuracies:
+  Has_Truck: 0.8060
+Validation Accuracies:
+  Has_Truck: 0.8081
+
+Epoch 10
+Training Accuracies:
+  Has_Truck: 0.8405
+Validation Accuracies:
+  Has_Truck: 0.8201
+
+Epoch 13
+Training Accuracies:
+  Has_Truck: 0.8615
+Validation Accuracies:
+  Has_Truck: 0.8397
+
+Epoch 15
+Training Accuracies:
+  Has_Truck: 0.8747
+Validation Accuracies:
+  Has_Truck: 0.8491
+
+Epoch 29
+Training Accuracies:
+  Has_Truck: 0.9348
+Validation Accuracies:
+  Has_Truck: 0.8697
+
+Epoch 32
+Training Accuracies:
+  Has_Truck: 0.9433
+Validation Accuracies:
+  Has_Truck: 0.8752
+
