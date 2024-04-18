@@ -3,12 +3,13 @@ from fastai.vision.all import *
 import torch.utils.data as TUD
 from tqdm import tqdm
 import pickle
-import json
 from torch import nn
 from archs.save_arch import *
 from data.Gen_ITS2CLR_util import *
 from torch.utils.data import Sampler
 from torch.optim import Adam
+from archs.backbone import create_timm_body
+from torchvision.models import efficientnet_b3, EfficientNet_B3_Weights
 from data.format_data import *
 from archs.model_GenSCL import *
 env = os.path.dirname(os.path.abspath(__file__))
@@ -40,7 +41,7 @@ class Instance_Dataset(TUD.Dataset):
 
             for idx, (img, label) in enumerate(zip(images, image_labels)):
                 image_label = None
-                warmup_mask_value = 1
+                warmup_mask_value = 0
                 
                 if not self.warmup:
                     # Only include confident instances (selection_mask) or negative bags or instance labels
@@ -57,7 +58,7 @@ class Instance_Dataset(TUD.Dataset):
                     else:
                         image_label = bag_label  # Use bag label if instance label is not present
                         if bag_label == 1:
-                            warmup_mask_value = 0 # Set warmup mask to 0 for instances without label[0] and bag_label is 1
+                            warmup_mask_value = 1 # Set warmup mask to 1 for instances without label[0] and bag_label is 1
                 
                 if image_label is not None:
                     self.images.append(img)
@@ -67,13 +68,13 @@ class Instance_Dataset(TUD.Dataset):
     def __getitem__(self, index):
         img_path = self.images[index]
         instance_label = self.final_labels[index]
-        warmup_confident = self.warmup_mask[index]
+        warmup_unconfident = self.warmup_mask[index]
         
         img = Image.open(img_path).convert("RGB")
         image_data_q = self.transform(img)
         image_data_k = self.transform(img)
 
-        return (image_data_q, image_data_k), instance_label, warmup_confident
+        return (image_data_q, image_data_k), instance_label, warmup_unconfident
 
 
     def __len__(self):
@@ -331,7 +332,7 @@ if __name__ == '__main__':
     bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
     num_labels = len(label_columns)
     
-    """train_transform = T.Compose([
+    train_transform = T.Compose([
                 T.RandomVerticalFlip(),
                 T.RandomHorizontalFlip(),
                 T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
@@ -342,9 +343,9 @@ if __name__ == '__main__':
     val_transform = T.Compose([
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])"""
+            ])
     
-    train_transform = T.Compose([
+    """train_transform = T.Compose([
                 ###T.RandomVerticalFlip(),
                 T.RandomHorizontalFlip(),
                 T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
@@ -359,7 +360,7 @@ if __name__ == '__main__':
                 CLAHETransform(),
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
+            ])"""
 
 
     # Create datasets
@@ -374,7 +375,18 @@ if __name__ == '__main__':
 
 
     # Get Model
-    model = Embeddingmodel(arch, pretrained_arch, num_classes = num_labels).cuda()
+    if "resnet" in arch:
+        encoder = create_timm_body(arch, pretrained=pretrained_arch)
+        nf = num_features_model( nn.Sequential(*encoder.children()))
+    else:
+        encoder = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
+        nf = 512
+        # Replace the last fully connected layer with a new one
+        num_features = encoder.classifier[1].in_features
+        encoder.classifier[1] = nn.Linear(num_features, nf)
+    
+
+    model = Embeddingmodel(encoder = encoder, nf = nf, num_classes = num_labels, efficient_net = use_efficient_net).cuda()
     
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total Parameters: {total_params}")        
@@ -467,23 +479,24 @@ if __name__ == '__main__':
             with open(f'{head_folder}model_architecture.txt', 'w') as f:
                 print(model, file=f)
             
-    
+
     # Training loop
     while epoch < total_epochs:
         
         print(f'Warmup Mode: {warmup}')
         
         if not pickup_warmup: # Are we resuming from a head model?
-            
+        
             # Used the instance predictions from bag training to update the Instance Dataloader
             instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, warmup=warmup)
             
             if warmup:
                 sampler = WarmupSampler(instance_dataset_train, instance_batch_size)
                 instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=sampler, collate_fn = collate_instance)
+                target_count = warmup_epochs
             else:
                 instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_size=instance_batch_size, collate_fn = collate_instance, drop_last=True, shuffle = True)
-            
+                target_count = feature_extractor_train_count
             
 
             print('Training Feature Extractor')
@@ -493,18 +506,13 @@ if __name__ == '__main__':
                 param.requires_grad = True
         
             # Generalized Supervised Contrastive Learning phase
-            if warmup:
-                target_count = warmup_epochs
-            else:
-                target_count = feature_extractor_train_count
-            
             
             model.train()
             for i in range(target_count): 
                 losses = AverageMeter()
 
                 # Iterate over the training data
-                for idx, (images, instance_labels, confident_mask) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
+                for idx, (images, instance_labels, unconfident_mask) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
                     #warmup_learning_rate(args, epoch, idx, len(instance_dataloader_train), optimizer)
                     
                     # Data preparation 
@@ -524,18 +532,21 @@ if __name__ == '__main__':
                     # forward
                     optimizer.zero_grad()
                     _, _, features = model(images, projector=True)
+                    features = F.normalize(features, dim=1)
                     zk, zq = torch.split(features, [bsz, bsz], dim=0)
                     
                     # get loss (no teacher)
-                    loss = genscl([zk, zq], [l_q, l_k], (confident_mask, confident_mask))
+                    mapped_anchors = ~unconfident_mask.bool()
+                    loss = genscl([zk, zq], [l_q, l_k], (mapped_anchors, mapped_anchors))
                     losses.update(loss.item(), bsz)
 
                     loss.backward()
                     optimizer.step()
                     
                 print(f'[{i+1}/{target_count}] Gen_SCL Loss: {losses.avg:.5f}')
-            
-            
+
+
+
         if pickup_warmup: 
             pickup_warmup = False
         if warmup:
@@ -545,15 +556,13 @@ if __name__ == '__main__':
             
             print("Warmup Phase Finished")
             warmup = False
-        
-
-
+            
+            
 
         print('Training Aggregator')
         
         if reset_aggregator:
-            model.aggregator.reset_parameters() 
-
+            model.aggregator.reset_parameters() # Reset the model.aggregator weights before training
         
         # Freeze the encoder
         for param in model.encoder.parameters():
@@ -663,30 +672,4 @@ if __name__ == '__main__':
                 # Save selection
                 with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
                     pickle.dump(selection_mask, file)
-        
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-        
-            
-            
-            
-            
-            
-            
-            
-            
-        
+

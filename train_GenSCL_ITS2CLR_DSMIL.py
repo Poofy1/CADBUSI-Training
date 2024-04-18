@@ -281,14 +281,12 @@ def load_state(stats_path, target_folder):
     return train_losses, valid_losses, epoch, val_loss_best, selection_mask
 
 
-
 if __name__ == '__main__':
 
     # Config
-    
-    pretrained_name = "cifar10_Head_7"
-    model_name = 'cifar10_07'
+    model_version = '01'
     dataset_name = 'cifar10'
+    
     label_columns = ['Has_Truck']
     instance_columns = ['']
     img_size = 32
@@ -297,11 +295,11 @@ if __name__ == '__main__':
     max_bag_size = 25
     instance_batch_size =  200
     
-    """pretrained_name = "03_18_2024_Res18_Head_06"
-    model_name = '03_18_2024_Res18_06'
+    """pretrained_name = "03_18_2024_Res50_Head_5"
+    model_name = '03_18_2024_Res50_05'
     dataset_name = 'export_03_18_2024'
     label_columns = ['Has_Malignant']
-    instance_columns = ['Malignant Lesion Present']   #['Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
+    instance_columns = ['Malignant Lesion Present']  
     img_size = 300
     bag_batch_size = 5
     min_bag_size = 2
@@ -311,14 +309,15 @@ if __name__ == '__main__':
     
     #ITS2CLR Config
     feature_extractor_train_count = 6
-    MIL_train_count = 15
-    initial_ratio = 0.3 # --% preditions included
-    final_ratio = 0.85 # --% preditions included
+    MIL_train_count = 8
+    initial_ratio = .3 #0.3 # --% preditions included
+    final_ratio = .85 #0.85 # --% preditions included
     total_epochs = 20
-    
-    confidence_threshold = .70
-
     warmup_epochs = 15
+    
+    arch = "resnet18"
+    pretrained_arch = False
+    reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
     
     learning_rate=0.001
     mix_alpha=0.2
@@ -375,16 +374,15 @@ if __name__ == '__main__':
 
 
     # Get Model
-    if use_efficient_net:
+    if "resnet" in arch:
+        encoder = create_timm_body(arch, pretrained=pretrained_arch)
+        nf = num_features_model( nn.Sequential(*encoder.children()))
+    else:
         encoder = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
         nf = 512
         # Replace the last fully connected layer with a new one
         num_features = encoder.classifier[1].in_features
         encoder.classifier[1] = nn.Linear(num_features, nf)
-        
-    else:
-        encoder = create_timm_body("resnet50", pretrained=False)
-        nf = num_features_model( nn.Sequential(*encoder.children()))
     
 
     model = Embeddingmodel(encoder = encoder, nf = nf, num_classes = num_labels, efficient_net = use_efficient_net).cuda()
@@ -398,6 +396,10 @@ if __name__ == '__main__':
     train_losses = []
     valid_losses = []
 
+    model_name = f"{dataset_name}_{arch}_{model_version}"
+    pretrained_name = f"Head_{model_name}"
+    
+    
     # Check if the model already exists
     model_folder = f"{env}/models/{model_name}/"
     model_path = f"{model_folder}/{model_name}.pth"
@@ -407,14 +409,14 @@ if __name__ == '__main__':
     head_folder = f"{env}/models/{pretrained_name}/"
     head_path = f"{head_folder}/{pretrained_name}.pth"
     head_optimizer_path = f"{head_folder}/{pretrained_name}_optimizer.pth"
-    head_stats_path = f"{head_folder}/{pretrained_name}_stats.pkl"
     
     val_loss_best = 99999
     selection_mask = []
     epoch = 0
     warmup = False
+    pickup_warmup = False
 
-    if os.path.exists(model_path):
+    if os.path.exists(model_path): # If main model exists
         model.load_state_dict(torch.load(model_path))
         optimizer.load_state_dict(torch.load(optimizer_path))
         print(f"Loaded pre-existing model from {model_name}")
@@ -425,97 +427,141 @@ if __name__ == '__main__':
         print(f"{model_name} does not exist, creating new instance")
         os.makedirs(model_folder, exist_ok=True)
         
-        with open(f'{model_folder}model_architecture.txt', 'w') as f:
-            print(encoder, file=f)
-            
-        if os.path.exists(head_path):
+        # Save the current configuration as a human-readable file
+        config = {
+            "dataset_name": dataset_name,
+            "arch": arch,
+            "pretrained_arch": pretrained_arch,
+            "label_columns": label_columns,
+            "instance_columns": instance_columns,
+            "img_size": img_size,
+            "bag_batch_size": bag_batch_size,
+            "min_bag_size": min_bag_size,
+            "max_bag_size": max_bag_size,
+            "instance_batch_size": instance_batch_size,
+            "use_efficient_net": use_efficient_net,
+            "feature_extractor_train_count": feature_extractor_train_count,
+            "MIL_train_count": MIL_train_count,
+            "initial_ratio": initial_ratio,
+            "final_ratio": final_ratio,
+            "total_epochs": total_epochs,
+            "reset_aggregator": reset_aggregator,
+            "warmup_epochs": warmup_epochs,
+            "learning_rate": learning_rate,
+            "mix_alpha": mix_alpha
+        }
+        
+
+        if os.path.exists(head_path):  # If main head model exists
+            pickup_warmup = True
             model.load_state_dict(torch.load(head_path))
             optimizer.load_state_dict(torch.load(head_optimizer_path))
             print(f"Loaded pre-trained model from {pretrained_name}")
             
-            train_losses, valid_losses, epoch, val_loss_best, selection_mask = load_state(head_stats_path, head_folder)
-        else:
+            config_path = f"{model_folder}/config.json"
+            with open(config_path, 'w') as f:
+                json.dump(config, f, indent=4)
+            
+                
+            with open(f'{model_folder}model_architecture.txt', 'w') as f:
+                print(model, file=f)
+             
+        else: # If main head model DOES NOT exists
             warmup = True
             os.makedirs(head_folder, exist_ok=True)
+
+                
+            config_path = f"{head_folder}/config.txt"
+            with open(config_path, 'w') as f:
+                json.dump(config, f, indent=4)
             
             with open(f'{head_folder}model_architecture.txt', 'w') as f:
-                print(encoder, file=f)
+                print(model, file=f)
             
-            
-    
+
     # Training loop
     while epoch < total_epochs:
         
-        
-        # Used the instance predictions from bag training to update the Instance Dataloader
-        instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, warmup=warmup)
         print(f'Warmup Mode: {warmup}')
         
-        if warmup:
-            sampler = WarmupSampler(instance_dataset_train, instance_batch_size)
-            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=sampler, collate_fn = collate_instance)
-        else:
-            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_size=instance_batch_size, collate_fn = collate_instance, drop_last=True, shuffle = True)
+        if not pickup_warmup: # Are we resuming from a head model?
         
-        
-
-        print('Training Feature Extractor')
-        
-        # Unfreeze encoder
-        for param in model.encoder.parameters():
-            param.requires_grad = True
-    
-        # Generalized Supervised Contrastive Learning phase
-        if warmup:
-            target_count = warmup_epochs
-        else:
-            target_count = feature_extractor_train_count
-        
-        
-        model.train()
-        for i in range(target_count): 
-            losses = AverageMeter()
-
-            # Iterate over the training data
-            for idx, (images, instance_labels, unconfident_mask) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
-                #warmup_learning_rate(args, epoch, idx, len(instance_dataloader_train), optimizer)
-                
-                # Data preparation 
-                bsz = instance_labels.shape[0]
-                im_q, im_k = images
-                im_q = im_q.cuda(non_blocking=True)
-                im_k = im_k.cuda(non_blocking=True)
-                instance_labels = instance_labels.cuda(non_blocking=True)
-                
-                # image-based regularizations (lam 1 = no mixup)
-                im_q, y0a, y0b, lam0 = mix_fn(im_q, instance_labels, mix_alpha, mix)
-                im_k, y1a, y1b, lam1 = mix_fn(im_k, instance_labels, mix_alpha, mix)
-                images = [im_q, im_k]
-                l_q = mix_target(y0a, y0b, lam0, num_classes)
-                l_k = mix_target(y1a, y1b, lam1, num_classes)
-                
-                # forward
-                optimizer.zero_grad()
-                _, _, features = model(images, projector=True)
-                zk, zq = torch.split(features, [bsz, bsz], dim=0)
-                
-                # get loss (no teacher)
-                mapped_anchors = ~unconfident_mask.bool()
-                loss = genscl([zk, zq], [l_q, l_k], (mapped_anchors, mapped_anchors))
-                losses.update(loss.item(), bsz)
-
-                loss.backward()
-                optimizer.step()
-                
-            print(f'[{i+1}/{target_count}] Gen_SCL Loss: {losses.avg:.5f}')
+            # Used the instance predictions from bag training to update the Instance Dataloader
+            instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, warmup=warmup)
+            
+            if warmup:
+                sampler = WarmupSampler(instance_dataset_train, instance_batch_size)
+                instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=sampler, collate_fn = collate_instance)
+                target_count = warmup_epochs
+            else:
+                instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_size=instance_batch_size, collate_fn = collate_instance, drop_last=True, shuffle = True)
+                target_count = feature_extractor_train_count
             
 
+            print('Training Feature Extractor')
+            
+            # Unfreeze encoder
+            for param in model.encoder.parameters():
+                param.requires_grad = True
+        
+            # Generalized Supervised Contrastive Learning phase
+            
+            model.train()
+            for i in range(target_count): 
+                losses = AverageMeter()
+
+                # Iterate over the training data
+                for idx, (images, instance_labels, unconfident_mask) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
+                    #warmup_learning_rate(args, epoch, idx, len(instance_dataloader_train), optimizer)
+                    
+                    # Data preparation 
+                    bsz = instance_labels.shape[0]
+                    im_q, im_k = images
+                    im_q = im_q.cuda(non_blocking=True)
+                    im_k = im_k.cuda(non_blocking=True)
+                    instance_labels = instance_labels.cuda(non_blocking=True)
+                    
+                    # image-based regularizations (lam 1 = no mixup)
+                    im_q, y0a, y0b, lam0 = mix_fn(im_q, instance_labels, mix_alpha, mix)
+                    im_k, y1a, y1b, lam1 = mix_fn(im_k, instance_labels, mix_alpha, mix)
+                    images = [im_q, im_k]
+                    l_q = mix_target(y0a, y0b, lam0, num_classes)
+                    l_k = mix_target(y1a, y1b, lam1, num_classes)
+                    
+                    # forward
+                    optimizer.zero_grad()
+                    _, _, features = model(images, projector=True)
+                    features = F.normalize(features, dim=1)
+                    zk, zq = torch.split(features, [bsz, bsz], dim=0)
+                    
+                    # get loss (no teacher)
+                    mapped_anchors = ~unconfident_mask.bool()
+                    loss = genscl([zk, zq], [l_q, l_k], (mapped_anchors, mapped_anchors))
+                    losses.update(loss.item(), bsz)
+
+                    loss.backward()
+                    optimizer.step()
+                    
+                print(f'[{i+1}/{target_count}] Gen_SCL Loss: {losses.avg:.5f}')
 
 
+
+        if pickup_warmup: 
+            pickup_warmup = False
+        if warmup:
+            # Save the model and optimizer
+            torch.save(model.state_dict(), head_path)
+            torch.save(optimizer.state_dict(), head_optimizer_path)
+            
+            print("Warmup Phase Finished")
+            warmup = False
+            
+            
 
         print('Training Aggregator')
         
-        #model.aggregator.reset_parameters() # Reset the model.aggregator weights before training
+        if reset_aggregator:
+            model.aggregator.reset_parameters() # Reset the model.aggregator weights before training
         
         # Freeze the encoder
         for param in model.encoder.parameters():
@@ -538,7 +584,6 @@ if __name__ == '__main__':
                 
                 outputs, instance_pred, _ = model(xb, pred_on = True)
                 #print(outputs)
-                #print(instance_pred)
                 
 
                 # Calculate bag-level loss
@@ -626,33 +671,6 @@ if __name__ == '__main__':
                 # Save selection
                 with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
                     pickle.dump(selection_mask, file)
-        
-        if warmup:
-            print("Warmup Phase Finished")
-            warmup = False
+
             
             
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-        
-            
-            
-            
-            
-            
-            
-            
-            
-        
