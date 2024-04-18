@@ -299,7 +299,7 @@ if __name__ == '__main__':
     model_name = '03_18_2024_Res50_05'
     dataset_name = 'export_03_18_2024'
     label_columns = ['Has_Malignant']
-    instance_columns = ['Malignant Lesion Present']   #['Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
+    instance_columns = ['Malignant Lesion Present']  
     img_size = 300
     bag_batch_size = 5
     min_bag_size = 2
@@ -331,7 +331,7 @@ if __name__ == '__main__':
     bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
     num_labels = len(label_columns)
     
-    train_transform = T.Compose([
+    """train_transform = T.Compose([
                 T.RandomVerticalFlip(),
                 T.RandomHorizontalFlip(),
                 T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
@@ -342,9 +342,9 @@ if __name__ == '__main__':
     val_transform = T.Compose([
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
+            ])"""
     
-    """train_transform = T.Compose([
+    train_transform = T.Compose([
                 ###T.RandomVerticalFlip(),
                 T.RandomHorizontalFlip(),
                 T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
@@ -359,7 +359,7 @@ if __name__ == '__main__':
                 CLAHETransform(),
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])"""
+            ])
 
 
     # Create datasets
@@ -414,7 +414,7 @@ if __name__ == '__main__':
         
     else:
         print(f"{model_name} does not exist, creating new instance")
-        
+        os.makedirs(model_folder, exist_ok=True)
         
         # Save the current configuration as a human-readable file
         config = {
@@ -443,7 +443,6 @@ if __name__ == '__main__':
 
         if os.path.exists(head_path):  # If main head model exists
             pickup_warmup = True
-            os.makedirs(model_folder, exist_ok=True)
             model.load_state_dict(torch.load(head_path))
             optimizer.load_state_dict(torch.load(head_optimizer_path))
             print(f"Loaded pre-trained model from {pretrained_name}")
