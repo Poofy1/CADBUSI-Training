@@ -12,7 +12,7 @@ class Embeddingmodel(nn.Module):
         self.nf = nf
         self.aggregator = Linear_Classifier(nf=self.nf, num_classes=num_classes)
         self.projector = nn.Sequential(
-            nn.Linear(512, 512),
+            nn.Linear(nf, 512),
             nn.ReLU(inplace=True),
             nn.Linear(512, 256)
         )
@@ -85,10 +85,6 @@ class Linear_Classifier(nn.Module):
         
         
     def forward(self, v):
-        
-        # Gated-attention mechanism
-        #v = torch.max(v, dim=2).values  
-        #v = torch.max(v, dim=2).values  
         
         A_V = self.attention_V(v)  # KxL
         A_U = self.attention_U(v)  # KxL
