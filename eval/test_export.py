@@ -132,7 +132,7 @@ def plot_size_vs_malignant_biopsies(df, export_name):
 
 
 #export_name = 'export_11_11_2023'
-export_name = 'export_12_26_2023'
+export_name = 'export_03_18_2024'
 export_location = f'D:/DATA/CASBUSI/exports/{export_name}/'
 os.makedirs(f'{env}/results/', exist_ok=True)
 image_df = pd.read_csv(f'{export_location}/ImageData.csv')

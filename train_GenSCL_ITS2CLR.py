@@ -316,7 +316,7 @@ if __name__ == '__main__':
     total_epochs = 20
     warmup_epochs = 15
     
-    arch = "resnet18"
+    arch = "resnet50"
     pretrained_arch = False
     reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
     
@@ -332,7 +332,7 @@ if __name__ == '__main__':
     bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
     num_labels = len(label_columns)
     
-    train_transform = T.Compose([
+    """train_transform = T.Compose([
                 T.RandomVerticalFlip(),
                 T.RandomHorizontalFlip(),
                 T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
@@ -343,9 +343,9 @@ if __name__ == '__main__':
     val_transform = T.Compose([
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
+            ])"""
     
-    """train_transform = T.Compose([
+    train_transform = T.Compose([
                 ###T.RandomVerticalFlip(),
                 T.RandomHorizontalFlip(),
                 T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
@@ -360,7 +360,7 @@ if __name__ == '__main__':
                 CLAHETransform(),
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])"""
+            ])
 
 
     # Create datasets
@@ -455,8 +455,15 @@ if __name__ == '__main__':
 
         if os.path.exists(head_path):  # If main head model exists
             pickup_warmup = True
-            model.load_state_dict(torch.load(head_path))
+            #model.load_state_dict(torch.load(head_path))
+            
+            
+            # Load only the encoder state dictionary
+            encoder_state_dict = torch.load(head_path)
+            encoder_state_dict = {k.replace('encoder.', ''): v for k, v in encoder_state_dict.items() if k.startswith('encoder.')}
+            model.encoder.load_state_dict(encoder_state_dict)
             optimizer.load_state_dict(torch.load(head_optimizer_path))
+    
             print(f"Loaded pre-trained model from {pretrained_name}")
             
             config_path = f"{model_folder}/config.json"

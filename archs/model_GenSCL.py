@@ -6,24 +6,10 @@ from archs.backbone import create_timm_body
 from torchvision.models import efficientnet_b3, EfficientNet_B3_Weights
 
 class Embeddingmodel(nn.Module):
-    def __init__(self, arch, pretrained_arch, num_classes=1):
+    def __init__(self, encoder, nf, num_classes=1, efficient_net=False):
         super(Embeddingmodel, self).__init__()
-    
-        use_efficient_net = False 
-        
-        if "resnet" in arch:
-            encoder = create_timm_body(arch, pretrained=pretrained_arch)
-            nf = num_features_model( nn.Sequential(*encoder.children()))
-        else:
-            encoder = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
-            nf = 512
-            # Replace the last fully connected layer with a new one
-            num_features = encoder.classifier[1].in_features
-            encoder.classifier[1] = nn.Linear(num_features, nf)
-            use_efficient_net = True
-            
         self.encoder = encoder
-        self.efficient_net = use_efficient_net
+        self.efficient_net = efficient_net
         self.num_classes = num_classes
         self.nf = nf
         self.aggregator = Linear_Classifier(nf=self.nf, num_classes=num_classes)
@@ -63,7 +49,6 @@ class Embeddingmodel(nn.Module):
             
         if projector:
             feat = self.projector(feat)
-            feat = nn.functional.normalize(feat, dim=1)
             
 
         return logits, yhat_instances, feat
