@@ -315,7 +315,7 @@ if __name__ == '__main__':
     total_epochs = 20
     warmup_epochs = 15
     
-    arch = "resnet18"
+    arch = "resnet50"
     pretrained_arch = False
     reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
     
@@ -454,7 +454,12 @@ if __name__ == '__main__':
 
         if os.path.exists(head_path):  # If main head model exists
             pickup_warmup = True
-            model.load_state_dict(torch.load(head_path))
+            #model.load_state_dict(torch.load(head_path))
+            
+            # Load only the encoder state dictionary
+            encoder_state_dict = torch.load(head_path)
+            encoder_state_dict = {k.replace('encoder.', ''): v for k, v in encoder_state_dict.items() if k.startswith('encoder.')}
+            model.encoder.load_state_dict(encoder_state_dict)
             optimizer.load_state_dict(torch.load(head_optimizer_path))
             print(f"Loaded pre-trained model from {pretrained_name}")
             

@@ -36,15 +36,15 @@ def draw_legend(image, label_columns, true_labels, pred_labels):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'imagenette2-160-test2'
+    model_name = 'ABMIL_12_26_1'
     encoder_arch = 'resnet18'
-    dataset_name = 'imagenette2-160'
-    label_columns = ['n01440764', 'n02102040']
+    dataset_name = 'export_03_18_2024'
+    label_columns = ['Has_Malignant', 'Has_Benign']
     instance_columns = [] #['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present'] # 'Reject Image' is used to remove images and is not trained on
-    img_size = 160
+    img_size = 350
     batch_size = 1
-    min_bag_size = 3
-    max_bag_size = 7
+    min_bag_size = 2
+    max_bag_size = 25
     lr = 0.001
 
     # Paths
@@ -56,12 +56,18 @@ if __name__ == '__main__':
     # Get Training Data
     bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
     num_labels = len(label_columns)
+    
+    val_transform = T.Compose([
+                CLAHETransform(),
+                T.ToTensor(),
+                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
 
     # Create datasets
     #dataset_val = TUD.Subset(BagOfImagesDataset(bags_val),list(range(0,100)))
-    dataset_val = BagOfImagesDataset(bags_val, train=False)
+    dataset_val = BagOfImagesDataset(bags_val, transform=val_transform)
 
-    val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
+    val_dl = TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
 
     encoder = create_timm_body(encoder_arch)
     nf = num_features_model( nn.Sequential(*encoder.children()))
@@ -85,53 +91,52 @@ if __name__ == '__main__':
     bag_labels = []
     saliency_maps_list = []
 
+
     with torch.no_grad():
-        for (data, yb, instance_yb, bag_id) in tqdm(val_dl, total=len(val_dl)): 
+        for (data, yb, instance_yb, bag_id) in tqdm(val_dl, total=len(val_dl)):
             xb, yb = data, yb.cuda()
-
             outputs, saliency_maps, yhat, att = bagmodel(xb)
-            
-            print(f'{outputs} / {yb}')
+            outputs = outputs[0][0]
+            yb = yb[0][0]
+            print(f'{outputs.item()} / {yb.item()}')
 
-            # Saving the images with saliency maps overlaid
             for bag_index, bag_saliency_maps in enumerate(saliency_maps):
+                bag_folder = os.path.join(output_path, f'bag_{bag_id[bag_index]}')
+                os.makedirs(bag_folder, exist_ok=True)
+
+                # Create a text file for the current bag
+                bag_txt_file = os.path.join(bag_folder, 'bag_info.txt')
+                with open(bag_txt_file, 'w') as f:
+                    f.write(f'Label: {yb.item()}\n')
+                    f.write(f'Bag Prediction: {outputs.item()}\n')
+
                 for i, saliency in enumerate(bag_saliency_maps):
-                    # Initialize an empty RGB image
                     saliency_map_rgb = torch.zeros(3, saliency.size(1), saliency.size(2))
+                    saliency = saliency[0]  # Use only the first label
+                    saliency = (saliency - saliency.min()) / (saliency.max() - saliency.min())
+                    saliency_map_rgb[0] = saliency  # Assign to the red channel
 
-                    if saliency.shape[0] == num_labels and num_labels > 1:
-                        # Normalize and assign each label's saliency map to a different color channel
-                        for label_index in range(num_labels):
-                            # Normalize the saliency map for the current label
-                            saliency_label = (saliency[label_index] - saliency[label_index].min()) / (saliency[label_index].max() - saliency[label_index].min())
-                            # Assign to red channel for first label, green for second
-                            saliency_map_rgb[label_index] = saliency_label
-                    else:
-                        # Single label case, use red channel
-                        saliency = (saliency - saliency.min()) / (saliency.max() - saliency.min())
-                        saliency_map_rgb[0] = saliency
-
-                    # Convert the RGB saliency map to a PIL image
                     saliency_img = TF.to_pil_image(saliency_map_rgb.cpu().detach())
+                    saliency_img = saliency_img.convert("RGBA")  # Convert to RGBA mode
 
-                    # Retrieve the corresponding image tensor from the batch
+                    # Make non-red pixels transparent
+                    pixel_data = saliency_img.load()
+                    for y in range(saliency_img.size[1]):
+                        for x in range(saliency_img.size[0]):
+                            r, g, b, a = pixel_data[x, y]
+                            if r == 0 and g == 0 and b == 0:
+                                pixel_data[x, y] = (0, 0, 0, 0)  # Set alpha channel to 0 for non-red pixels
+                            else:
+                                pixel_data[x, y] = (r, g, b, 128)  # Set alpha channel to 128 for red pixels
+
                     img_tensor = xb[bag_index][i].cpu()
-
-                    # Unnormalize the image tensor to convert it to PIL image
                     img = TF.to_pil_image(unnormalize(img_tensor).cpu().detach())
-
-                    # Ensure the saliency_img is the same size as the original image
                     saliency_img = saliency_img.resize(img.size, Image.Resampling.BILINEAR)
 
-                    # Overlay the saliency map on the image
-                    overlayed_img = Image.blend(img, saliency_img, alpha=0.5)
-                    
-                    # Extract true and predicted labels for the current instance
-                    current_true_labels = yb[bag_index]
-                    current_predicted_labels = outputs[bag_index]
+                    overlayed_img = Image.alpha_composite(img.convert("RGBA"), saliency_img)
 
-                    # Overlay the saliency map on the image and draw the legend
-                    draw_legend(overlayed_img, label_columns, current_true_labels, current_predicted_labels)
+                    original_img_path = os.path.join(bag_folder, f'original_{i}.png')
+                    overlayed_img_path = os.path.join(bag_folder, f'overlayed_{i}.png')
 
-                    # Save the overlayed image
-                    overlayed_img.save(os.path.join(output_path, f'saliency_bag_{bag_id[bag_index]}_img_{i}.png'))
+                    img.save(original_img_path)
+                    overlayed_img.convert("RGB").save(overlayed_img_path)
