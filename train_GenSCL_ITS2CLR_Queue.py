@@ -11,7 +11,7 @@ from torch.optim import Adam
 from archs.backbone import create_timm_body
 from torchvision.models import efficientnet_b3, EfficientNet_B3_Weights
 from data.format_data import *
-from archs.model_GenSCL import *
+from archs.model_GenSCL_Queue import *
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -152,21 +152,22 @@ def collate_bag(batch):
 
 
 class GenSupConLossv2(nn.Module):
-    def __init__(self, temperature=0.07, contrast_mode='all',
-                 base_temperature=0.07):
+    def __init__(self, temperature=0.07, contrast_mode='all', base_temperature=0.07):
         super(GenSupConLossv2, self).__init__()
         self.temperature = temperature
         self.contrast_mode = contrast_mode
         self.base_temperature = base_temperature
 
-    def forward(self, features, labels, anc_mask = None):
+    def forward(self, features, labels, queue, anc_mask=None):
         '''
         Args:
             feats: (anchor_features, contrast_features), each: [N, feat_dim]
             labels: (anchor_labels, contrast_labels) each: [N, num_cls]
+            queue: [queue_size, feat_dim]
             anc_mask: (anchors_mask, contrast_mask) each: [N]
         '''
-        if self.contrast_mode == 'all': # anchor+contrast @ anchor+contrast
+        
+        """if self.contrast_mode == 'all': # anchor+contrast @ anchor+contrast
             anchor_labels = torch.cat(labels, dim=0).float()
             contrast_labels = anchor_labels
             
@@ -177,44 +178,54 @@ class GenSupConLossv2(nn.Module):
             contrast_labels = labels[1].float()
             
             anchor_features = features[0]
-            contrast_features = features[1]
-            
+            contrast_features = features[1]"""
+
+        if self.contrast_mode == 'all':
+            # anchor+contrast @ anchor+contrast+queue
+            anchor_labels = torch.cat(labels, dim=0).float()
+            contrast_labels = torch.cat([anchor_labels, torch.zeros((queue.shape[0], anchor_labels.shape[1]), device=queue.device)], dim=0)
+            anchor_features = torch.cat(features, dim=0)
+            contrast_features = torch.cat([anchor_features, queue], dim=0)
+        elif self.contrast_mode == 'one':
+            # anchor @ contrast+queue
+            anchor_labels = labels[0].float()
+            contrast_labels = torch.cat([labels[1].float(), torch.zeros((queue.shape[0], labels[1].shape[1]), device=queue.device)], dim=0)
+            anchor_features = features[0]
+            contrast_features = torch.cat([features[1], queue], dim=0)
+
         # 1. compute similarities among targets
-        anchor_norm = torch.norm(anchor_labels, p=2, dim=-1, keepdim=True) # [anchor_N, 1]
-        contrast_norm = torch.norm(contrast_labels, p=2, dim=-1, keepdim=True) # [contrast_N, 1]
-        
+        anchor_norm = torch.norm(anchor_labels, p=2, dim=-1, keepdim=True)  # [anchor_N, 1]
+        contrast_norm = torch.norm(contrast_labels, p=2, dim=-1, keepdim=True)  # [contrast_N+queue_size, 1]
         deno = torch.mm(anchor_norm, contrast_norm.T)
-        mask = torch.mm(anchor_labels, contrast_labels.T) / deno # cosine similarity: [anchor_N, contrast_N]
-        
+        mask = torch.mm(anchor_labels, contrast_labels.T) / deno  # cosine similarity: [anchor_N, contrast_N+queue_size]
         logits_mask = torch.ones_like(mask)
         if self.contrast_mode == 'all':
             logits_mask.fill_diagonal_(0)
+        else:
+            logits_mask[:, :labels[1].shape[0]].fill_diagonal_(0)
         mask = mask * logits_mask
-        
+
         # 2. compute logits
         anchor_dot_contrast = torch.div(
             torch.matmul(anchor_features, contrast_features.T),
             self.temperature
-        )
-        # for numerical stability
+        )  # for numerical stability
         logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
         logits = anchor_dot_contrast - logits_max.detach()
-        
+
         # compute log_prob
         exp_logits = torch.exp(logits) * logits_mask
         log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True))
         mean_log_prob_pos = (mask * log_prob).sum(1) / (mask.sum(1) + 1e-8)
-        
+
         # loss
         loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
         if anc_mask:
-            select = torch.cat( anc_mask )
+            select = torch.cat(anc_mask)
             loss = loss[select]
-            
         loss = loss.mean()
 
         return loss
-    
     
 
 
@@ -285,10 +296,10 @@ def load_state(stats_path, target_folder):
 if __name__ == '__main__':
 
     # Config
-    model_version = '02'
+    model_version = 'MoCo_01'
     
     
-    """
+
     dataset_name = 'cifar10'
     label_columns = ['Has_Truck']
     instance_columns = ['']
@@ -296,16 +307,16 @@ if __name__ == '__main__':
     bag_batch_size = 30
     min_bag_size = 2
     max_bag_size = 25
-    instance_batch_size =  200"""
+    instance_batch_size =  200
     
-    dataset_name = 'export_03_18_2024'
+    """dataset_name = 'export_03_18_2024'
     label_columns = ['Has_Malignant']
     instance_columns = ['Malignant Lesion Present']  
     img_size = 300
     bag_batch_size = 5
     min_bag_size = 2
     max_bag_size = 25
-    instance_batch_size =  25
+    instance_batch_size =  25"""
     use_efficient_net = False
     
     #ITS2CLR Config
@@ -543,11 +554,14 @@ if __name__ == '__main__':
                     
                     # get loss (no teacher)
                     mapped_anchors = ~unconfident_mask.bool()
-                    loss = genscl([zk, zq], [l_q, l_k], (mapped_anchors, mapped_anchors))
+                    loss = genscl([zk, zq], [l_q, l_k], model.queue, (mapped_anchors, mapped_anchors))
                     losses.update(loss.item(), bsz)
 
                     loss.backward()
                     optimizer.step()
+                    
+                    # Update the queue with the current batch features
+                    model.update_queue(zq.detach())
                     
                 print(f'[{i+1}/{target_count}] Gen_SCL Loss: {losses.avg:.5f}')
 

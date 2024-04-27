@@ -6,7 +6,7 @@ from archs.backbone import create_timm_body
 from torchvision.models import efficientnet_b3, EfficientNet_B3_Weights
 
 class Embeddingmodel(nn.Module):
-    def __init__(self, encoder, nf, num_classes=1, efficient_net=False):
+    def __init__(self, encoder, nf, num_classes=1, efficient_net=False, queue_size=65536, feature_dim=256):
         super(Embeddingmodel, self).__init__()
         self.encoder = encoder
         self.efficient_net = efficient_net
@@ -16,11 +16,28 @@ class Embeddingmodel(nn.Module):
         self.projector = nn.Sequential(
             nn.Linear(nf, 512),
             nn.ReLU(inplace=True),
-            nn.Linear(512, 256)
+            nn.Linear(512, feature_dim)
         )
+        
+        # Initialize the queue
+        self.queue_size = queue_size
+        self.feature_dim = feature_dim
+        self.register_buffer("queue", torch.randn(queue_size, feature_dim))
+        self.queue = nn.functional.normalize(self.queue, dim=0)
+        self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
         
         print(f'Feature Map Size: {nf}')
 
+    def update_queue(self, features):
+        batch_size = features.shape[0]
+        ptr = int(self.queue_ptr)
+        
+        # Replace the oldest batch in the queue with the new batch
+        self.queue[ptr:ptr + batch_size, :] = features
+        ptr = (ptr + batch_size) % self.queue_size
+        
+        self.queue_ptr[0] = ptr
+        
     def forward(self, input, projector=False, pred_on = False):
         num_bags = len(input) # input = [bag #, image #, channel, height, width]
         all_images = torch.cat(input, dim=0).cuda()  # Concatenate all bags into a single tensor for batch processing
