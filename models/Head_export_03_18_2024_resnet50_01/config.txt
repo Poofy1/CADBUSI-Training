@@ -1,0 +1,26 @@
+{
+    "dataset_name": "export_03_18_2024",
+    "arch": "resnet50",
+    "pretrained_arch": false,
+    "label_columns": [
+        "Has_Malignant"
+    ],
+    "instance_columns": [
+        "Malignant Lesion Present"
+    ],
+    "img_size": 300,
+    "bag_batch_size": 5,
+    "min_bag_size": 2,
+    "max_bag_size": 25,
+    "instance_batch_size": 25,
+    "use_efficient_net": false,
+    "feature_extractor_train_count": 6,
+    "MIL_train_count": 8,
+    "initial_ratio": 1,
+    "final_ratio": 1,
+    "total_epochs": 20,
+    "reset_aggregator": true,
+    "warmup_epochs": 15,
+    "learning_rate": 0.001,
+    "mix_alpha": 0.2
+}

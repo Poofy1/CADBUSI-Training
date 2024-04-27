@@ -48,7 +48,7 @@ class EmbeddingBagModel(nn.Module):
         num_bags = len(input) # input = [bag #, image #, channel, height, width]
         
         # Concatenate all bags into a single tensor for batch processing
-        all_images = torch.cat(input, dim=0).cuda()  # Shape: [Total images in all bags, channel, height, width]
+        all_images = torch.cat(input, dim=0)  # Shape: [Total images in all bags, channel, height, width]
         
         # Calculate the embeddings for all images in one go
         h_all = self.encoder(all_images)
