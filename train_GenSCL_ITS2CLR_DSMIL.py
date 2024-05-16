@@ -284,7 +284,7 @@ def load_state(stats_path, target_folder):
 if __name__ == '__main__':
 
     # Config
-    model_version = '01'
+    model_version = '03'
     dataset_name = 'cifar10'
     
     label_columns = ['Has_Truck']
@@ -310,8 +310,8 @@ if __name__ == '__main__':
     #ITS2CLR Config
     feature_extractor_train_count = 6
     MIL_train_count = 8
-    initial_ratio = .3 #0.3 # --% preditions included
-    final_ratio = .85 #0.85 # --% preditions included
+    initial_ratio = 1 #0.3 # --% preditions included
+    final_ratio = 1 #0.85 # --% preditions included
     total_epochs = 20
     warmup_epochs = 15
     
@@ -589,7 +589,6 @@ if __name__ == '__main__':
                 
                 outputs, instance_pred, _ = model(xb, pred_on = True)
                 #print(outputs)
-                
 
                 # Calculate bag-level loss
                 loss = BCE_loss(outputs, yb)

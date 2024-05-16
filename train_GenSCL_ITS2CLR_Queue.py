@@ -158,7 +158,7 @@ class GenSupConLossv2(nn.Module):
         self.contrast_mode = contrast_mode
         self.base_temperature = base_temperature
 
-    def forward(self, features, labels, queue, anc_mask=None):
+    def forward(self, features, labels, queue, queue_labels, anc_mask=None):
         '''
         Args:
             feats: (anchor_features, contrast_features), each: [N, feat_dim]
@@ -178,26 +178,41 @@ class GenSupConLossv2(nn.Module):
             contrast_labels = labels[1].float()
             
             anchor_features = features[0]
-            contrast_features = features[1]"""
+            contrast_features = features[1]
+            
+            
+        # 1. compute similarities among targets
+        anchor_norm = torch.norm(anchor_labels, p=2, dim=-1, keepdim=True) # [anchor_N, 1]
+        contrast_norm = torch.norm(contrast_labels, p=2, dim=-1, keepdim=True) # [contrast_N, 1]
+        
+        deno = torch.mm(anchor_norm, contrast_norm.T)
+        mask = torch.mm(anchor_labels, contrast_labels.T) / deno # cosine similarity: [anchor_N, contrast_N]
+        """
 
         if self.contrast_mode == 'all':
             # anchor+contrast @ anchor+contrast+queue
-            anchor_labels = torch.cat(labels, dim=0).float()
-            contrast_labels = torch.cat([anchor_labels, torch.zeros((queue.shape[0], anchor_labels.shape[1]), device=queue.device)], dim=0)
             anchor_features = torch.cat(features, dim=0)
             contrast_features = torch.cat([anchor_features, queue], dim=0)
+            
+            anchor_labels = torch.cat(labels, dim=0).float()
+            queue_labels = torch.cat(queue_labels, dim=0).float()
+            contrast_labels = torch.cat([anchor_labels, queue_labels], dim=0)
         elif self.contrast_mode == 'one':
             # anchor @ contrast+queue
-            anchor_labels = labels[0].float()
-            contrast_labels = torch.cat([labels[1].float(), torch.zeros((queue.shape[0], labels[1].shape[1]), device=queue.device)], dim=0)
             anchor_features = features[0]
             contrast_features = torch.cat([features[1], queue], dim=0)
-
+            
+            anchor_labels = labels[0].float()
+            contrast_labels = torch.cat([labels[1].float(), queue_labels], dim=0)
+            
+            
         # 1. compute similarities among targets
-        anchor_norm = torch.norm(anchor_labels, p=2, dim=-1, keepdim=True)  # [anchor_N, 1]
-        contrast_norm = torch.norm(contrast_labels, p=2, dim=-1, keepdim=True)  # [contrast_N+queue_size, 1]
+        anchor_norm = torch.norm(anchor_labels, p=2, dim=-1, keepdim=True) # [anchor_N, 1]
+        contrast_norm = torch.norm(contrast_labels, p=2, dim=-1, keepdim=True) # [contrast_N, 1]
+        
         deno = torch.mm(anchor_norm, contrast_norm.T)
-        mask = torch.mm(anchor_labels, contrast_labels.T) / deno  # cosine similarity: [anchor_N, contrast_N+queue_size]
+        mask = torch.mm(anchor_labels, contrast_labels.T) / deno # cosine similarity: [anchor_N, contrast_N]
+        
         logits_mask = torch.ones_like(mask)
         if self.contrast_mode == 'all':
             logits_mask.fill_diagonal_(0)
@@ -205,6 +220,8 @@ class GenSupConLossv2(nn.Module):
             logits_mask[:, :labels[1].shape[0]].fill_diagonal_(0)
         mask = mask * logits_mask
 
+        
+        
         # 2. compute logits
         anchor_dot_contrast = torch.div(
             torch.matmul(anchor_features, contrast_features.T),
@@ -212,6 +229,7 @@ class GenSupConLossv2(nn.Module):
         )  # for numerical stability
         logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
         logits = anchor_dot_contrast - logits_max.detach()
+
 
         # compute log_prob
         exp_logits = torch.exp(logits) * logits_mask
@@ -225,6 +243,7 @@ class GenSupConLossv2(nn.Module):
             loss = loss[select]
         loss = loss.mean()
 
+        print(loss)
         return loss
     
 
@@ -554,14 +573,14 @@ if __name__ == '__main__':
                     
                     # get loss (no teacher)
                     mapped_anchors = ~unconfident_mask.bool()
-                    loss = genscl([zk, zq], [l_q, l_k], model.queue, (mapped_anchors, mapped_anchors))
+                    loss = genscl([zk, zq], [l_q, l_k], model.queue, model.queue_labels, (mapped_anchors, mapped_anchors))
                     losses.update(loss.item(), bsz)
 
                     loss.backward()
                     optimizer.step()
                     
                     # Update the queue with the current batch features
-                    model.update_queue(zq.detach())
+                    model.update_queue(zq.detach(), l_k.detach())
                     
                 print(f'[{i+1}/{target_count}] Gen_SCL Loss: {losses.avg:.5f}')
 

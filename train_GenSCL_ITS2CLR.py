@@ -285,7 +285,7 @@ def load_state(stats_path, target_folder):
 if __name__ == '__main__':
 
     # Config
-    model_version = '02'
+    model_version = '04'
     
     
     """
@@ -398,7 +398,7 @@ if __name__ == '__main__':
     valid_losses = []
 
     model_name = f"{dataset_name}_{arch}_{model_version}"
-    pretrained_name = f"Head_{model_name}"
+    pretrained_name = f"Head_{dataset_name}_{arch}"
     
     
     # Check if the model already exists
@@ -590,9 +590,7 @@ if __name__ == '__main__':
                 optimizer.zero_grad()
                 
                 outputs, instance_pred, _ = model(xb, pred_on = True)
-                #print(outputs)
                 
-
                 # Calculate bag-level loss
                 loss = BCE_loss(outputs, yb)
 

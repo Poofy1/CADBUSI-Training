@@ -63,8 +63,8 @@ def test_dataset(output_path, label_columns, instance_columns):
     train_data = pd.read_csv(f'{export_location}/TrainData.csv')
 
     # Combine training and validation data
-    combined_dict = bags_val
-    #combined_dict.update(bags_val)
+    combined_dict = bags_train
+    combined_dict.update(bags_val)
 
     
     val_transform = T.Compose([
@@ -134,6 +134,8 @@ if __name__ == '__main__':
 
     # Paths
     export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
+    case_study_data = pd.read_csv(f"{export_location}/CaseStudyData.csv")
+    image_data = pd.read_csv(f"{export_location}/ImageData.csv")
     cropped_images = f"F:/Temp_SSD_Data/{dataset_name}_{img_size}_images/"
     output_path = f"{parent_dir}/results/{model_name}_DatasetTest/"
     mkdir(output_path, exist_ok=True)
@@ -159,31 +161,20 @@ if __name__ == '__main__':
 
 
 
-    if True:
-        df_failed_cases = test_dataset(output_path, label_columns, instance_columns)
+    # Check if the bag_predictions.csv file exists
+    bag_predictions_path = f"{output_path}/bag_predictions.csv"
+    if os.path.exists(bag_predictions_path):
+        df_failed_cases = pd.read_csv(bag_predictions_path)
     else:
-        df_failed_cases = pd.read_csv(f"{output_path}/failed_cases.csv")
-        
-        
-    
+        df_failed_cases = test_dataset(output_path, label_columns, instance_columns)
 
-
-    """# Merge df_failed_cases with case_study_data to get the BI-RADS scores
+    # Merge df_failed_cases with case_study_data to get the BI-RADS scores
     merged_data = pd.merge(df_failed_cases, case_study_data[['Accession_Number', 'BI-RADS']], on='Accession_Number', how='left')
 
-    # Group by BI-RADS scores and calculate average error for each group
+    # Group by BI-RADS scores and calculate average loss for each group
     average_errors = merged_data.groupby('BI-RADS')['Loss'].mean()
-
-    # Sort by BI-RADS score (which is the index after grouping)
     average_errors = average_errors.sort_index()
-
     plot_and_save_average_errors(average_errors, 'Average Loss by BI-RADS Score', 'BI-RADS Score', 'Average Loss', f"{output_path}/BI-RADS_average_loss.png")
-
-    # Save the plot as an image
-    image_save_path = f"{parent_dir}/results/BI-RADS_average_loss.png"
-    plt.savefig(image_save_path)
-
-
 
     # Count number of rows/images for each Accession_Number in image_data
     image_counts = image_data.groupby('Accession_Number').size().reset_index(name='Image_Count')
@@ -191,11 +182,32 @@ if __name__ == '__main__':
     # Merge with df_failed_cases to get errors for each Accession_Number
     merged_data_images = pd.merge(df_failed_cases, image_counts, on='Accession_Number', how='left')
 
-    # Group by Image_Count and calculate average error for each group
+    # Group by Image_Count and calculate average loss for each group
     average_errors_images = merged_data_images.groupby('Image_Count')['Loss'].mean()
-
-    # Sort by Image_Count (which is the index after grouping)
     average_errors_images = average_errors_images.sort_index()
-
     plot_and_save_average_errors(average_errors_images, 'Average Loss by Number of Images per Accession_Number', 'Number of Images', 'Average Loss', f"{output_path}/Average_Loss_by_Image_Count.png")
-"""
+
+    # Investigate high loss cases
+    high_loss_threshold = 10.0  # Adjust this threshold as needed
+    high_loss_cases = df_failed_cases[df_failed_cases['Loss'] > high_loss_threshold]
+    print(f"Number of high loss cases (loss > {high_loss_threshold}): {len(high_loss_cases)}")
+    print("High loss cases:")
+    print(high_loss_cases)
+
+    # Investigate cases with large number of images
+    large_image_count_threshold = 20  # Adjust this threshold as needed
+    large_image_count_cases = merged_data_images[merged_data_images['Image_Count'] > large_image_count_threshold]
+    print(f"Number of cases with large number of images (count > {large_image_count_threshold}): {len(large_image_count_cases)}")
+    print("Cases with large number of images:")
+    print(large_image_count_cases)
+
+    # Save the evaluation results
+    evaluation_results_path = f"{output_path}/evaluation_results.txt"
+    with open(evaluation_results_path, 'w') as f:
+        f.write(f"Number of high loss cases (loss > {high_loss_threshold}): {len(high_loss_cases)}\n")
+        f.write("High loss cases:\n")
+        f.write(high_loss_cases.to_string(index=False))
+        f.write("\n\n")
+        f.write(f"Number of cases with large number of images (count > {large_image_count_threshold}): {len(large_image_count_cases)}\n")
+        f.write("Cases with large number of images:\n")
+        f.write(large_image_count_cases.to_string(index=False))

@@ -31,6 +31,7 @@ class Embeddingmodel(nn.Module):
             # Max pooling
             feat = torch.max(feat, dim=2).values
             feat = torch.max(feat, dim=2).values
+            #feat = feat.view(feat.shape[0], -1)
 
         if pred_on:
             # Split the embeddings back into per-bag embeddings
@@ -53,11 +54,12 @@ class Embeddingmodel(nn.Module):
             
 
         return logits, yhat_instances, feat
-    
-    
+
+
+
 class Linear_Classifier(nn.Module):
     """Linear classifier"""
-    def __init__(self, nf, num_classes=1, L=128):
+    def __init__(self, nf, num_classes=1, L=256):
         super(Linear_Classifier, self).__init__()
         self.fc = nn.Linear(nf, num_classes)
         
@@ -76,7 +78,7 @@ class Linear_Classifier(nn.Module):
         )
         
         self.fc = nn.Sequential(
-            nn.Linear(nf, num_classes),
+            nn.Linear(L, num_classes),
             nn.Sigmoid()
         )
         
@@ -96,11 +98,12 @@ class Linear_Classifier(nn.Module):
         A = torch.transpose(instance_scores, 1, 0)  # ATTENTION_BRANCHESxK
         A = F.softmax(A, dim=1)  # softmax over K
 
-        Z = torch.mm(A, v)  # ATTENTION_BRANCHESxM
+        transformed_v = torch.tanh(self.attention_V(v))  # Apply non-linearity to instance features
+        
+        Z = torch.mm(A, transformed_v)  # ATTENTION_BRANCHESxM
 
         Y_prob = self.fc(Z)
         
         instance_scores = torch.sigmoid(instance_scores.squeeze())
         
         return Y_prob, instance_scores
-

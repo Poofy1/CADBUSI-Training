@@ -26,8 +26,9 @@ def test_dataset(output_path, label_columns, instance_columns):
     bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
 
     # Combine training and validation data
+    #combined_dict = bags_train
+    #combined_dict.update(bags_val)
     combined_dict = bags_train
-    combined_dict.update(bags_val)
 
     # Now use the combined data for the dataset
     #dataset_combined = TUD.Subset(BagOfImagesDataset(combined_dict, transform=val_transform, save_processed=False),list(range(0,50)))
@@ -42,7 +43,7 @@ def test_dataset(output_path, label_columns, instance_columns):
             xb, yb = data, yb.cuda()
             
             outputs, instance_pred, _ = model(xb, pred_on = True)
-            #print(outputs)
+            print(instance_pred)
             
             loss = criterion(outputs, yb)
             bag_id = id.item()
@@ -56,14 +57,14 @@ def test_dataset(output_path, label_columns, instance_columns):
                     'labels': [],
                 }
 
-                bag_data[bag_id]['losses'].append(loss.item())
-                bag_data[bag_id]['output'].append(outputs.item())
-                bag_data[bag_id]['labels'].append(yb.cpu().numpy().tolist())
-                bag_data[bag_id]['instance_predictions'].append(instance_pred)
-                bag_data[bag_id]['instance_yb'].append(instance_yb)
+                bag_data[bag_id]['losses'].append(round(loss.item(), 5))
+                bag_data[bag_id]['output'].append(round(outputs.item(), 5))
+                bag_data[bag_id]['labels'].append(yb[0].item())
+                bag_data[bag_id]['instance_predictions'].append([round(x.item(), 4) for x in instance_pred[0]])
+                bag_data[bag_id]['instance_yb'].append([int(x[0].item()) for x in instance_yb[0]])
     
     # Save the bag_data dictionary to disk
-    with open(f'{output_path}/instance_data.pkl', 'wb') as f:
+    with open(f'{output_path}/bag_data.pkl', 'wb') as f:
         pickle.dump(bag_data, f)
     
     return bag_data
@@ -72,7 +73,7 @@ def test_dataset(output_path, label_columns, instance_columns):
 if __name__ == '__main__':
 
     # Config
-    model_name = '03_18_2024_Res18_01'
+    model_name = 'export_03_18_2024_resnet50_03'
     dataset_name = 'export_03_18_2024'
     label_columns = ['Has_Malignant']
     instance_columns = ['Malignant Lesion Present']   #['Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
@@ -97,8 +98,8 @@ if __name__ == '__main__':
     
 
 
-    if os.path.exists(f'{output_path}/instance_data.pkl'):
-        with open(f'{output_path}/instance_data.pkl', 'rb') as f:
+    if os.path.exists(f'{output_path}/bag_data.pkl'):
+        with open(f'{output_path}/bag_data.pkl', 'rb') as f:
             bag_data = pickle.load(f)
     else:
         
@@ -111,7 +112,7 @@ if __name__ == '__main__':
             encoder.classifier[1] = nn.Linear(num_features, nf)
             
         else:
-            encoder = create_timm_body("resnet18")
+            encoder = create_timm_body("resnet50")
             nf = num_features_model( nn.Sequential(*encoder.children()))
         
 
@@ -142,6 +143,36 @@ if __name__ == '__main__':
     ###################################
     
     
+    # Save the bag_data as a CSV file
+    csv_file = f'{output_path}/bag_data.csv'
+    with open(csv_file, 'w', newline='') as f:
+        writer = csv.writer(f)
+        
+        # Write the header row
+        writer.writerow(['Bag ID', 'Instance Predictions', 'Instance Labels', 'Output', 'Loss', 'Label'])
+        
+        # Write the data rows
+        for bag_id, bag in bag_data.items():
+            instance_predictions = [str(pred) for pred in bag['instance_predictions']]
+            instance_labels = [str(label) for label in bag['instance_yb']]
+            outputs = bag['output']
+            losses = bag['losses']
+            labels = [str(label) for label in bag['labels']]
+            
+            # Assuming all lists have the same length, iterate over the instances
+            for i in range(len(instance_predictions)):
+                row = [
+                    bag_id,
+                    instance_predictions[i],
+                    instance_labels[i],
+                    outputs[i],
+                    losses[i],
+                    labels[i]
+                ]
+                writer.writerow(row)
+
+    print(f"CSV file saved at: {csv_file}")
+
 
 
 
