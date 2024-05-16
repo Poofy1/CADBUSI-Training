@@ -239,19 +239,19 @@ Embeddingmodel(
   )
   (aggregator): Linear_Classifier(
     (fc): Sequential(
-      (0): Linear(in_features=2048, out_features=1, bias=True)
+      (0): Linear(in_features=256, out_features=1, bias=True)
       (1): Sigmoid()
     )
     (attention_V): Sequential(
-      (0): Linear(in_features=2048, out_features=128, bias=True)
+      (0): Linear(in_features=2048, out_features=256, bias=True)
       (1): Tanh()
     )
     (attention_U): Sequential(
-      (0): Linear(in_features=2048, out_features=128, bias=True)
+      (0): Linear(in_features=2048, out_features=256, bias=True)
       (1): Sigmoid()
     )
     (attention_W): Sequential(
-      (0): Linear(in_features=128, out_features=1, bias=True)
+      (0): Linear(in_features=256, out_features=1, bias=True)
     )
   )
   (projector): Sequential(

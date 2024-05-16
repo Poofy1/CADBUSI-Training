@@ -19,25 +19,33 @@ class Embeddingmodel(nn.Module):
             nn.Linear(512, feature_dim)
         )
         
-        # Initialize the queue
-        self.queue_size = queue_size
-        self.feature_dim = feature_dim
+        # Initialize the feature queue and label queue
         self.register_buffer("queue", torch.randn(queue_size, feature_dim))
         self.queue = nn.functional.normalize(self.queue, dim=0)
+        self.register_buffer("queue_labels", torch.zeros(queue_size, num_classes))
         self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
         
         print(f'Feature Map Size: {nf}')
 
-    def update_queue(self, features):
+    def update_queue(self, features, labels):
         batch_size = features.shape[0]
         ptr = int(self.queue_ptr)
         
-        # Replace the oldest batch in the queue with the new batch
-        self.queue[ptr:ptr + batch_size, :] = features
-        ptr = (ptr + batch_size) % self.queue_size
+        # Replace the oldest batch in the feature queue and label queue with the new batch
+        if ptr + batch_size <= self.queue_size:
+            self.queue[ptr:ptr + batch_size, :] = features
+            self.queue_labels[ptr:ptr + batch_size, :] = labels.view(-1, self.queue_labels.shape[1])
+            ptr = (ptr + batch_size) % self.queue_size
+        else:
+            remaining_space = self.queue_size - ptr
+            self.queue[ptr:, :] = features[:remaining_space, :]
+            self.queue_labels[ptr:, :] = labels[:remaining_space, :].view(-1, self.queue_labels.shape[1])
+            self.queue[:batch_size - remaining_space, :] = features[remaining_space:, :]
+            self.queue_labels[:batch_size - remaining_space, :] = labels[remaining_space:, :].view(-1, self.queue_labels.shape[1])
+            ptr = batch_size - remaining_space
         
         self.queue_ptr[0] = ptr
-        
+            
     def forward(self, input, projector=False, pred_on = False):
         num_bags = len(input) # input = [bag #, image #, channel, height, width]
         all_images = torch.cat(input, dim=0).cuda()  # Concatenate all bags into a single tensor for batch processing

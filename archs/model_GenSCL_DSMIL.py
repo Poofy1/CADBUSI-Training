@@ -24,12 +24,13 @@ class Embeddingmodel(nn.Module):
 
         # Calculate the embeddings for all images in one go
         feat = self.encoder(all_images)
-
+        #print(feat.shape)
         if not self.efficient_net:
             # Max pooling
-            feat = torch.max(feat, dim=2).values
-            feat = torch.max(feat, dim=2).values
-        
+            #feat = torch.max(feat, dim=2).values
+            #feat = torch.max(feat, dim=2).values
+            feat = feat.view(feat.shape[0], -1)
+        #print(feat.shape)
         if pred_on:
             # Split the embeddings back into per-bag embeddings
             split_sizes = [bag.size(0) for bag in input]
@@ -55,7 +56,7 @@ class Embeddingmodel(nn.Module):
     
     
 class DSMIL(nn.Module):
-    def __init__(self, input_size, num_classes, dropout_v=0.0, nonlinear=True, passing_v=False): # K, L, N
+    def __init__(self, input_size, num_classes, dropout_v=0.0, nonlinear=False, passing_v=False): # K, L, N
         super(DSMIL, self).__init__()
         if nonlinear:
             self.q = nn.Sequential(nn.Linear(input_size, 512), nn.ReLU(), nn.Linear(512, 512), nn.Tanh())
@@ -84,7 +85,6 @@ class DSMIL(nn.Module):
         device = feats.device
         V = self.v(feats) # N x V, unsorted
         Q = self.q(feats).view(feats.shape[0], -1) # N x Q, unsorted
-        
         # Create critical instance predictions
         c = self.instance_fc(feats)
         
@@ -92,7 +92,9 @@ class DSMIL(nn.Module):
         _, m_indices = torch.sort(c, 0, descending=True) # sort class scores along the instance dimension, m_indices in shape N x C
         m_feats = torch.index_select(feats, dim=0, index=m_indices[0, :]) # select critical instances, m_feats in shape C x K 
         q_max = self.q(m_feats) # compute queries of critical instances, q_max in shape C x Q
+        #print(q_max.transpose(0, 1))
         inst_pred = torch.mm(Q, q_max.transpose(0, 1)) # compute inner product of Q to each entry of q_max, A in shape N x C, each column contains unnormalized attention scores
+        print(inst_pred)
         inst_pred = F.softmax( inst_pred / torch.sqrt(torch.tensor(Q.shape[1], dtype=torch.float32, device=device)), 0) # normalize attention scores, A in shape N x C, 
         B = torch.mm(inst_pred.transpose(0, 1), V) # compute bag representation, B in shape C x V
                 
@@ -100,9 +102,13 @@ class DSMIL(nn.Module):
         bag_pred = self.fcc(B) # 1 x C x 1
         bag_pred = bag_pred.view(1, -1)
         
+        
+        
         # (NOT IN PAPER)
         # Apply sigmoid to bag-level predictions and instance-level predictions
         bag_pred = torch.sigmoid(bag_pred)
         inst_pred = torch.sigmoid(inst_pred)
+        
+        
         
         return bag_pred, inst_pred, B
