@@ -378,6 +378,6 @@ def prepare_all_data(export_location, label_columns, instance_columns, cropped_i
     
     
     
-    #save_bags_to_csv(bags_train, 'F:/Temp_SSD_Data/bags_testing.csv')
+    save_bags_to_csv(bags_train, 'F:/Temp_SSD_Data/bags_testing.csv')
     
     return bags_train, bags_val

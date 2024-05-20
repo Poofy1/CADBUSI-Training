@@ -20,10 +20,12 @@ if not os.path.exists(f'{output_dir}/imagenette2'):
         tar_ref.extractall(f'{output_dir}')
 
 # Delete the .tgz file
-os.remove(f'{output_dir}/imagenette2.tgz')
+#os.remove(f'{output_dir}/imagenette2.tgz')
 
 # Set up the directories
 images_dir = f'{output_dir}/imagenette2/images'
+os.makedirs(images_dir, exist_ok=True)
+images_dir = f'{output_dir}/imagenette2/train'
 os.makedirs(images_dir, exist_ok=True)
 
 # Create the intermediate CSV file to store image labels
@@ -50,27 +52,42 @@ with open(f'{output_dir}/imagenette2/image_labels.csv', 'r') as file:
     for row in reader:
         image_labels[row[0]] = row[1]
 
-# Create the train.csv file
+# Create the train.csv file and store bag information
 train_data = []
+bag_info = {}
 bag_id = 0
 all_images = list(image_labels.keys())
 random.shuffle(all_images)
-
 while all_images:
     bag_size = random.randint(2, 10)
     bag_images = all_images[:bag_size]
     all_images = all_images[bag_size:]
-    
     has_fish = 'n01440764' in [image_labels[image_name] for image_name in bag_images]
     is_valid = random.random() < 0.2  # 20% probability of being in the validation set
-    
     train_data.append([int(is_valid), bag_images, bag_id, has_fish, bag_id])
+    
+    for image_name in bag_images:
+        bag_info[image_name] = bag_id
+    
     bag_id += 1
+
+# Create the InstanceData.csv file
+instance_data = []
+for image_name, label in image_labels.items():
+    has_fish = label == 'n01440764'
+    accession_number = bag_info[image_name]
+    instance_data.append([accession_number, int(has_fish), image_name])
 
 # Write the train.csv file
 with open(f'{output_dir}/imagenette2/TrainData.csv', 'w', newline='') as file:
     writer = csv.writer(file)
     writer.writerow(['Valid', 'Images', 'ID', 'Has_Fish', 'Accession_Number'])
     writer.writerows(train_data)
+
+# Write the InstanceData.csv file
+with open(f'{output_dir}/imagenette2/InstanceData.csv', 'w', newline='') as file:
+    writer = csv.writer(file)
+    writer.writerow(['Accession_Number', 'Has_Fish', 'ImageName'])
+    writer.writerows(instance_data)
 
 print("Dataset formatting completed.")

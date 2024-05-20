@@ -158,6 +158,9 @@ class GenSupConLossv2(nn.Module):
         self.contrast_mode = contrast_mode
         self.base_temperature = base_temperature
 
+
+        # Add queue
+
     def forward(self, features, labels, queue, queue_labels, anc_mask=None):
         '''
         Args:
@@ -189,21 +192,14 @@ class GenSupConLossv2(nn.Module):
         mask = torch.mm(anchor_labels, contrast_labels.T) / deno # cosine similarity: [anchor_N, contrast_N]
         """
 
-        if self.contrast_mode == 'all':
-            # anchor+contrast @ anchor+contrast+queue
-            anchor_features = torch.cat(features, dim=0)
-            contrast_features = torch.cat([anchor_features, queue], dim=0)
-            
-            anchor_labels = torch.cat(labels, dim=0).float()
-            queue_labels = torch.cat(queue_labels, dim=0).float()
-            contrast_labels = torch.cat([anchor_labels, queue_labels], dim=0)
-        elif self.contrast_mode == 'one':
-            # anchor @ contrast+queue
-            anchor_features = features[0]
-            contrast_features = torch.cat([features[1], queue], dim=0)
-            
-            anchor_labels = labels[0].float()
-            contrast_labels = torch.cat([labels[1].float(), queue_labels], dim=0)
+
+        # anchor+contrast @ anchor+contrast+queue
+        anchor_features = torch.cat(features, dim=0)
+        contrast_features = torch.cat([anchor_features, queue], dim=0)
+        
+        anchor_labels = torch.cat(labels, dim=0).float()
+        queue_labels = torch.cat(queue_labels, dim=0).float()
+        contrast_labels = torch.cat([anchor_labels, queue_labels], dim=0)
             
             
         # 1. compute similarities among targets

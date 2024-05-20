@@ -82,6 +82,18 @@ if __name__ == '__main__':
     max_bag_size = 25
     instance_batch_size =  30
     use_efficient_net = False
+    
+    model_name = "imagenette2_resnet18_02"
+    dataset_name = 'imagenette2'
+    label_columns = ['Has_Fish']
+    instance_columns = []  
+    img_size = 128
+    bag_batch_size = 5
+    min_bag_size = 2
+    max_bag_size = 25
+    instance_batch_size =  25
+    use_efficient_net = False
+    
     model_folder = f"{env}/models/{model_name}/"
     lr = 0.001
 
@@ -112,7 +124,7 @@ if __name__ == '__main__':
             encoder.classifier[1] = nn.Linear(num_features, nf)
             
         else:
-            encoder = create_timm_body("resnet50")
+            encoder = create_timm_body("resnet18")
             nf = num_features_model( nn.Sequential(*encoder.children()))
         
 
