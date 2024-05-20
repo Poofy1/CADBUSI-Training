@@ -97,7 +97,7 @@ class WarmupSampler(Sampler):
             batch_mask_0 = random.sample(self.indices_0, num_mask_0)
 
             # Fill the rest of the batch with mask 1s, if any space left
-            num_mask_1 = self.batch_size - num_mask_0
+            num_mask_1 = self.batch_size - num_mask_0 
             batch_mask_1 = random.sample(self.indices_1, num_mask_1) if num_mask_1 > 0 else []
 
             batch = batch_mask_0 + batch_mask_1
@@ -285,7 +285,7 @@ def load_state(stats_path, target_folder):
 if __name__ == '__main__':
 
     # Config
-    model_version = '04'
+    model_version = '03'
     
     
     """
@@ -298,7 +298,7 @@ if __name__ == '__main__':
     max_bag_size = 25
     instance_batch_size =  200"""
     
-    dataset_name = 'export_03_18_2024'
+    """dataset_name = 'export_03_18_2024'
     label_columns = ['Has_Malignant']
     instance_columns = ['Malignant Lesion Present']  
     img_size = 300
@@ -306,17 +306,27 @@ if __name__ == '__main__':
     min_bag_size = 2
     max_bag_size = 25
     instance_batch_size =  25
+    use_efficient_net = False"""
+    
+    dataset_name = 'imagenette2'
+    label_columns = ['Has_Fish']
+    instance_columns = []  
+    img_size = 128
+    bag_batch_size = 5
+    min_bag_size = 2
+    max_bag_size = 25
+    instance_batch_size =  25
     use_efficient_net = False
     
     #ITS2CLR Config
-    feature_extractor_train_count = 6
+    feature_extractor_train_count = 15 # 6
     MIL_train_count = 8
-    initial_ratio = 1 #0.3 # --% preditions included
+    initial_ratio = .3 #0.3 # --% preditions included
     final_ratio = 1 #0.85 # --% preditions included
     total_epochs = 20
     warmup_epochs = 15
     
-    arch = "resnet50"
+    arch = "resnet18"
     pretrained_arch = True
     reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
     
@@ -485,13 +495,14 @@ if __name__ == '__main__':
             
             with open(f'{head_folder}model_architecture.txt', 'w') as f:
                 print(model, file=f)
-            
+    
+
 
     # Training loop
     while epoch < total_epochs:
         
         print(f'Warmup Mode: {warmup}')
-        
+
         if not pickup_warmup: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
@@ -514,6 +525,8 @@ if __name__ == '__main__':
         
             # Generalized Supervised Contrastive Learning phase
             
+            output_dir = "F:/test"
+            
             model.train()
             for i in range(target_count): 
                 losses = AverageMeter()
@@ -522,6 +535,7 @@ if __name__ == '__main__':
                 for idx, (images, instance_labels, unconfident_mask) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
                     #warmup_learning_rate(args, epoch, idx, len(instance_dataloader_train), optimizer)
                     
+
                     # Data preparation 
                     bsz = instance_labels.shape[0]
                     im_q, im_k = images
@@ -564,7 +578,8 @@ if __name__ == '__main__':
             warmup = False
             
             
-
+        
+        
         print('Training Aggregator')
         
         if reset_aggregator:
@@ -590,6 +605,7 @@ if __name__ == '__main__':
                 optimizer.zero_grad()
                 
                 outputs, instance_pred, _ = model(xb, pred_on = True)
+                
                 
                 # Calculate bag-level loss
                 loss = BCE_loss(outputs, yb)
@@ -622,6 +638,7 @@ if __name__ == '__main__':
                     xb, yb = data, yb.cuda()
 
                     outputs, instance_pred, _ = model(xb, pred_on = True)
+                    print(instance_pred)
 
                     # Calculate bag-level loss
                     loss = BCE_loss(outputs, yb)
