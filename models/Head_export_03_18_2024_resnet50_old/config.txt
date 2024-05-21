@@ -16,7 +16,7 @@
     "use_efficient_net": false,
     "feature_extractor_train_count": 6,
     "MIL_train_count": 8,
-    "initial_ratio": 0.3,
+    "initial_ratio": 1,
     "final_ratio": 1,
     "total_epochs": 20,
     "reset_aggregator": true,

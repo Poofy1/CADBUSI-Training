@@ -35,6 +35,9 @@ class Embeddingmodel(nn.Module):
             # Adaptive average pooling
             adaptive_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
             feat = adaptive_avg_pool(feat).squeeze()
+            
+            # Global average pooling
+            #feat = torch.mean(feat, dim=(2, 3))
 
         if pred_on:
             # Split the embeddings back into per-bag embeddings
