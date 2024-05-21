@@ -11,7 +11,7 @@ from torch.optim import Adam
 from archs.backbone import create_timm_body
 from torchvision.models import efficientnet_b3, EfficientNet_B3_Weights
 from data.format_data import *
-from archs.model_GenSCL_Queue import *
+from archs.model_GenSCL import *
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -152,94 +152,72 @@ def collate_bag(batch):
 
 
 class GenSupConLossv2(nn.Module):
-    def __init__(self, temperature=0.07, contrast_mode='all', base_temperature=0.07):
+    def __init__(self, temperature=0.07, base_temperature=0.07, queue_size=1024):
         super(GenSupConLossv2, self).__init__()
         self.temperature = temperature
-        self.contrast_mode = contrast_mode
         self.base_temperature = base_temperature
+        self.queue_size = queue_size
+        self.queue = None
+        self.queue_labels = None
 
+    def _dequeue_and_enqueue(self, features, labels):
+        if self.queue is None:
+            self.queue = features
+            self.queue_labels = labels
+        else:
+            self.queue = torch.cat((self.queue, features), dim=0)
+            self.queue_labels = torch.cat((self.queue_labels, labels), dim=0)
+        if self.queue.shape[0] > self.queue_size:
+            self.queue = self.queue[-self.queue_size:]
+            self.queue_labels = self.queue_labels[-self.queue_size:]
 
-        # Add queue
-
-    def forward(self, features, labels, queue, queue_labels, anc_mask=None):
+    def forward(self, features, labels, anc_mask=None):
         '''
         Args:
             feats: (anchor_features, contrast_features), each: [N, feat_dim]
             labels: (anchor_labels, contrast_labels) each: [N, num_cls]
-            queue: [queue_size, feat_dim]
             anc_mask: (anchors_mask, contrast_mask) each: [N]
         '''
-        
-        """if self.contrast_mode == 'all': # anchor+contrast @ anchor+contrast
-            anchor_labels = torch.cat(labels, dim=0).float()
-            contrast_labels = anchor_labels
-            
-            anchor_features = torch.cat(features, dim=0)
-            contrast_features = anchor_features
-        elif self.contrast_mode == 'one': # anchor @ contrast
-            anchor_labels = labels[0].float()
-            contrast_labels = labels[1].float()
-            
-            anchor_features = features[0]
-            contrast_features = features[1]
-            
-            
-        # 1. compute similarities among targets
-        anchor_norm = torch.norm(anchor_labels, p=2, dim=-1, keepdim=True) # [anchor_N, 1]
-        contrast_norm = torch.norm(contrast_labels, p=2, dim=-1, keepdim=True) # [contrast_N, 1]
-        
-        deno = torch.mm(anchor_norm, contrast_norm.T)
-        mask = torch.mm(anchor_labels, contrast_labels.T) / deno # cosine similarity: [anchor_N, contrast_N]
-        """
-
-
-        # anchor+contrast @ anchor+contrast+queue
         anchor_features = torch.cat(features, dim=0)
-        contrast_features = torch.cat([anchor_features, queue], dim=0)
-        
         anchor_labels = torch.cat(labels, dim=0).float()
-        queue_labels = torch.cat(queue_labels, dim=0).float()
-        contrast_labels = torch.cat([anchor_labels, queue_labels], dim=0)
-            
-            
+
+        # Concatenate anchor features and queue
+        contrast_features = torch.cat([anchor_features, self.queue], dim=0) if self.queue is not None else anchor_features
+        contrast_labels = torch.cat([anchor_labels, self.queue_labels], dim=0) if self.queue is not None else anchor_labels
+        
         # 1. compute similarities among targets
-        anchor_norm = torch.norm(anchor_labels, p=2, dim=-1, keepdim=True) # [anchor_N, 1]
-        contrast_norm = torch.norm(contrast_labels, p=2, dim=-1, keepdim=True) # [contrast_N, 1]
-        
+        anchor_norm = torch.norm(anchor_labels, p=2, dim=-1, keepdim=True)  # [anchor_N, 1]
+        contrast_norm = torch.norm(contrast_labels, p=2, dim=-1, keepdim=True)  # [contrast_N, 1]
         deno = torch.mm(anchor_norm, contrast_norm.T)
-        mask = torch.mm(anchor_labels, contrast_labels.T) / deno # cosine similarity: [anchor_N, contrast_N]
-        
+        mask = torch.mm(anchor_labels, contrast_labels.T) / deno  # cosine similarity: [anchor_N, contrast_N]
         logits_mask = torch.ones_like(mask)
-        if self.contrast_mode == 'all':
-            logits_mask.fill_diagonal_(0)
-        else:
-            logits_mask[:, :labels[1].shape[0]].fill_diagonal_(0)
+        logits_mask.fill_diagonal_(0)
         mask = mask * logits_mask
 
-        
-        
         # 2. compute logits
         anchor_dot_contrast = torch.div(
-            torch.matmul(anchor_features, contrast_features.T),
+            torch.matmul(anchor_features, contrast_features.T), 
             self.temperature
-        )  # for numerical stability
+        )  
+        # for numerical stability
         logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
         logits = anchor_dot_contrast - logits_max.detach()
 
-
-        # compute log_prob
+        # Compute log_prob
         exp_logits = torch.exp(logits) * logits_mask
         log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True))
         mean_log_prob_pos = (mask * log_prob).sum(1) / (mask.sum(1) + 1e-8)
 
-        # loss
+        # Loss
         loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
         if anc_mask:
             select = torch.cat(anc_mask)
             loss = loss[select]
         loss = loss.mean()
 
-        print(loss)
+        # Update queue
+        self._dequeue_and_enqueue(anchor_features.detach(), anchor_labels.detach())
+
         return loss
     
 
@@ -311,10 +289,10 @@ def load_state(stats_path, target_folder):
 if __name__ == '__main__':
 
     # Config
-    model_version = 'MoCo_01'
+    model_version = '06'
     
     
-
+    """
     dataset_name = 'cifar10'
     label_columns = ['Has_Truck']
     instance_columns = ['']
@@ -322,7 +300,7 @@ if __name__ == '__main__':
     bag_batch_size = 30
     min_bag_size = 2
     max_bag_size = 25
-    instance_batch_size =  200
+    instance_batch_size =  200"""
     
     """dataset_name = 'export_03_18_2024'
     label_columns = ['Has_Malignant']
@@ -331,19 +309,29 @@ if __name__ == '__main__':
     bag_batch_size = 5
     min_bag_size = 2
     max_bag_size = 25
-    instance_batch_size =  25"""
+    instance_batch_size =  25
+    use_efficient_net = False"""
+    
+    dataset_name = 'imagenette2'
+    label_columns = ['Has_Fish']
+    instance_columns = ['Has_Fish']  
+    img_size = 128
+    bag_batch_size = 5
+    min_bag_size = 2
+    max_bag_size = 25
+    instance_batch_size =  25
     use_efficient_net = False
     
     #ITS2CLR Config
-    feature_extractor_train_count = 6
+    feature_extractor_train_count = 15 #6
     MIL_train_count = 8
     initial_ratio = 1 #0.3 # --% preditions included
     final_ratio = 1 #0.85 # --% preditions included
     total_epochs = 20
     warmup_epochs = 15
     
-    arch = "resnet50"
-    pretrained_arch = True
+    arch = "resnet18"
+    pretrained_arch = False
     reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
     
     learning_rate=0.001
@@ -419,7 +407,7 @@ if __name__ == '__main__':
         
     optimizer = Adam(model.parameters(), lr=learning_rate)
     BCE_loss = nn.BCELoss()
-    genscl = GenSupConLossv2(temperature=0.07, contrast_mode='all', base_temperature=0.07)
+    genscl = GenSupConLossv2(temperature=0.07, base_temperature=0.07)
     train_losses = []
     valid_losses = []
 
@@ -517,7 +505,7 @@ if __name__ == '__main__':
     while epoch < total_epochs:
         
         print(f'Warmup Mode: {warmup}')
-        
+        warmup = False
         if not pickup_warmup: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
@@ -548,6 +536,7 @@ if __name__ == '__main__':
                 for idx, (images, instance_labels, unconfident_mask) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
                     #warmup_learning_rate(args, epoch, idx, len(instance_dataloader_train), optimizer)
                     
+
                     # Data preparation 
                     bsz = instance_labels.shape[0]
                     im_q, im_k = images
@@ -569,16 +558,14 @@ if __name__ == '__main__':
                     
                     # get loss (no teacher)
                     mapped_anchors = ~unconfident_mask.bool()
-                    loss = genscl([zk, zq], [l_q, l_k], model.queue, model.queue_labels, (mapped_anchors, mapped_anchors))
+                    loss = genscl([zk, zq], [l_q, l_k], (mapped_anchors, mapped_anchors))
                     losses.update(loss.item(), bsz)
 
                     loss.backward()
                     optimizer.step()
                     
-                    # Update the queue with the current batch features
-                    model.update_queue(zq.detach(), l_k.detach())
-                    
                 print(f'[{i+1}/{target_count}] Gen_SCL Loss: {losses.avg:.5f}')
+
 
 
 
@@ -653,7 +640,9 @@ if __name__ == '__main__':
                     xb, yb = data, yb.cuda()
 
                     outputs, instance_pred, _ = model(xb, pred_on = True)
-
+                    print(instance_pred)
+                    
+                    
                     # Calculate bag-level loss
                     loss = BCE_loss(outputs, yb)
                     total_val_loss += loss.item() * yb.size(0)

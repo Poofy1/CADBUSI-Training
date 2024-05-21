@@ -1,22 +1,22 @@
 {
-    "dataset_name": "export_03_18_2024",
-    "arch": "resnet50",
-    "pretrained_arch": true,
+    "dataset_name": "imagenette2",
+    "arch": "resnet18",
+    "pretrained_arch": false,
     "label_columns": [
-        "Has_Malignant"
+        "Has_Fish"
     ],
     "instance_columns": [
-        "Malignant Lesion Present"
+        "Has_Fish"
     ],
-    "img_size": 300,
+    "img_size": 128,
     "bag_batch_size": 5,
     "min_bag_size": 2,
     "max_bag_size": 25,
     "instance_batch_size": 25,
     "use_efficient_net": false,
-    "feature_extractor_train_count": 6,
+    "feature_extractor_train_count": 15,
     "MIL_train_count": 8,
-    "initial_ratio": 0.3,
+    "initial_ratio": 1,
     "final_ratio": 1,
     "total_epochs": 20,
     "reset_aggregator": true,
