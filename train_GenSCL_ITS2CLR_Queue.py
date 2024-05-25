@@ -160,6 +160,8 @@ class GenSupConLossv2(nn.Module):
         self.queue = None
         self.queue_labels = None
 
+    # initalize larger queue with black negitive images?
+    
     def _dequeue_and_enqueue(self, features, labels):
         if self.queue is None:
             self.queue = features
@@ -167,6 +169,7 @@ class GenSupConLossv2(nn.Module):
         else:
             self.queue = torch.cat((self.queue, features), dim=0)
             self.queue_labels = torch.cat((self.queue_labels, labels), dim=0)
+            
         if self.queue.shape[0] > self.queue_size:
             self.queue = self.queue[-self.queue_size:]
             self.queue_labels = self.queue_labels[-self.queue_size:]
@@ -323,11 +326,11 @@ if __name__ == '__main__':
     use_efficient_net = False
     
     #ITS2CLR Config
-    feature_extractor_train_count = 15 #6
+    feature_extractor_train_count = 10 #6
     MIL_train_count = 8
     initial_ratio = 1 #0.3 # --% preditions included
     final_ratio = 1 #0.85 # --% preditions included
-    total_epochs = 20
+    total_epochs = 8
     warmup_epochs = 15
     
     arch = "resnet18"

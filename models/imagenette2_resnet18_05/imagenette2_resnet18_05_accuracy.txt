@@ -1,0 +1,66 @@
+Epoch 1
+Training Accuracy:
+  Overall: 0.8418
+Validation Accuracy:
+  Overall: 0.9067
+
+Epoch 2
+Training Accuracy:
+  Overall: 0.8709
+Validation Accuracy:
+  Overall: 0.9100
+
+Epoch 3
+Training Accuracy:
+  Overall: 0.8738
+Validation Accuracy:
+  Overall: 0.9267
+
+Epoch 4
+Training Accuracy:
+  Overall: 0.8674
+Validation Accuracy:
+  Overall: 0.9233
+
+Epoch 5
+Training Accuracy:
+  Overall: 0.8695
+Validation Accuracy:
+  Overall: 0.9267
+
+Epoch 6
+Training Accuracy:
+  Overall: 0.9121
+Validation Accuracy:
+  Overall: 0.9133
+
+Epoch 7
+Training Accuracy:
+  Overall: 0.9262
+Validation Accuracy:
+  Overall: 0.9267
+
+Epoch 8
+Training Accuracy:
+  Overall: 0.9071
+Validation Accuracy:
+  Overall: 0.9133
+
+Epoch 9
+Training Accuracy:
+  Overall: 0.9128
+Validation Accuracy:
+  Overall: 0.9267
+
+Epoch 10
+Training Accuracy:
+  Overall: 0.9291
+Validation Accuracy:
+  Overall: 0.9267
+
+Epoch 11
+Training Accuracy:
+  Overall: 0.9482
+Validation Accuracy:
+  Overall: 0.9400
+
