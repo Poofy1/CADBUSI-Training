@@ -51,7 +51,7 @@ class EmbeddingBagModel(nn.Module):
         all_images = torch.cat(input, dim=0)  # Shape: [Total images in all bags, channel, height, width]
         
         # Calculate the embeddings for all images in one go
-        h_all = self.encoder(all_images)
+        h_all = self.encoder(all_images.cuda())
         
         # Split the embeddings back into per-bag embeddings
         split_sizes = [bag.size(0) for bag in input]
@@ -74,8 +74,10 @@ class EmbeddingBagModel(nn.Module):
 if __name__ == '__main__':
 
     # Config
-    model_name = 'cifar10_ABMIL_5'
-    encoder_arch = 'resnet50'
+    model_name = 'imagenette-ABMIL'
+    
+    
+    encoder_arch = 'resnet18'
     dataset_name = 'cifar10'
     label_columns = ['Has_Truck']
     instance_columns = ['']
@@ -89,6 +91,15 @@ if __name__ == '__main__':
     epochs = 500
     lr = 0.001
 
+
+    dataset_name = 'imagenette2'
+    label_columns = ['Has_Fish']
+    instance_columns = ['Has_Fish']  
+    img_size = 128
+    min_bag_size = 2
+    max_bag_size = 25
+
+
     # Paths
     export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
     cropped_images = f"F:/Temp_SSD_Data/{dataset_name}_{img_size}_images/"
@@ -100,17 +111,17 @@ if __name__ == '__main__':
     num_labels = len(label_columns)
     
     train_transform = T.Compose([
-                    T.RandomVerticalFlip(),
-                    T.RandomHorizontalFlip(),
-                    T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
-                    #T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
-                    #CLAHETransform(),
-                    T.ToTensor(),
-                    #GaussianNoise(mean=0, std=0.015),  # Add slight noise
-                    T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-                ])
+                ###T.RandomVerticalFlip(),
+                T.RandomHorizontalFlip(),
+                T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
+                T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
+                CLAHETransform(),
+                T.ToTensor(),
+                ###GaussianNoise(mean=0, std=0.015), 
+                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
     val_transform = T.Compose([
-                #CLAHETransform(),
+                CLAHETransform(),
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
@@ -217,10 +228,10 @@ if __name__ == '__main__':
                 outputs, _, _, _ = bagmodel(xb)
                 
                 # TEMP DEBUG
-                if not torch.all(outputs.ge(0) & outputs.le(1)):
+                """if not torch.all(outputs.ge(0) & outputs.le(1)):
                     print(f"Invalid output detected: {outputs[~(outputs.ge(0) & outputs.le(1))]}")
                 if not torch.all(yb.ge(0) & yb.le(1)):
-                    print(f"Invalid label detected: {yb[~(yb.ge(0) & yb.le(1))]}")
+                    print(f"Invalid label detected: {yb[~(yb.ge(0) & yb.le(1))]}")"""
                 
                 loss = loss_func(outputs, yb)
                 
