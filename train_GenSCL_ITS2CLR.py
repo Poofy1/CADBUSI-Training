@@ -273,7 +273,7 @@ def load_state(stats_path, target_folder):
 if __name__ == '__main__':
 
     # Config
-    model_version = '01'
+    model_version = '09'
     
     
     """
@@ -286,7 +286,7 @@ if __name__ == '__main__':
     max_bag_size = 25
     instance_batch_size =  200"""
     
-    dataset_name = 'export_03_18_2024'
+    """dataset_name = 'export_03_18_2024'
     label_columns = ['Has_Malignant']
     instance_columns = ['Malignant Lesion Present']  
     img_size = 300
@@ -294,9 +294,9 @@ if __name__ == '__main__':
     min_bag_size = 2
     max_bag_size = 25
     instance_batch_size =  25
-    use_efficient_net = False
+    use_efficient_net = False"""
     
-    """dataset_name = 'imagenette2'
+    dataset_name = 'imagenette2'
     label_columns = ['Has_Fish']
     instance_columns = ['Has_Fish']  
     img_size = 128
@@ -304,7 +304,7 @@ if __name__ == '__main__':
     min_bag_size = 2
     max_bag_size = 25
     instance_batch_size =  25
-    use_efficient_net = False"""
+    use_efficient_net = False
     
     #ITS2CLR Config
     feature_extractor_train_count = 6 # 6
@@ -419,6 +419,11 @@ if __name__ == '__main__':
         model.load_state_dict(torch.load(model_path))
         optimizer.load_state_dict(torch.load(optimizer_path))
         print(f"Loaded pre-existing model from {model_name}")
+        
+        # Load only the encoder state dictionary
+        """encoder_state_dict = torch.load(model_path)
+        encoder_state_dict = {k.replace('encoder.', ''): v for k, v in encoder_state_dict.items() if k.startswith('encoder.')}
+        model.encoder.load_state_dict(encoder_state_dict)"""
 
         train_losses, valid_losses, epoch, val_loss_best, selection_mask = load_state(stats_path, model_folder)
         
@@ -460,7 +465,7 @@ if __name__ == '__main__':
             encoder_state_dict = torch.load(head_path)
             encoder_state_dict = {k.replace('encoder.', ''): v for k, v in encoder_state_dict.items() if k.startswith('encoder.')}
             model.encoder.load_state_dict(encoder_state_dict)
-            optimizer.load_state_dict(torch.load(head_optimizer_path))
+            #optimizer.load_state_dict(torch.load(head_optimizer_path))
     
             print(f"Loaded pre-trained model from {pretrained_name}")
             
@@ -490,7 +495,6 @@ if __name__ == '__main__':
     while epoch < total_epochs:
         
         print(f'Warmup Mode: {warmup}')
-
         if not pickup_warmup: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
@@ -591,7 +595,7 @@ if __name__ == '__main__':
                 optimizer.zero_grad()
                 
                 outputs, instance_pred, _ = model(xb, pred_on = True)
-                
+                #print(instance_pred)
                 
                 # Calculate bag-level loss
                 loss = BCE_loss(outputs, yb)
