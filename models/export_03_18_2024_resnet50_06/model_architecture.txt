@@ -237,9 +237,10 @@ Embeddingmodel(
       )
     )
   )
-  (aggregator): Linear_Classifier3(
-    (fc): Sequential(
-      (0): Linear(in_features=2048, out_features=1, bias=True)
+  (aggregator): Saliency_Classifier(
+    (fc): Linear(in_features=2048, out_features=1, bias=True)
+    (saliency_layer): Sequential(
+      (0): Conv2d(2048, 1, kernel_size=(1, 1), stride=(1, 1), bias=False)
       (1): Sigmoid()
     )
     (attention_V): Sequential(
@@ -251,7 +252,7 @@ Embeddingmodel(
       (1): Sigmoid()
     )
     (attention_W): Sequential(
-      (0): Linear(in_features=512, out_features=1, bias=True)
+      (0): Linear(in_features=256, out_features=1, bias=True)
     )
   )
   (projector): Sequential(

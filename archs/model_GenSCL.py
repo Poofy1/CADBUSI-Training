@@ -34,7 +34,7 @@ class Embeddingmodel(nn.Module):
             
             # Adaptive average pooling
             adaptive_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
-            feat = adaptive_avg_pool(feat).squeeze()
+            #feat = adaptive_avg_pool(feat).squeeze()
             
             # Global average pooling
             #feat = torch.mean(feat, dim=(2, 3))
@@ -55,6 +55,7 @@ class Embeddingmodel(nn.Module):
             yhat_instances = None
             
         if projector:
+            feat = adaptive_avg_pool(feat).squeeze()
             feat = self.projector(feat)
             feat = F.normalize(feat, dim=1)
             
@@ -247,7 +248,7 @@ class Saliency_Classifier(nn.Module):
 
         saliency_maps = self.saliency_layer(h)  # Generate saliency maps using a convolutional layer
         map_flatten = saliency_maps.flatten(start_dim=-2, end_dim=-1) 
-        print(map_flatten.shape)
+        
         # Select top patches based on saliency
         selected_area = map_flatten.topk(self.pool_patches, dim=2)[0]
         yhat_instance = selected_area.mean(dim=2).squeeze()  # Calculate the mean of the selected patches for instance predictions
@@ -260,10 +261,12 @@ class Saliency_Classifier(nn.Module):
         
         # Compute pre-softmax attention scores
         pre_softmax_scores = self.attention_W(A_V * A_U)
+        pre_softmax_scores += 1e-7 # Added stability
 
         # Apply softmax across the correct dimension (assuming the last dimension represents instances)
-        attention_scores = nn.functional.softmax(pre_softmax_scores.squeeze() , dim=0)
+        attention_scores = nn.functional.softmax(pre_softmax_scores.squeeze(), dim=0)
         
         # Aggregate individual predictions to get the final bag prediction
         yhat_bag = (attention_scores * yhat_instance).sum(dim=0)
+        yhat_bag = torch.clamp(yhat_bag, min=1e-6, max=1-1e-6)
         return yhat_bag, yhat_instance
