@@ -273,7 +273,7 @@ def load_state(stats_path, target_folder):
 if __name__ == '__main__':
 
     # Config
-    model_version = '09'
+    model_version = '06'
     
     
     """
@@ -286,7 +286,7 @@ if __name__ == '__main__':
     max_bag_size = 25
     instance_batch_size =  200"""
     
-    """dataset_name = 'export_03_18_2024'
+    dataset_name = 'export_03_18_2024'
     label_columns = ['Has_Malignant']
     instance_columns = ['Malignant Lesion Present']  
     img_size = 300
@@ -294,9 +294,9 @@ if __name__ == '__main__':
     min_bag_size = 2
     max_bag_size = 25
     instance_batch_size =  25
-    use_efficient_net = False"""
+    use_efficient_net = False
     
-    dataset_name = 'imagenette2'
+    """dataset_name = 'imagenette2'
     label_columns = ['Has_Fish']
     instance_columns = ['Has_Fish']  
     img_size = 128
@@ -304,7 +304,7 @@ if __name__ == '__main__':
     min_bag_size = 2
     max_bag_size = 25
     instance_batch_size =  25
-    use_efficient_net = False
+    use_efficient_net = False"""
     
     #ITS2CLR Config
     feature_extractor_train_count = 6 # 6
@@ -314,7 +314,7 @@ if __name__ == '__main__':
     total_epochs = 20
     warmup_epochs = 15
     
-    arch = "resnet18"
+    arch = "resnet50"
     pretrained_arch = True
     reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
     
@@ -595,7 +595,6 @@ if __name__ == '__main__':
                 optimizer.zero_grad()
                 
                 outputs, instance_pred, _ = model(xb, pred_on = True)
-                #print(instance_pred)
                 
                 # Calculate bag-level loss
                 loss = BCE_loss(outputs, yb)
