@@ -6,12 +6,13 @@ import pickle
 from torch import nn
 from archs.save_arch import *
 from data.Gen_ITS2CLR_util import *
+import torch.optim as optim
 from torch.utils.data import Sampler
 from torch.optim import Adam
 from archs.backbone import create_timm_body
 from torchvision.models import efficientnet_b3, EfficientNet_B3_Weights
 from data.format_data import *
-from archs.model_GenSCL import *
+from archs.model_PALM import *
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -21,10 +22,11 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 class Instance_Dataset(TUD.Dataset):
     def __init__(self, bags_dict, selection_mask, transform=None, warmup=True):
         self.transform = transform
-        self.warmup = warmup 
+        self.warmup = warmup
+
         self.images = []
         self.final_labels = []
-        self.warmup_mask = []
+
         
         for bag_id, bag_info in bags_dict.items():
             images = bag_info['images']
@@ -41,9 +43,8 @@ class Instance_Dataset(TUD.Dataset):
 
             for idx, (img, label) in enumerate(zip(images, image_labels)):
                 image_label = None
-                warmup_mask_value = 0
                 
-                if not self.warmup:
+                if self.warmup:
                     # Only include confident instances (selection_mask) or negative bags or instance labels
                     if label[0] is not None:
                         image_label = label[0]
@@ -57,24 +58,19 @@ class Instance_Dataset(TUD.Dataset):
                         image_label = label[0]
                     else:
                         image_label = bag_label  # Use bag label if instance label is not present
-                        if bag_label == 1:
-                            warmup_mask_value = 1 # Set warmup mask to 1 for instances without label[0] and bag_label is 1
                 
                 if image_label is not None:
                     self.images.append(img)
                     self.final_labels.append(image_label)
-                    self.warmup_mask.append(warmup_mask_value)
 
     def __getitem__(self, index):
         img_path = self.images[index]
         instance_label = self.final_labels[index]
-        warmup_unconfident = self.warmup_mask[index]
         
         img = Image.open(img_path).convert("RGB")
-        image_data_q = self.transform(img)
-        image_data_k = self.transform(img)
+        image_data = self.transform(img)
 
-        return (image_data_q, image_data_k), instance_label, warmup_unconfident
+        return image_data, instance_label
 
 
     def __len__(self):
@@ -82,50 +78,61 @@ class Instance_Dataset(TUD.Dataset):
 
 
 class WarmupSampler(Sampler):
-    def __init__(self, dataset, batch_size):
+    def __init__(self, dataset, batch_size, min_positive_ratio=0.5):
         self.dataset = dataset
         self.batch_size = batch_size
-        self.indices_0 = [i for i, mask in enumerate(self.dataset.warmup_mask) if mask == 0]
-        self.indices_1 = [i for i, mask in enumerate(self.dataset.warmup_mask) if mask == 1]
+        self.min_positive_ratio = min_positive_ratio
+        self.indices_0 = [i for i, label in enumerate(self.dataset.final_labels) if label == 0]
+        self.indices_1 = [i for i, label in enumerate(self.dataset.final_labels) if label == 1]
 
     def __iter__(self):
-        total_batches = len(self.dataset) // self.batch_size
+        num_positive = len(self.indices_1)
+        num_negative = len(self.indices_0)
 
-        for _ in range(total_batches):
-            # Randomly decide how many mask 0s to include, ensuring at least 1
-            num_mask_0 = random.randint(1, max(1, min(len(self.indices_0), self.batch_size - 1)))
-            batch_mask_0 = random.sample(self.indices_0, num_mask_0)
+        # Calculate the number of negative instances to include based on the desired positive ratio
+        max_negative = int(num_positive * (1 - self.min_positive_ratio) / self.min_positive_ratio)
+        num_negative_subset = min(num_negative, max_negative)
 
-            # Fill the rest of the batch with mask 1s, if any space left
-            num_mask_1 = self.batch_size - num_mask_0
-            batch_mask_1 = random.sample(self.indices_1, num_mask_1) if num_mask_1 > 0 else []
+        # Randomly select a subset of negative instances for the current epoch
+        negative_subset = random.sample(self.indices_0, num_negative_subset)
 
-            batch = batch_mask_0 + batch_mask_1
-            random.shuffle(batch)
+        # Combine positive and selected negative instances
+        indices = self.indices_1 + negative_subset
+        random.shuffle(indices)
+
+        # Yield batches of instances
+        for i in range(0, len(indices), self.batch_size):
+            batch = indices[i:i + self.batch_size]
+
+            # Ensure each batch has at least one positive instance
+            if len(set(batch) & set(self.indices_1)) == 0:
+                batch[-1] = random.choice(self.indices_1)
+
             yield batch
-            
+
     def __len__(self):
-        return len(self.dataset) // self.batch_size
+        num_positive = len(self.indices_1)
+        num_negative = len(self.indices_0)
+
+        # Calculate the number of negative instances to include based on the desired positive ratio
+        max_negative = int(num_positive * (1 - self.min_positive_ratio) / self.min_positive_ratio)
+        num_negative_subset = min(num_negative, max_negative)
+
+        return (num_positive + num_negative_subset) // self.batch_size
     
 def collate_instance(batch):
-    batch_data_q = []
-    batch_data_k = [] 
+    batch_data = []
     batch_labels = []
-    batch_unconfident = []
 
-    for (image_data_q, image_data_k), bag_label, warmup_unconfident in batch:
-        batch_data_q.append(image_data_q)
-        batch_data_k.append(image_data_k)
+    for image_data, bag_label in batch:
+        batch_data.append(image_data)
         batch_labels.append(bag_label)
-        batch_unconfident.append(warmup_unconfident)
 
     # Stack the images and labels
-    batch_data_q = torch.stack(batch_data_q)
-    batch_data_k = torch.stack(batch_data_k)
+    batch_data = torch.stack(batch_data)
     batch_labels = torch.tensor(batch_labels, dtype=torch.long)
-    batch_unconfident = torch.tensor(batch_unconfident, dtype=torch.long)
 
-    return (batch_data_q, batch_data_k), batch_labels, batch_unconfident
+    return batch_data, batch_labels
 
 
 def collate_bag(batch):
@@ -151,77 +158,192 @@ def collate_bag(batch):
 
 
 
-class GenSupConLossv2(nn.Module):
-    def __init__(self, temperature=0.07, base_temperature=0.07, queue_size=1024):
-        super(GenSupConLossv2, self).__init__()
-        self.temperature = temperature
-        self.base_temperature = base_temperature
-        self.queue_size = queue_size
-        self.queue = None
-        self.queue_labels = None
 
-    # initalize larger queue with black negitive images?
-    
-    def _dequeue_and_enqueue(self, features, labels):
-        if self.queue is None:
-            self.queue = features
-            self.queue_labels = labels
-        else:
-            self.queue = torch.cat((self.queue, features), dim=0)
-            self.queue_labels = torch.cat((self.queue_labels, labels), dim=0)
-            
-        if self.queue.shape[0] > self.queue_size:
-            self.queue = self.queue[-self.queue_size:]
-            self.queue_labels = self.queue_labels[-self.queue_size:]
-
-    def forward(self, features, labels, anc_mask=None):
-        '''
-        Args:
-            feats: (anchor_features, contrast_features), each: [N, feat_dim]
-            labels: (anchor_labels, contrast_labels) each: [N, num_cls]
-            anc_mask: (anchors_mask, contrast_mask) each: [N]
-        '''
-        anchor_features = torch.cat(features, dim=0)
-        anchor_labels = torch.cat(labels, dim=0).float()
-
-        # Concatenate anchor features and queue
-        contrast_features = torch.cat([anchor_features, self.queue], dim=0) if self.queue is not None else anchor_features
-        contrast_labels = torch.cat([anchor_labels, self.queue_labels], dim=0) if self.queue is not None else anchor_labels
+class PALM(nn.Module):
+    def __init__(self, args, num_classes=2, n_protos=100, proto_m=0.99, temp=0.1, lambda_pcon=1, k=0, feat_dim=128, epsilon=0.05):
+        super(PALM, self).__init__()
+        self.num_classes = num_classes
+        self.temp = temp  # temperature scaling
+        self.nviews = args.nviews
+        self.cache_size = args.cache_size
         
-        # 1. compute similarities among targets
-        anchor_norm = torch.norm(anchor_labels, p=2, dim=-1, keepdim=True)  # [anchor_N, 1]
-        contrast_norm = torch.norm(contrast_labels, p=2, dim=-1, keepdim=True)  # [contrast_N, 1]
-        deno = torch.mm(anchor_norm, contrast_norm.T)
-        mask = torch.mm(anchor_labels, contrast_labels.T) / deno  # cosine similarity: [anchor_N, contrast_N]
-        logits_mask = torch.ones_like(mask)
-        logits_mask.fill_diagonal_(0)
-        mask = mask * logits_mask
+        self.lambda_pcon = lambda_pcon
+        
+        self.feat_dim = feat_dim
+        
+        self.epsilon = epsilon
+        self.sinkhorn_iterations = 3
+        self.k = min(k, self.cache_size)
+        
+        self.n_protos = n_protos
+        self.proto_m = proto_m
+        self.register_buffer("protos", torch.rand(self.n_protos,feat_dim))
+        self.protos = F.normalize(self.protos, dim=-1)
+        
+        
+        
+        # Initialize class counts for each prototype
+        self.proto_class_counts = torch.zeros(self.n_protos, self.num_classes).cuda() # ADDED
+        
+    def sinkhorn(self, features):
+        out = torch.matmul(features, self.protos.detach().T)
+            
+        Q = torch.exp(out.detach() / self.epsilon).t()# Q is K-by-B for consistency with notations from our paper
+        B = Q.shape[1]  # number of samples to assign
+        K = Q.shape[0] # how many prototypes
 
-        # 2. compute logits
+        # make the matrix sums to 1
+        sum_Q = torch.sum(Q)
+        if torch.isinf(sum_Q):
+            self.protos = F.normalize(self.protos, dim=1, p=2)
+            out = torch.matmul(features, self.ws(self.protos.detach()).T)
+            Q = torch.exp(out.detach() / self.epsilon).t()# Q is K-by-B for consistency with notations from our paper
+            sum_Q = torch.sum(Q)
+        Q /= sum_Q
+
+        for _ in range(self.sinkhorn_iterations):
+            # normalize each row: total weight per prototype must be 1/K
+            Q = F.normalize(Q, dim=1, p=1)
+            Q /= K
+
+            # normalize each column: total weight per sample must be 1/B
+            Q = F.normalize(Q, dim=0, p=1)
+            Q /= B
+
+        Q *= B
+        return Q.t()
+        
+    def mle_loss(self, features, targets):
+        # update prototypes by EMA
+        #features = torch.cat(torch.unbind(features, dim=1), dim=0)
+        # Disabled becuase features are already correct shape?
+        
+        anchor_labels = targets.contiguous().repeat(self.nviews).view(-1, 1)
+        contrast_labels = torch.arange(self.num_classes).repeat(self.cache_size).view(-1,1).cuda()
+        mask = torch.eq(anchor_labels, contrast_labels.T).float().cuda()
+                
+        Q = self.sinkhorn(features)
+        # topk
+        if self.k > 0:
+            update_mask = mask*Q
+            _, topk_idx = torch.topk(update_mask, self.k, dim=1)
+            topk_mask = torch.scatter(
+                torch.zeros_like(update_mask),
+                1,
+                topk_idx,
+                1
+            ).cuda()
+            update_mask = F.normalize(F.normalize(topk_mask*update_mask, dim=1, p=1),dim=0, p=1)
+        # original
+        else:
+            update_mask = F.normalize(F.normalize(mask * Q, dim=1, p=1),dim=0, p=1)
+        update_features = torch.matmul(update_mask.T, features)
+        class_counts = torch.matmul(update_mask.T, F.one_hot(targets, num_classes=self.num_classes).float()) # ADDED
+        self.proto_class_counts += class_counts # ADDED
+        
+        protos = self.protos
+        protos = self.proto_m * protos + (1-self.proto_m) * update_features
+
+        self.protos = F.normalize(protos, dim=1, p=2)
+        
+        Q = self.sinkhorn(features)
+        
+        proto_dis = torch.matmul(features, self.protos.detach().T)
+        anchor_dot_contrast = torch.div(proto_dis, self.temp)
+        logits = anchor_dot_contrast
+       
+        if self.k > 0:
+            loss_mask = mask*Q
+            _, topk_idx = torch.topk(update_mask, self.k, dim=1)
+            topk_mask = torch.scatter(
+                torch.zeros_like(update_mask),
+                1,
+                topk_idx,
+                1
+            ).cuda()
+            loss_mask = F.normalize(topk_mask*loss_mask, dim=1, p=1)
+            masked_logits = loss_mask * logits 
+        else:  
+            masked_logits = F.normalize(Q*mask, dim=1, p=1) * logits
+    
+        pos=torch.sum(masked_logits, dim=1)
+        neg=torch.log(torch.sum(torch.exp(logits), dim=1, keepdim=True))
+        log_prob=pos-neg
+        
+        loss = -torch.mean(log_prob)
+        return loss   
+    
+    def proto_contra(self):
+        
+        protos = F.normalize(self.protos, dim=1)
+        batch_size = self.num_classes
+        
+        proto_labels = torch.arange(self.num_classes).repeat(self.cache_size).view(-1,1).cuda()
+        mask = torch.eq(proto_labels, proto_labels.T).float().cuda()    
+
+        contrast_count = self.cache_size
+        contrast_feature = protos
+
+        anchor_feature = contrast_feature
+        anchor_count = contrast_count
+
+        # compute logits
         anchor_dot_contrast = torch.div(
-            torch.matmul(anchor_features, contrast_features.T), 
-            self.temperature
-        )  
+            torch.matmul(anchor_feature, contrast_feature.T),
+            0.5)
         # for numerical stability
         logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
         logits = anchor_dot_contrast - logits_max.detach()
 
-        # Compute log_prob
-        exp_logits = torch.exp(logits) * logits_mask
-        log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True))
-        mean_log_prob_pos = (mask * log_prob).sum(1) / (mask.sum(1) + 1e-8)
+        # mask-out self-contrast cases
+        logits_mask = torch.scatter(
+            torch.ones_like(mask),
+            1,
+            torch.arange(batch_size * anchor_count).view(-1, 1).to('cuda'),
+            0
+        )
+        mask = mask*logits_mask
+        
+        pos = torch.sum(F.normalize(mask, dim=1, p=1)*logits, dim=1)
+        neg=torch.log(torch.sum(logits_mask * torch.exp(logits), dim=1))
+        log_prob=pos-neg
 
-        # Loss
-        loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
-        if anc_mask:
-            select = torch.cat(anc_mask)
-            loss = loss[select]
-        loss = loss.mean()
-
-        # Update queue
-        self._dequeue_and_enqueue(anchor_features.detach(), anchor_labels.detach())
-
+        # loss
+        loss = - torch.mean(log_prob)
         return loss
+    
+    
+    def predict(self, features):
+        # Assign the majority class to each prototype based on class counts
+        _, proto_classes = torch.max(self.proto_class_counts, dim=1)
+        
+        # Compute the similarity between input features and prototypes
+        similarity = torch.matmul(features, self.protos.T)
+        
+        # Get the index of the prototype with the highest similarity
+        _, prototype_indices = torch.max(similarity, dim=1)
+        
+        # Map the prototype indices to their corresponding class labels
+        predicted_classes = proto_classes[prototype_indices]
+        
+        return predicted_classes
+           
+    def forward(self, features, targets):
+        loss = 0
+        loss_dict = {}
+
+        g_con = self.mle_loss(features, targets)
+        loss += g_con
+        loss_dict['mle'] = g_con.cpu().item()
+                    
+        if self.lambda_pcon > 0:            
+            g_dis = self.lambda_pcon * self.proto_contra()
+            loss += g_dis
+            loss_dict['proto_contra'] = g_dis.cpu().item()
+                                
+        self.protos = self.protos.detach()
+                
+        return loss, loss_dict
     
 
 
@@ -292,8 +414,8 @@ def load_state(stats_path, target_folder):
 if __name__ == '__main__':
 
     # Config
-    model_version = '06'
-    
+    model_version = '10'
+    head_name = "Test07"
     
     """
     dataset_name = 'cifar10'
@@ -312,7 +434,7 @@ if __name__ == '__main__':
     bag_batch_size = 5
     min_bag_size = 2
     max_bag_size = 25
-    instance_batch_size =  25
+    instance_batch_size =  100
     use_efficient_net = False"""
     
     dataset_name = 'imagenette2'
@@ -326,19 +448,19 @@ if __name__ == '__main__':
     use_efficient_net = False
     
     #ITS2CLR Config
-    feature_extractor_train_count = 10 #6
+    feature_extractor_train_count = 6 # 6
     MIL_train_count = 8
     initial_ratio = 1 #0.3 # --% preditions included
     final_ratio = 1 #0.85 # --% preditions included
-    total_epochs = 8
+    total_epochs = 20
     warmup_epochs = 15
     
     arch = "resnet18"
-    pretrained_arch = False
+    pretrained_arch = True
     reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
     
     learning_rate=0.001
-    mix_alpha=0.2
+    mix_alpha=0  #0.2
     mix='mixup'
     num_classes = len(label_columns) + 1
 
@@ -407,26 +529,38 @@ if __name__ == '__main__':
     
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total Parameters: {total_params}")        
-        
-    optimizer = Adam(model.parameters(), lr=learning_rate)
+    
+    
+    class Args:
+        def __init__(self, nviews, cache_size):
+            self.nviews = nviews
+            self.cache_size = cache_size
+    palm_args = Args(nviews=1, cache_size=50)
+    palm = PALM(palm_args).cuda()
+    
+    optimizer = optim.SGD(model.parameters(),
+                        lr=learning_rate,
+                        momentum=0.9,
+                        nesterov=True,
+                        weight_decay=0.001)
+    
     BCE_loss = nn.BCELoss()
-    genscl = GenSupConLossv2(temperature=0.07, base_temperature=0.07)
     train_losses = []
     valid_losses = []
 
+
     model_name = f"{dataset_name}_{arch}_{model_version}"
-    pretrained_name = f"Head_{model_name}"
-    
-    
-    # Check if the model already exists
-    model_folder = f"{env}/models/{model_name}/"
-    model_path = f"{model_folder}/{model_name}.pth"
-    optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
-    stats_path = f"{model_folder}/{model_name}_stats.pkl"
+    pretrained_name = f"Head_{head_name}_{arch}"
     
     head_folder = f"{env}/models/{pretrained_name}/"
     head_path = f"{head_folder}/{pretrained_name}.pth"
     head_optimizer_path = f"{head_folder}/{pretrained_name}_optimizer.pth"
+    
+    # Check if the model already exists
+    model_folder = f"{env}/models/{pretrained_name}/{model_name}/"
+    model_path = f"{model_folder}/{model_name}.pth"
+    optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
+    stats_path = f"{model_folder}/{model_name}_stats.pkl"
     
     val_loss_best = 99999
     selection_mask = []
@@ -435,16 +569,20 @@ if __name__ == '__main__':
     pickup_warmup = False
 
     if os.path.exists(model_path): # If main model exists
-        model.load_state_dict(torch.load(model_path))
-        optimizer.load_state_dict(torch.load(optimizer_path))
+        #model.load_state_dict(torch.load(model_path))
+        #optimizer.load_state_dict(torch.load(optimizer_path))
         print(f"Loaded pre-existing model from {model_name}")
+        
+        # Load only the encoder state dictionary
+        encoder_state_dict = torch.load(model_path)
+        encoder_state_dict = {k.replace('encoder.', ''): v for k, v in encoder_state_dict.items() if k.startswith('encoder.')}
+        model.encoder.load_state_dict(encoder_state_dict)
 
         train_losses, valid_losses, epoch, val_loss_best, selection_mask = load_state(stats_path, model_folder)
         
     else:
         print(f"{model_name} does not exist, creating new instance")
-        os.makedirs(model_folder, exist_ok=True)
-        
+
         # Save the current configuration as a human-readable file
         config = {
             "dataset_name": dataset_name,
@@ -471,6 +609,7 @@ if __name__ == '__main__':
         
 
         if os.path.exists(head_path):  # If main head model exists
+            os.makedirs(model_folder, exist_ok=True)
             pickup_warmup = True
             #model.load_state_dict(torch.load(head_path))
             
@@ -479,7 +618,7 @@ if __name__ == '__main__':
             encoder_state_dict = torch.load(head_path)
             encoder_state_dict = {k.replace('encoder.', ''): v for k, v in encoder_state_dict.items() if k.startswith('encoder.')}
             model.encoder.load_state_dict(encoder_state_dict)
-            optimizer.load_state_dict(torch.load(head_optimizer_path))
+            #optimizer.load_state_dict(torch.load(head_optimizer_path))
     
             print(f"Loaded pre-trained model from {pretrained_name}")
             
@@ -494,6 +633,7 @@ if __name__ == '__main__':
         else: # If main head model DOES NOT exists
             warmup = True
             os.makedirs(head_folder, exist_ok=True)
+            os.makedirs(model_folder, exist_ok=True)
 
                 
             config_path = f"{head_folder}/config.txt"
@@ -502,13 +642,13 @@ if __name__ == '__main__':
             
             with open(f'{head_folder}model_architecture.txt', 'w') as f:
                 print(model, file=f)
-            
+
+
 
     # Training loop
     while epoch < total_epochs:
         
         print(f'Warmup Mode: {warmup}')
-        warmup = False
         if not pickup_warmup: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
@@ -528,47 +668,46 @@ if __name__ == '__main__':
             # Unfreeze encoder
             for param in model.encoder.parameters():
                 param.requires_grad = True
-        
-            # Generalized Supervised Contrastive Learning phase
+
             
             model.train()
             for i in range(target_count): 
                 losses = AverageMeter()
-
+                total_correct = 0
+                total_samples = 0
+                
                 # Iterate over the training data
-                for idx, (images, instance_labels, unconfident_mask) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
-                    #warmup_learning_rate(args, epoch, idx, len(instance_dataloader_train), optimizer)
-                    
-
-                    # Data preparation 
-                    bsz = instance_labels.shape[0]
-                    im_q, im_k = images
-                    im_q = im_q.cuda(non_blocking=True)
-                    im_k = im_k.cuda(non_blocking=True)
+                for idx, (images, instance_labels) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
+                    images = images.cuda(non_blocking=True)
                     instance_labels = instance_labels.cuda(non_blocking=True)
-                    
-                    # image-based regularizations (lam 1 = no mixup)
-                    im_q, y0a, y0b, lam0 = mix_fn(im_q, instance_labels, mix_alpha, mix)
-                    im_k, y1a, y1b, lam1 = mix_fn(im_k, instance_labels, mix_alpha, mix)
-                    images = [im_q, im_k]
-                    l_q = mix_target(y0a, y0b, lam0, num_classes)
-                    l_k = mix_target(y1a, y1b, lam1, num_classes)
-                    
+  
                     # forward
                     optimizer.zero_grad()
                     _, _, features = model(images, projector=True)
-                    zk, zq = torch.split(features, [bsz, bsz], dim=0)
+                    features.to(device)
                     
-                    # get loss (no teacher)
-                    mapped_anchors = ~unconfident_mask.bool()
-                    loss = genscl([zk, zq], [l_q, l_k], (mapped_anchors, mapped_anchors))
-                    losses.update(loss.item(), bsz)
+                    # Get loss from PALM
+                    loss, loss_dict = palm(features, instance_labels)
+                    #print(loss)
 
+                    # Backward pass and optimization step
                     loss.backward()
                     optimizer.step()
+        
+                    # Update the loss meter
+                    losses.update(loss.item(), images[0].size(0))
                     
-                print(f'[{i+1}/{target_count}] Gen_SCL Loss: {losses.avg:.5f}')
+                    # Get predictions from PALM
+                    with torch.no_grad():
+                        predicted_classes = palm.predict(features)
 
+                    # Calculate accuracy
+                    correct = (predicted_classes == instance_labels).sum().item()
+                    total_correct += correct
+                    total_samples += instance_labels.size(0)
+
+                acc = total_correct / total_samples
+                print(f'[{i+1}/{target_count}] Loss: {losses.avg:.5f}, Accuracy: {acc:.5f}')
 
 
 
@@ -583,7 +722,8 @@ if __name__ == '__main__':
             warmup = False
             
             
-
+        
+        
         print('Training Aggregator')
         
         if reset_aggregator:
@@ -609,9 +749,7 @@ if __name__ == '__main__':
                 optimizer.zero_grad()
                 
                 outputs, instance_pred, _ = model(xb, pred_on = True)
-                #print(outputs)
                 
-
                 # Calculate bag-level loss
                 loss = BCE_loss(outputs, yb)
 
@@ -643,9 +781,8 @@ if __name__ == '__main__':
                     xb, yb = data, yb.cuda()
 
                     outputs, instance_pred, _ = model(xb, pred_on = True)
-                    print(instance_pred)
-                    
-                    
+                    #print(instance_pred)
+
                     # Calculate bag-level loss
                     loss = BCE_loss(outputs, yb)
                     total_val_loss += loss.item() * yb.size(0)
@@ -670,6 +807,8 @@ if __name__ == '__main__':
             print(f"[{i+1}/{MIL_train_count}] | Acc | Loss")
             print(f"Train | {train_acc:.4f} | {train_loss:.4f}")
             print(f"Val | {val_acc:.4f} | {val_loss:.4f}")
+            
+            
                         
             
             
@@ -699,4 +838,11 @@ if __name__ == '__main__':
                 # Save selection
                 with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
                     pickle.dump(selection_mask, file)
+                    
+                    
+                    
+                    
+                    
+                    
+            #exit() # TEMP DEBUGGING
 

@@ -365,7 +365,7 @@ if __name__ == '__main__':
     # Create datasets
     #bag_dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
     #bag_dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
-    bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=True)
+    bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
     bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
      
     # Create bag data loaders

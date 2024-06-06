@@ -286,7 +286,7 @@ if __name__ == '__main__':
     max_bag_size = 25
     instance_batch_size =  200"""
     
-    dataset_name = 'export_03_18_2024'
+    """dataset_name = 'export_03_18_2024'
     label_columns = ['Has_Malignant']
     instance_columns = ['Malignant Lesion Present']  
     img_size = 300
@@ -294,9 +294,9 @@ if __name__ == '__main__':
     min_bag_size = 2
     max_bag_size = 25
     instance_batch_size =  25
-    use_efficient_net = False
+    use_efficient_net = False"""
     
-    """dataset_name = 'imagenette2'
+    dataset_name = 'imagenette2'
     label_columns = ['Has_Fish']
     instance_columns = ['Has_Fish']  
     img_size = 128
@@ -304,7 +304,7 @@ if __name__ == '__main__':
     min_bag_size = 2
     max_bag_size = 25
     instance_batch_size =  25
-    use_efficient_net = False"""
+    use_efficient_net = False
     
     #ITS2CLR Config
     feature_extractor_train_count = 6 # 6
@@ -364,7 +364,7 @@ if __name__ == '__main__':
     # Create datasets
     #bag_dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
     #bag_dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
-    bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=True)
+    bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
     bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
      
     # Create bag data loaders
@@ -398,16 +398,16 @@ if __name__ == '__main__':
     model_name = f"{dataset_name}_{arch}_{model_version}"
     pretrained_name = f"Head_{dataset_name}_{arch}"
     
+    head_folder = f"{env}/models/{pretrained_name}/"
+    head_path = f"{head_folder}/{pretrained_name}.pth"
+    head_optimizer_path = f"{head_folder}/{pretrained_name}_optimizer.pth"
     
     # Check if the model already exists
-    model_folder = f"{env}/models/{model_name}/"
+    model_folder = f"{env}/{head_folder}/models/{model_name}/"
     model_path = f"{model_folder}/{model_name}.pth"
     optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
     stats_path = f"{model_folder}/{model_name}_stats.pkl"
     
-    head_folder = f"{env}/models/{pretrained_name}/"
-    head_path = f"{head_folder}/{pretrained_name}.pth"
-    head_optimizer_path = f"{head_folder}/{pretrained_name}_optimizer.pth"
     
     val_loss_best = 99999
     selection_mask = []
@@ -416,14 +416,14 @@ if __name__ == '__main__':
     pickup_warmup = False
 
     if os.path.exists(model_path): # If main model exists
-        model.load_state_dict(torch.load(model_path))
-        optimizer.load_state_dict(torch.load(optimizer_path))
+        #model.load_state_dict(torch.load(model_path))
+        #optimizer.load_state_dict(torch.load(optimizer_path))
         print(f"Loaded pre-existing model from {model_name}")
         
         # Load only the encoder state dictionary
-        """encoder_state_dict = torch.load(model_path)
+        encoder_state_dict = torch.load(model_path)
         encoder_state_dict = {k.replace('encoder.', ''): v for k, v in encoder_state_dict.items() if k.startswith('encoder.')}
-        model.encoder.load_state_dict(encoder_state_dict)"""
+        model.encoder.load_state_dict(encoder_state_dict)
 
         train_losses, valid_losses, epoch, val_loss_best, selection_mask = load_state(stats_path, model_folder)
         
