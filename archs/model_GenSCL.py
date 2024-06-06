@@ -12,7 +12,8 @@ class Embeddingmodel(nn.Module):
         self.efficient_net = efficient_net
         self.num_classes = num_classes
         self.nf = nf
-        self.aggregator = Saliency_Classifier(nf=self.nf, num_classes=num_classes)
+        #self.aggregator = Saliency_Classifier(nf=self.nf, num_classes=num_classes)
+        self.aggregator = Linear_Classifier2(nf=self.nf, num_classes=num_classes)
         self.projector = nn.Sequential(
             nn.Linear(nf, 512),
             nn.ReLU(inplace=True),
@@ -34,7 +35,7 @@ class Embeddingmodel(nn.Module):
             
             # Adaptive average pooling
             adaptive_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
-            #feat = adaptive_avg_pool(feat).squeeze()
+            feat = adaptive_avg_pool(feat).squeeze()
             
             # Global average pooling
             #feat = torch.mean(feat, dim=(2, 3))
@@ -55,7 +56,7 @@ class Embeddingmodel(nn.Module):
             yhat_instances = None
             
         if projector:
-            feat = adaptive_avg_pool(feat).squeeze()
+            #feat = adaptive_avg_pool(feat).squeeze()
             feat = self.projector(feat)
             feat = F.normalize(feat, dim=1)
             
@@ -162,53 +163,6 @@ class Linear_Classifier2(nn.Module):
         Y_prob = torch.mm(A, feat_predictions)  # ATTENTION_BRANCHESxC
 
         instance_scores = torch.sigmoid(instance_scores.squeeze())
-        return Y_prob, instance_scores
-
-class Linear_Classifier3(nn.Module):
-    """Linear classifier"""
-    def __init__(self, nf, num_classes=1, L=256):
-        super(Linear_Classifier3, self).__init__()
-        self.fc = nn.Linear(nf, num_classes)
-        
-        # Attention mechanism components
-        self.attention_V = nn.Sequential(
-            nn.Linear(nf, L),
-            nn.Tanh()
-        )
-        self.attention_U = nn.Sequential(
-            nn.Linear(nf, L),
-            nn.Sigmoid()
-        )
-        self.attention_W = nn.Sequential(
-            nn.Linear(2*L, 1),  # Concatenate A_V and A_U
-        )
-        self.fc = nn.Sequential(
-            nn.Linear(nf, num_classes),
-            nn.Sigmoid()
-        )
-    
-    def reset_parameters(self):
-        # Reset the parameters of all the submodules in the Linear_Classifier
-        for module in self.modules():
-            if isinstance(module, nn.Linear):
-                module.reset_parameters()
-    
-    def forward(self, v):
-        A_V = self.attention_V(v)  # KxL
-        A_U = self.attention_U(v)  # KxL
-        concat_features = torch.cat((A_V, A_U), dim=1)  # Kx(2*L)
-        instance_scores = self.attention_W(concat_features)  # Kx1
-        
-        A = torch.transpose(instance_scores, 1, 0)  # ATTENTION_BRANCHESxK
-        A = F.softmax(A, dim=1)  # softmax over K
-        
-        # Apply fc layer to feat-level features
-        feat_predictions = self.fc(v)  # KxC
-        
-        # Aggregate instance-level predictions
-        Y_prob = torch.mm(A, feat_predictions)  # ATTENTION_BRANCHESxC
-        instance_scores = torch.sigmoid(instance_scores.squeeze())
-        
         return Y_prob, instance_scores
     
 class Saliency_Classifier(nn.Module):

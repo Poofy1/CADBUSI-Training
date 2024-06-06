@@ -1,0 +1,18 @@
+Epoch 1
+Training Accuracy:
+  Overall: 0.8603
+Validation Accuracy:
+  Overall: 0.9700
+
+Epoch 2
+Training Accuracy:
+  Overall: 0.9560
+Validation Accuracy:
+  Overall: 0.9633
+
+Epoch 3
+Training Accuracy:
+  Overall: 0.9603
+Validation Accuracy:
+  Overall: 0.9767
+
