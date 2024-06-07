@@ -6,6 +6,8 @@ import random
 import shutil
 
 output_dir = "D:\DATA\CASBUSI\exports"
+positive_percentage = 0.2  # Percentage of positive instances to include 
+
 
 if not os.path.exists(f'{output_dir}/imagenette2.tgz'):
     # Download the Imagenette dataset
@@ -24,8 +26,6 @@ if not os.path.exists(f'{output_dir}/imagenette2'):
 
 # Set up the directories
 images_dir = f'{output_dir}/imagenette2/images'
-os.makedirs(images_dir, exist_ok=True)
-images_dir = f'{output_dir}/imagenette2/train'
 os.makedirs(images_dir, exist_ok=True)
 
 # Create the intermediate CSV file to store image labels
@@ -73,10 +73,13 @@ while all_images:
 
 # Create the InstanceData.csv file
 instance_data = []
+selected_bags = random.sample(range(bag_id), int(bag_id * positive_percentage))
 for image_name, label in image_labels.items():
-    has_fish = label == 'n01440764'
-    accession_number = bag_info[image_name]
-    instance_data.append([accession_number, int(has_fish), image_name])
+    bag_id = bag_info[image_name]
+    if bag_id in selected_bags:
+        has_fish = label == 'n01440764'
+        accession_number = bag_id
+        instance_data.append([accession_number, int(has_fish), image_name])
 
 # Write the train.csv file
 with open(f'{output_dir}/imagenette2/TrainData.csv', 'w', newline='') as file:
