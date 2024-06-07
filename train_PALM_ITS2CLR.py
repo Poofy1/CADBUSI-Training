@@ -53,11 +53,15 @@ class Instance_Dataset(TUD.Dataset):
                     elif bag_label == 0:
                         image_label = 0
                 else:
-                    # Include all data but replace with image_labels if present
+                    # Return all images with unknown possiblity 
                     if label[0] is not None:
                         image_label = label[0]
+                    elif selection_mask_labels is not None and selection_mask_labels[idx] != -1:
+                        image_label = selection_mask_labels[idx]
+                    elif bag_label == 0:
+                        image_label = 0
                     else:
-                        image_label = bag_label  # Use bag label if instance label is not present
+                        image_label = -1
                 
                 if image_label is not None:
                     self.images.append(img)
@@ -78,47 +82,31 @@ class Instance_Dataset(TUD.Dataset):
 
 
 class WarmupSampler(Sampler):
-    def __init__(self, dataset, batch_size, min_positive_ratio=0.5):
+    def __init__(self, dataset, batch_size):
         self.dataset = dataset
         self.batch_size = batch_size
-        self.min_positive_ratio = min_positive_ratio
         self.indices_0 = [i for i, label in enumerate(self.dataset.final_labels) if label == 0]
         self.indices_1 = [i for i, label in enumerate(self.dataset.final_labels) if label == 1]
 
     def __iter__(self):
-        num_positive = len(self.indices_1)
-        num_negative = len(self.indices_0)
+        total_batches = len(self.dataset) // self.batch_size
 
-        # Calculate the number of negative instances to include based on the desired positive ratio
-        max_negative = int(num_positive * (1 - self.min_positive_ratio) / self.min_positive_ratio)
-        num_negative_subset = min(num_negative, max_negative)
+        for _ in range(total_batches):
+            # Randomly decide how many mask 0s to include, ensuring at least 1
+            num_mask_0 = random.randint(1, max(1, min(len(self.indices_0), self.batch_size - 1)))
+            batch_mask_0 = random.sample(self.indices_0, num_mask_0)
 
-        # Randomly select a subset of negative instances for the current epoch
-        negative_subset = random.sample(self.indices_0, num_negative_subset)
+            # Fill the rest of the batch with mask 1s, if any space left
+            num_mask_1 = self.batch_size - num_mask_0 
+            batch_mask_1 = random.sample(self.indices_1, num_mask_1) if num_mask_1 > 0 else []
 
-        # Combine positive and selected negative instances
-        indices = self.indices_1 + negative_subset
-        random.shuffle(indices)
-
-        # Yield batches of instances
-        for i in range(0, len(indices), self.batch_size):
-            batch = indices[i:i + self.batch_size]
-
-            # Ensure each batch has at least one positive instance
-            if len(set(batch) & set(self.indices_1)) == 0:
-                batch[-1] = random.choice(self.indices_1)
-
+            batch = batch_mask_0 + batch_mask_1
+            random.shuffle(batch)
             yield batch
-
+            
     def __len__(self):
-        num_positive = len(self.indices_1)
-        num_negative = len(self.indices_0)
-
-        # Calculate the number of negative instances to include based on the desired positive ratio
-        max_negative = int(num_positive * (1 - self.min_positive_ratio) / self.min_positive_ratio)
-        num_negative_subset = min(num_negative, max_negative)
-
-        return (num_positive + num_negative_subset) // self.batch_size
+        return len(self.dataset) // self.batch_size
+    
     
 def collate_instance(batch):
     batch_data = []
@@ -238,8 +226,8 @@ class PALM(nn.Module):
         else:
             update_mask = F.normalize(F.normalize(mask * Q, dim=1, p=1),dim=0, p=1)
         update_features = torch.matmul(update_mask.T, features)
-        class_counts = torch.matmul(update_mask.T, F.one_hot(targets, num_classes=self.num_classes).float()) # ADDED
-        self.proto_class_counts += class_counts # ADDED
+        
+        self.proto_class_counts += torch.matmul(update_mask.T, F.one_hot(targets, num_classes=self.num_classes).float()) # ADDED
         
         protos = self.protos
         protos = self.proto_m * protos + (1-self.proto_m) * update_features
@@ -414,8 +402,8 @@ def load_state(stats_path, target_folder):
 if __name__ == '__main__':
 
     # Config
-    model_version = '10'
-    head_name = "Test07"
+    model_version = '1'
+    head_name = "Test09"
     
     """
     dataset_name = 'cifar10'
@@ -437,7 +425,7 @@ if __name__ == '__main__':
     instance_batch_size =  100
     use_efficient_net = False"""
     
-    dataset_name = 'imagenette2'
+    dataset_name = 'imagenette2_hard'
     label_columns = ['Has_Fish']
     instance_columns = ['Has_Fish']  
     img_size = 128
@@ -456,7 +444,7 @@ if __name__ == '__main__':
     warmup_epochs = 15
     
     arch = "resnet18"
-    pretrained_arch = True
+    pretrained_arch = False
     reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
     
     learning_rate=0.001
@@ -649,11 +637,11 @@ if __name__ == '__main__':
     while epoch < total_epochs:
         
         print(f'Warmup Mode: {warmup}')
-        if not pickup_warmup: # Are we resuming from a head model?
+        if True:#not pickup_warmup: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
             instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, warmup=warmup)
-            
+            instance_dataset_val = Instance_Dataset(bags_val, selection_mask, transform=val_transform, warmup=True)
             if warmup:
                 sampler = WarmupSampler(instance_dataset_train, instance_batch_size)
                 instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=sampler, collate_fn = collate_instance)
@@ -662,6 +650,8 @@ if __name__ == '__main__':
                 instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_size=instance_batch_size, collate_fn = collate_instance, drop_last=True, shuffle = True)
                 target_count = feature_extractor_train_count
             
+            
+            instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_size=instance_batch_size, collate_fn = collate_instance)
 
             print('Training Feature Extractor')
             
@@ -706,12 +696,77 @@ if __name__ == '__main__':
                     total_correct += correct
                     total_samples += instance_labels.size(0)
 
-                acc = total_correct / total_samples
-                print(f'[{i+1}/{target_count}] Loss: {losses.avg:.5f}, Accuracy: {acc:.5f}')
+                train_acc = total_correct / total_samples
+                
+                
+                
+                # Validation loop
+                model.eval()
+                val_losses = AverageMeter()
+                val_total_correct = 0
+                val_total_samples = 0
+
+                with torch.no_grad():
+                    for idx, (images, instance_labels) in enumerate(tqdm(instance_dataloader_val, total=len(instance_dataloader_val))):
+                        images = images.cuda(non_blocking=True)
+                        instance_labels = instance_labels.cuda(non_blocking=True)
+
+                        # Forward pass
+                        _, _, features = model(images, projector=True)
+                        features.to(device)
+
+                        # Get loss from PALM
+                        loss, loss_dict = palm(features, instance_labels)
+
+                        # Update the validation loss meter
+                        val_losses.update(loss.item(), images[0].size(0))
+
+                        # Get predictions from PALM
+                        predicted_classes = palm.predict(features)
+
+                        # Calculate accuracy
+                        correct = (predicted_classes == instance_labels).sum().item()
+                        val_total_correct += correct
+                        val_total_samples += instance_labels.size(0)
+
+                val_acc = val_total_correct / val_total_samples
+                
+                print(f'[{i+1}/{target_count}] Train Loss: {losses.avg:.5f}, Train Acc: {train_acc:.5f}')
+                print(f'[{i+1}/{target_count}] Val Loss:   {val_losses.avg:.5f}, Val Acc:   {val_acc:.5f}')
+                
+                # Save the model
+                if val_losses.avg < val_loss_best:
+                    val_loss_best = val_losses.avg
+                    target_folder = head_folder
+                    target_name = pretrained_name
+                    all_targs = []
+                    all_preds = []
+                    
+                    save_state(epoch, label_columns, train_acc, val_losses.avg, val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, train_losses, valid_losses,)
+                    print("Saved checkpoint due to improved val_loss")
+            
+
+                    # Save selection
+                    with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
+                        pickle.dump(selection_mask, file)
 
 
 
-        if pickup_warmup: 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        """if pickup_warmup: 
             pickup_warmup = False
         if warmup:
             # Save the model and optimizer
@@ -837,7 +892,7 @@ if __name__ == '__main__':
                 
                 # Save selection
                 with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
-                    pickle.dump(selection_mask, file)
+                    pickle.dump(selection_mask, file)"""
                     
                     
                     

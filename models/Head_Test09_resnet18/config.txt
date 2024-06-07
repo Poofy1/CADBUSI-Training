@@ -1,5 +1,5 @@
 {
-    "dataset_name": "imagenette2",
+    "dataset_name": "imagenette2_hard",
     "arch": "resnet18",
     "pretrained_arch": false,
     "label_columns": [

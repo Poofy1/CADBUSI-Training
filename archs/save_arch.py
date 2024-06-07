@@ -121,20 +121,18 @@ def plot_Confusion(all_targs, all_preds, vocab, file_path):
     fig.savefig(file_path)
     plt.close(fig)
 
-
-def save_state(e, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, bagmodel, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs, classifier = None):
-    
+def save_state(e, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, bagmodel, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs, classifier=None):
     model_path = f"{model_folder}/{model_name}.pth"
     classifier_path = f"{model_folder}/{model_name}_classifier.pth"
     optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
     stats_path = f"{model_folder}/{model_name}_stats.pkl"
-    
+
     # Calculate current epoch metrics
     all_preds_np = all_preds.numpy() if isinstance(all_preds, torch.Tensor) else np.array(all_preds)
     all_targs_np = all_targs.numpy() if isinstance(all_targs, torch.Tensor) else np.array(all_targs)
-    
+
     n_classes = all_preds_np.shape[1] if len(all_preds_np.shape) > 1 else 1
-    
+
     # Save the model and optimizer
     torch.save(bagmodel.state_dict(), model_path)
     if classifier:
@@ -150,18 +148,17 @@ def save_state(e, label_columns, train_acc, val_loss, val_acc, model_folder, mod
     else:
         all_fpr = []
         all_tpr = []
-    
-    
-    # Calculate ROC curve differently based on the type of classification
-    if n_classes == 1:
-        # Binary classification
-        fpr, tpr, _ = roc_curve(all_targs_np, all_preds_np)
-        all_fpr.append(fpr)
-        all_tpr.append(tpr)
-        plot_single_roc_curve(fpr, tpr, f"{model_folder}/{model_name}_roc.png")
 
-    
-    
+    # Check if all_targs and all_preds are not empty before calculating ROC curve
+    if len(all_targs) > 0 and len(all_preds) > 0:
+        # Calculate ROC curve differently based on the type of classification
+        if n_classes == 1:
+            # Binary classification
+            fpr, tpr, _ = roc_curve(all_targs_np, all_preds_np)
+            all_fpr.append(fpr)
+            all_tpr.append(tpr)
+            plot_single_roc_curve(fpr, tpr, f"{model_folder}/{model_name}_roc.png")
+
     # Save updated stats with all_fpr and all_tpr
     with open(stats_path, 'wb') as f:
         pickle.dump({
@@ -177,10 +174,7 @@ def save_state(e, label_columns, train_acc, val_loss, val_acc, model_folder, mod
     plot_loss(train_losses_over_epochs, valid_losses_over_epochs, f"{model_folder}/{model_name}_loss.png")
     save_accuracy_to_file(e, train_acc, val_acc, label_columns, f"{model_folder}/{model_name}_accuracy.txt")
 
-    # Save the confusion matrix
-    if n_classes == 1:
+    # Save the confusion matrix if all_targs and all_preds are not empty
+    if len(all_targs) > 0 and len(all_preds) > 0 and n_classes == 1:
         vocab = ['not malignant', 'malignant']
         plot_Confusion(all_targs, all_preds, vocab, f"{model_folder}/{model_name}_confusion.png")
-    
-    
-
