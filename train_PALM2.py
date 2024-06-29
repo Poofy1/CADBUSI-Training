@@ -12,16 +12,16 @@ from torch.optim import Adam
 from archs.backbone import create_timm_body
 from torchvision.models import efficientnet_b3, EfficientNet_B3_Weights
 from data.format_data import *
-from archs.model_PALM import *
+from archs.model_PALM2 import *
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
     
-    
 class Instance_Dataset(TUD.Dataset):
-    def __init__(self, bags_dict, selection_mask, transform=None):
+    def __init__(self, bags_dict, selection_mask, transform=None, warmup=True):
         self.transform = transform
+        self.warmup = warmup
 
         self.images = []
         self.final_labels = []
@@ -43,13 +43,24 @@ class Instance_Dataset(TUD.Dataset):
             for idx, (img, label) in enumerate(zip(images, image_labels)):
                 image_label = None
                 
-                # Only include confident instances (selection_mask) or negative bags or instance labels
-                if label[0] is not None:
-                    image_label = label[0]
-                elif bag_label == 0:
-                    image_label = 0
-                elif selection_mask_labels is not None and selection_mask_labels[idx] != -1:
-                    image_label = selection_mask_labels[idx]
+                if self.warmup:
+                    # Only include confident instances (selection_mask) or negative bags or instance labels
+                    if label[0] is not None:
+                        image_label = label[0]
+                    elif bag_label == 0:
+                        image_label = 0
+                    elif selection_mask_labels is not None and selection_mask_labels[idx] != -1:
+                        image_label = selection_mask_labels[idx]
+                else:
+                    # Return all images with unknown possiblity 
+                    if label[0] is not None:
+                        image_label = label[0]
+                    elif bag_label == 0:
+                        image_label = 0
+                    elif selection_mask_labels is not None and selection_mask_labels[idx] != -1:
+                        image_label = selection_mask_labels[idx]
+                    else:
+                        image_label = -1
                 
                 if image_label is not None:
                     self.images.append(img)
@@ -69,7 +80,7 @@ class Instance_Dataset(TUD.Dataset):
         return len(self.images)
 
 
-class InstanceSampler(Sampler):
+class WarmupSampler(Sampler):
     def __init__(self, dataset, batch_size, strategy=1):
         self.dataset = dataset
         self.batch_size = batch_size
@@ -329,6 +340,8 @@ class PALM(nn.Module):
                 
         return loss, loss_dict
     
+    
+
 
 
 def create_selection_mask(train_bag_logits, include_ratio):
@@ -373,7 +386,8 @@ def create_selection_mask(train_bag_logits, include_ratio):
         combined_dict[original_bag_id][0][original_position] = int(prob > 0.5)
 
     return combined_dict
-    
+
+
     
 
 def load_state(stats_path, target_folder):
@@ -384,14 +398,14 @@ def load_state(stats_path, target_folder):
         train_losses = saved_stats['train_losses']
         valid_losses = saved_stats['valid_losses']
         epoch = saved_stats['epoch']
-        val_acc_best = saved_stats['val_loss']
+        val_loss_best = saved_stats['val_loss']
     
     # Load the selection_mask dictionary from the file
     if os.path.exists(f'{target_folder}/selection_mask.pkl'):
         with open(f'{target_folder}/selection_mask.pkl', 'rb') as file:
             selection_mask = pickle.load(file)
             
-    return train_losses, valid_losses, epoch, val_acc_best, selection_mask
+    return train_losses, valid_losses, epoch, val_loss_best, selection_mask
 
 
 
@@ -399,29 +413,19 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "Test13"
+    head_name = "Palm2_InsaneTest"
     
-    """
-    dataset_name = 'cifar10'
-    label_columns = ['Has_Truck']
-    instance_columns = ['']
-    img_size = 32
-    bag_batch_size = 30
-    min_bag_size = 2
-    max_bag_size = 25
-    instance_batch_size =  200"""
-    
-    dataset_name = 'export_03_18_2024'
+    """dataset_name = 'export_03_18_2024'
     label_columns = ['Has_Malignant']
     instance_columns = ['Malignant Lesion Present']  
     img_size = 300
     bag_batch_size = 5
     min_bag_size = 2
     max_bag_size = 25
-    instance_batch_size =  100
-    use_efficient_net = False
+    instance_batch_size =  50
+    use_efficient_net = False"""
     
-    """dataset_name = 'imagenette2_hard'
+    dataset_name = 'imagenette2_insane'
     label_columns = ['Has_Fish']
     instance_columns = ['Has_Fish']  
     img_size = 128
@@ -429,15 +433,15 @@ if __name__ == '__main__':
     min_bag_size = 2
     max_bag_size = 25
     instance_batch_size =  25
-    use_efficient_net = False"""
+    use_efficient_net = False
     
     #ITS2CLR Config
-    feature_extractor_train_count = 15 # 6
-    MIL_train_count = 8
-    initial_ratio = .3 #0.3 # --% preditions included
-    final_ratio = 1 #0.85 # --% preditions included
-    total_epochs = 20
-    warmup_epochs = 30
+    feature_extractor_train_count = 6 # 6
+    MIL_train_count = 6
+    initial_ratio = .8 #0.3 # --% preditions included
+    final_ratio = .8 #0.85 # --% preditions included
+    total_epochs = 9999
+    warmup_epochs = 20
     
     arch = "resnet18"
     pretrained_arch = False
@@ -452,19 +456,6 @@ if __name__ == '__main__':
     cropped_images = f"F:/Temp_SSD_Data/{dataset_name}_{img_size}_images/"
     bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
     num_labels = len(label_columns)
-    
-    """train_transform = T.Compose([
-                T.RandomVerticalFlip(),
-                T.RandomHorizontalFlip(),
-                T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
-                T.ToTensor(),
-                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
-    
-    val_transform = T.Compose([
-                T.ToTensor(),
-                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])"""
     
     train_transform = T.Compose([
                 ###T.RandomVerticalFlip(),
@@ -484,13 +475,9 @@ if __name__ == '__main__':
             ])
 
 
-    # Create datasets
-    #bag_dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
-    #bag_dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
+    # Create bag datasets
     bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
     bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
-     
-    # Create bag data loaders
     bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
     bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True)
 
@@ -518,8 +505,7 @@ if __name__ == '__main__':
             self.nviews = nviews
             self.cache_size = cache_size
     palm_args = Args(nviews=1, cache_size=50)
-    palm = PALM(palm_args, n_protos=100).cuda()
-    BCE_loss = nn.BCELoss()
+    palm = PALM(palm_args).cuda()
     
     optimizer = optim.SGD(model.parameters(),
                         lr=learning_rate,
@@ -527,6 +513,10 @@ if __name__ == '__main__':
                         nesterov=True,
                         weight_decay=0.001)
     
+    BCE_loss = nn.BCELoss()
+    train_losses = []
+    valid_losses = []
+
 
     model_name = f"{dataset_name}_{arch}_{model_version}"
     pretrained_name = f"Head_{head_name}_{arch}"
@@ -542,12 +532,11 @@ if __name__ == '__main__':
     stats_path = f"{model_folder}/{model_name}_stats.pkl"
     
     val_acc_best = 0
+    val_loss_best = 99999
     selection_mask = []
     epoch = 0
     warmup = False
     pickup_warmup = False
-    train_losses = []
-    valid_losses = []
 
     if os.path.exists(model_path): # If main model exists
         #model.load_state_dict(torch.load(model_path))
@@ -623,19 +612,17 @@ if __name__ == '__main__':
             with open(f'{head_folder}model_architecture.txt', 'w') as f:
                 print(model, file=f)
 
-
-
     # Training loop
     while epoch < total_epochs:
-
-        print(f'Warmup Mode: {warmup}')
+        
+        
         if not pickup_warmup: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
-            instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform)
-            instance_dataset_val = Instance_Dataset(bags_val, selection_mask, transform=val_transform)
-            train_sampler = InstanceSampler(instance_dataset_train, instance_batch_size, strategy=1)
-            val_sampler = InstanceSampler(instance_dataset_val, instance_batch_size, strategy=2)
+            instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, warmup=True)
+            instance_dataset_val = Instance_Dataset(bags_val, selection_mask, transform=val_transform, warmup=True)
+            train_sampler = WarmupSampler(instance_dataset_train, instance_batch_size, strategy=1)
+            val_sampler = WarmupSampler(instance_dataset_val, instance_batch_size, strategy=2)
             instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, collate_fn = collate_instance)
             instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_sampler=val_sampler, collate_fn = collate_instance)
             
@@ -643,6 +630,8 @@ if __name__ == '__main__':
                 target_count = warmup_epochs
             else:
                 target_count = feature_extractor_train_count
+            
+            
             
 
             print('Training Feature Extractor')
@@ -652,10 +641,12 @@ if __name__ == '__main__':
                 param.requires_grad = True
 
             
-            model.train()
+            
             for i in range(target_count): 
+                model.train()
                 losses = AverageMeter()
-                total_correct = 0
+                palm_total_correct = 0
+                instance_total_correct = 0
                 total_samples = 0
                 
                 # Iterate over the training data
@@ -665,37 +656,49 @@ if __name__ == '__main__':
   
                     # forward
                     optimizer.zero_grad()
-                    _, _, features = model(images, projector=True)
+                    _, _, instance_predictions, features = model(images, projector=True)
                     features.to(device)
                     
                     # Get loss from PALM
-                    loss, loss_dict = palm(features, instance_labels)
+                    palm_loss, loss_dict = palm(features, instance_labels)
+                    
+                    # Calculate BCE loss
+                    bce_loss_value = BCE_loss(instance_predictions, instance_labels.float())
 
                     # Backward pass and optimization step
-                    loss.backward()
+                    total_loss = palm_loss + bce_loss_value
+                    total_loss.backward()
                     optimizer.step()
         
                     # Update the loss meter
-                    losses.update(loss.item(), images[0].size(0))
+                    losses.update(total_loss.item(), images[0].size(0))
                     
                     # Get predictions from PALM
                     with torch.no_grad():
-                        predicted_classes = palm.predict(features)
+                        palm_predicted_classes = palm.predict(features)
+                        instance_predicted_classes = (instance_predictions) > 0.5
 
-                    # Calculate accuracy
-                    correct = (predicted_classes == instance_labels).sum().item()
-                    total_correct += correct
+                    # Calculate accuracy for PALM predictions
+                    palm_correct = (palm_predicted_classes == instance_labels).sum().item()
+                    palm_total_correct += palm_correct
+                    
+                    # Calculate accuracy for instance predictions
+                    instance_correct = (instance_predicted_classes == instance_labels).sum().item()
+                    instance_total_correct += instance_correct
+                    
                     total_samples += instance_labels.size(0)
 
-                train_acc = total_correct / total_samples
-                
+                # Calculate accuracies
+                palm_train_acc = palm_total_correct / total_samples
+                instance_train_acc = instance_total_correct / total_samples
+                                
                 
                 
                 # Validation loop
                 model.eval()
-                val_losses = AverageMeter()
-                val_total_correct = 0
-                val_total_samples = 0
+                palm_total_correct = 0
+                instance_total_correct = 0
+                total_samples = 0
 
                 with torch.no_grad():
                     for idx, (images, instance_labels) in enumerate(tqdm(instance_dataloader_val, total=len(instance_dataloader_val))):
@@ -703,44 +706,45 @@ if __name__ == '__main__':
                         instance_labels = instance_labels.cuda(non_blocking=True)
 
                         # Forward pass
-                        _, _, features = model(images, projector=True)
+                        _, _, instance_predictions, features = model(images, projector=True)
                         features.to(device)
 
-                        # Get predictions from PALM
-                        predicted_classes = palm.predict(features)
+                        # Get predictions
+                        palm_predicted_classes = palm.predict(features)
+                        instance_predicted_classes = (instance_predictions) > 0.5
 
-                        # Calculate accuracy
-                        correct = (predicted_classes == instance_labels).sum().item()
-                        val_total_correct += correct
-                        val_total_samples += instance_labels.size(0)
+                        # Calculate accuracy for PALM predictions
+                        palm_correct = (palm_predicted_classes == instance_labels).sum().item()
+                        palm_total_correct += palm_correct
+                        
+                        # Calculate accuracy for instance predictions
+                        instance_correct = (instance_predicted_classes == instance_labels).sum().item()
+                        instance_total_correct += instance_correct
+                        
+                        total_samples += instance_labels.size(0)
 
-                val_acc = val_total_correct / val_total_samples
+                # Calculate accuracies
+                palm_val_acc = palm_total_correct / total_samples
+                instance_val_acc = instance_total_correct / total_samples
                 
-                print(f'[{i+1}/{target_count}] Train Loss: {losses.avg:.5f}, Train Acc: {train_acc:.5f}')
-                print(f'[{i+1}/{target_count}] Val Loss:   N/A, Val Acc:   {val_acc:.5f}')
+                print(f'[{i+1}/{target_count}] Train Loss: {losses.avg:.5f}, Train Palm Acc: {palm_train_acc:.5f}, Train FC Acc: {instance_train_acc:.5f}')
+                print(f'[{i+1}/{target_count}] Val Loss:   N/A, Val Palm Acc: {palm_val_acc:.5f}, Val FC Acc: {instance_val_acc:.5f}')
                 
                 # Save the model
-                if val_acc > val_acc_best:
-                    val_acc_best = val_losses.avg
-                    target_folder = head_folder
-                    target_name = pretrained_name
+                if instance_val_acc > val_acc_best:
+                    val_acc_best = instance_val_acc
+                    if warmup:
+                        target_folder = head_folder
+                        target_name = pretrained_name
+                    else:
+                        target_folder = model_folder
+                        target_name = model_name
                     all_targs = []
                     all_preds = []
                     
-                    save_state(epoch, label_columns, train_acc, val_losses.avg, val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, train_losses, valid_losses,)
+                    
+                    save_state(epoch, label_columns, instance_train_acc, 0, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, train_losses, valid_losses,)
                     print("Saved checkpoint due to improved val_acc")
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -748,69 +752,70 @@ if __name__ == '__main__':
         if pickup_warmup: 
             pickup_warmup = False
         if warmup:
-            # Save the model and optimizer
-            torch.save(model.state_dict(), head_path)
-            torch.save(optimizer.state_dict(), head_optimizer_path)
-            
             print("Warmup Phase Finished")
             warmup = False
-        
-        
-        print('Training Aggregator')   
-        for i in range(MIL_train_count):
             
+
+        
+            
+        print('Predicting Missing Instances')
+        for a in range(MIL_train_count):
             model.train()
-            total_loss = 0.0
             train_bag_logits = {}
+            total_loss = 0.0
             total_acc = 0
             total = 0
             correct = 0
 
-            for (data, yb, instance_yb, id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)):
-                xb, yb = data, yb.cuda()
-            
+            for (images, yb, instance_labels, id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)):
+                num_bags = len(images)
                 optimizer.zero_grad()
-                
-                outputs, instance_pred, _ = model(xb, pred_on = True)
-                
-                # Calculate bag-level loss
-                loss = BCE_loss(outputs, yb)
 
-                loss.backward()
+                # Forward pass
+                bag_pred, _, instance_pred, features = model(images, pred_on=True)
+                
+
+                # Split the embeddings back into per-bag embeddings
+                split_sizes = [bag.size(0) for bag in images]
+                y_hat_per_bag = torch.split(instance_pred, split_sizes, dim=0)
+                for i, y_h in enumerate(y_hat_per_bag):
+                    train_bag_logits[id[i].item()] = y_h.detach().cpu().numpy()
+                
+                bag_loss = BCE_loss(bag_pred, yb)
+                bag_loss.backward()
                 optimizer.step()
-
-                total_loss += loss.item() * yb.size(0)
-                predicted = (outputs > 0.5).float()
+                
+                total_loss += bag_loss.item() * yb.size(0)
+                predicted = (bag_pred > 0.5).float()
                 total += yb.size(0)
                 correct += (predicted == yb).sum().item()
-                
-                for instance_id, bag_id in enumerate(id):
-                    train_bag_logits[bag_id] = instance_pred[instance_id].detach().cpu().numpy()
-
+                    
+            
+            
             train_loss = total_loss / total
             train_acc = correct / total
-
+                    
+                    
             # Evaluation phase
             model.eval()
-            total_val_loss = 0.0
-            total_val_acc = 0.0
             total = 0
             correct = 0
+            total_val_loss = 0.0
+            total_val_acc = 0.0
             all_targs = []
             all_preds = []
 
             with torch.no_grad():
-                for (data, yb, instance_yb, id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
-                    xb, yb = data, yb.cuda()
+                for (images, yb, instance_labels, id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
 
-                    outputs, instance_pred, _ = model(xb, pred_on = True)
-                    #print(instance_pred)
+                    # Forward pass
+                    bag_pred, _, _, features = model(images, pred_on=True)
 
                     # Calculate bag-level loss
-                    loss = BCE_loss(outputs, yb)
+                    loss = BCE_loss(bag_pred, yb)
                     total_val_loss += loss.item() * yb.size(0)
 
-                    predicted = (outputs > 0.5).float()
+                    predicted = (bag_pred > 0.5).float()
                     total += yb.size(0)
                     correct += (predicted == yb).sum().item()
 
@@ -819,27 +824,22 @@ if __name__ == '__main__':
                     if len(predicted.size()) == 0:
                         predicted = predicted.view(1)
                     all_preds.extend(predicted.cpu().detach().numpy())
-            
-
+                        
             val_loss = total_val_loss / total
             val_acc = correct / total
+                
+                    
+            #selection_mask = create_selection_mask(train_bag_logits, epoch)
+            #print("Created new sudo labels")
+            
 
-            train_losses.append(train_loss)
-            valid_losses.append(val_loss)
-
-            print(f"[{i+1}/{MIL_train_count}] | Acc | Loss")
+            print(f"[{a+1}/{MIL_train_count}] | Acc | Loss")
             print(f"Train | {train_acc:.4f} | {train_loss:.4f}")
             print(f"Val | {val_acc:.4f} | {val_loss:.4f}")
-            
-            
-                        
-            
-            
-            
 
             # Save the model
-            if val_loss < val_acc_best:
-                val_acc_best = val_loss
+            if val_loss < val_loss_best:
+                val_loss_best = val_loss
                 if warmup:
                     target_folder = head_folder
                     target_name = pretrained_name
@@ -851,21 +851,14 @@ if __name__ == '__main__':
                 print("Saved checkpoint due to improved val_loss")
                 
                 # Create selection mask
-                predictions_ratio = prediction_anchor_scheduler(epoch, total_epochs, 0, initial_ratio, final_ratio)
+                #predictions_ratio = prediction_anchor_scheduler(epoch, total_epochs, 0, initial_ratio, final_ratio)
                 #predictions_ratio = .9
-                selection_mask = create_selection_mask(train_bag_logits, predictions_ratio)
-                print("Created new sudo labels")
+                #selection_mask = create_selection_mask(train_bag_logits, predictions_ratio)
+                #print("Created new sudo labels")
                 
                 epoch += 1
                 
                 # Save selection
-                with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
-                    pickle.dump(selection_mask, file)
-                    
-                    
-                    
-                    
-                    
-                    
-            #exit() # TEMP DEBUGGING
+                #with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
+                #    pickle.dump(selection_mask, file)
 

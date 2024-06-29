@@ -273,7 +273,8 @@ def load_state(stats_path, target_folder):
 if __name__ == '__main__':
 
     # Config
-    model_version = '06'
+    model_version = '1'
+    head_name = "OneLesionCases"
     
     
     """
@@ -286,7 +287,7 @@ if __name__ == '__main__':
     max_bag_size = 25
     instance_batch_size =  200"""
     
-    """dataset_name = 'export_03_18_2024'
+    dataset_name = 'export_oneLesions'
     label_columns = ['Has_Malignant']
     instance_columns = ['Malignant Lesion Present']  
     img_size = 300
@@ -294,9 +295,9 @@ if __name__ == '__main__':
     min_bag_size = 2
     max_bag_size = 25
     instance_batch_size =  25
-    use_efficient_net = False"""
+    use_efficient_net = False
     
-    dataset_name = 'imagenette2'
+    """dataset_name = 'imagenette2_hard'
     label_columns = ['Has_Fish']
     instance_columns = ['Has_Fish']  
     img_size = 128
@@ -304,12 +305,12 @@ if __name__ == '__main__':
     min_bag_size = 2
     max_bag_size = 25
     instance_batch_size =  25
-    use_efficient_net = False
+    use_efficient_net = False"""
     
     #ITS2CLR Config
-    feature_extractor_train_count = 6 # 6
+    feature_extractor_train_count = 15 # 6
     MIL_train_count = 8
-    initial_ratio = 1 #0.3 # --% preditions included
+    initial_ratio = .3 #0.3 # --% preditions included
     final_ratio = 1 #0.85 # --% preditions included
     total_epochs = 20
     warmup_epochs = 15
@@ -396,17 +397,18 @@ if __name__ == '__main__':
     valid_losses = []
 
     model_name = f"{dataset_name}_{arch}_{model_version}"
-    pretrained_name = f"Head_{dataset_name}_{arch}"
+    pretrained_name = f"Head_{head_name}_{arch}"
     
     head_folder = f"{env}/models/{pretrained_name}/"
     head_path = f"{head_folder}/{pretrained_name}.pth"
     head_optimizer_path = f"{head_folder}/{pretrained_name}_optimizer.pth"
     
     # Check if the model already exists
-    model_folder = f"{env}/{head_folder}/models/{model_name}/"
+    model_folder = f"{env}/models/{pretrained_name}/{model_name}/"
     model_path = f"{model_folder}/{model_name}.pth"
     optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
     stats_path = f"{model_folder}/{model_name}_stats.pkl"
+    
     
     
     val_loss_best = 99999
@@ -429,8 +431,7 @@ if __name__ == '__main__':
         
     else:
         print(f"{model_name} does not exist, creating new instance")
-        os.makedirs(model_folder, exist_ok=True)
-        
+
         # Save the current configuration as a human-readable file
         config = {
             "dataset_name": dataset_name,
@@ -457,6 +458,7 @@ if __name__ == '__main__':
         
 
         if os.path.exists(head_path):  # If main head model exists
+            os.makedirs(model_folder, exist_ok=True)
             pickup_warmup = True
             #model.load_state_dict(torch.load(head_path))
             
@@ -480,6 +482,7 @@ if __name__ == '__main__':
         else: # If main head model DOES NOT exists
             warmup = True
             os.makedirs(head_folder, exist_ok=True)
+            os.makedirs(model_folder, exist_ok=True)
 
                 
             config_path = f"{head_folder}/config.txt"
@@ -488,6 +491,7 @@ if __name__ == '__main__':
             
             with open(f'{head_folder}model_architecture.txt', 'w') as f:
                 print(model, file=f)
+
     
 
 
@@ -627,7 +631,7 @@ if __name__ == '__main__':
                     xb, yb = data, yb.cuda()
 
                     outputs, instance_pred, _ = model(xb, pred_on = True)
-                    print(instance_pred)
+                    #print(instance_pred)
 
                     # Calculate bag-level loss
                     loss = BCE_loss(outputs, yb)
@@ -684,11 +688,52 @@ if __name__ == '__main__':
                 # Save selection
                 with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
                     pickle.dump(selection_mask, file)
-                    
-                    
-                    
-                    
-                    
-                    
+
+           
+           
             #exit() # TEMP DEBUGGING
+            
+                  
+        """# Evaluation phase
+        model.eval()
+        total_val_loss = 0.0
+        total_val_acc = 0.0
+        total = 0
+        correct = 0
+        all_targs = []
+        all_preds = []
+
+        with torch.no_grad():
+            for (data, yb, instance_yb, id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)):
+                xb, yb = data, yb.cuda()
+
+                outputs, instance_pred, _ = model(xb, pred_on=True)
+                instance_pred = [pred.cpu() for pred in instance_pred]  # Move instance_pred to CPU
+
+                # Calculate bag-level loss
+                loss = BCE_loss(outputs, yb)
+                total_val_loss += loss.item() * yb.size(0)
+
+                # Calculate instance-level accuracy
+                for i in range(len(instance_yb)):
+                    valid_indices = torch.tensor(instance_yb[i]) != -1  # Mask for valid instances (0 or 1)
+                    instance_pred_i = instance_pred[i][valid_indices]
+                    instance_yb_i = torch.tensor(instance_yb[i])[valid_indices]
+
+                    instance_pred_i_binary = (instance_pred_i >= 0.6).float()  # Convert probabilities to binary predictions
+
+                    total += len(instance_yb_i)
+                    correct += (instance_pred_i_binary == instance_yb_i).sum().item()
+        
+        val_loss = total_val_loss / len(bag_dataloader_val)
+        val_acc = correct / total
+
+        valid_losses.append(val_loss)
+
+        print(f"[] | Acc | Loss")
+        print(f"Val | {val_acc:.4f} | {val_loss:.4f}")
+                            """
+                    
+                    
+
 
