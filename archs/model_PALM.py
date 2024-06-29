@@ -20,6 +20,7 @@ class Embeddingmodel(nn.Module):
             nn.Linear(512, feat_dim)
         )
         
+        
         self.adaptive_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         print(f'Feature Map Size: {nf}')
 
@@ -29,38 +30,36 @@ class Embeddingmodel(nn.Module):
             all_images = torch.cat(input, dim=0).cuda()  # Concatenate all bags into a single tensor for batch processing
         else:
             all_images = input
-            
+
         # Calculate the embeddings for all images in one go
         feat = self.encoder(all_images)
-        if not self.efficient_net:
-            # Adaptive average pooling
-            adaptive_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
-            feat = adaptive_avg_pool(feat).squeeze()
+        feat_pool = self.adaptive_avg_pool(feat).squeeze()
 
+        bag_pred = None
+        bag_instance_predictions = None
         if pred_on:
             # Split the embeddings back into per-bag embeddings
             split_sizes = [bag.size(0) for bag in input]
             h_per_bag = torch.split(feat, split_sizes, dim=0)
-            logits = torch.empty(num_bags, self.num_classes).cuda()
-            yhat_instances = []
+            bag_pred = torch.empty(num_bags, self.num_classes).cuda()
+            bag_instance_predictions = []
             for i, h in enumerate(h_per_bag):
-                # Receive four values from the aggregator
-                yhat_bag, yhat_ins = self.aggregator(h)
-                logits[i] = yhat_bag
-                yhat_instances.append(yhat_ins)
-        else:
-            logits = None
-            yhat_instances = None
-            
+                # Pass both h and y_hat to the aggregator
+                yhat_bag, yhat_ins = self.aggregator(h, y_h)
+                bag_pred[i] = yhat_bag
+                bag_instance_predictions.append(yhat_ins) 
+        
+        proj = None
         if projector:
-            #feat = adaptive_avg_pool(feat).squeeze()
-            feat = self.projector(feat)
-            feat = F.normalize(feat, dim=1)
+            proj = self.projector(feat_pool)
+            proj = F.normalize(proj, dim=1)
             
 
-        return logits, yhat_instances, feat
+        return bag_pred, bag_instance_predictions, proj
 
 
+    
+    
 class Linear_Classifier2(nn.Module):
     """Linear classifier"""
     def __init__(self, nf, num_classes=1, L=256):
@@ -110,3 +109,65 @@ class Linear_Classifier2(nn.Module):
 
         instance_scores = torch.sigmoid(instance_scores.squeeze())
         return Y_prob, instance_scores
+    
+    
+    
+class Saliency_Classifier(nn.Module):
+    """Linear classifier"""
+    def __init__(self, nf, num_classes=1, L=256):
+        super(Saliency_Classifier, self).__init__()
+        self.fc = nn.Linear(nf, num_classes)
+        self.pool_patches = 3
+        
+        self.saliency_layer = nn.Sequential(        
+            nn.Conv2d(nf, num_classes, (1,1), bias = False),
+            nn.Sigmoid()
+        )
+        
+        # Attention mechanism components
+        self.attention_V = nn.Sequential(
+            nn.Linear(nf, L),
+            nn.Tanh()
+        )
+        self.attention_U = nn.Sequential(
+            nn.Linear(nf, L),
+            nn.Sigmoid()
+        )
+        self.attention_W = nn.Sequential(
+            nn.Linear(L, num_classes),
+        )
+        
+        
+    def reset_parameters(self):
+        # Reset the parameters of all the submodules in the Linear_Classifier
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                module.reset_parameters()
+        
+        
+    def forward(self, h):
+
+        saliency_maps = self.saliency_layer(h)  # Generate saliency maps using a convolutional layer
+        map_flatten = saliency_maps.flatten(start_dim=-2, end_dim=-1) 
+        
+        # Select top patches based on saliency
+        selected_area = map_flatten.topk(self.pool_patches, dim=2)[0]
+        yhat_instance = selected_area.mean(dim=2).squeeze()  # Calculate the mean of the selected patches for instance predictions
+        
+        # Gated-attention mechanism
+        v = torch.max(h, dim=2).values  # Max pooling across one dimension
+        v = torch.max(v, dim=2).values  # Max pooling across the remaining spatial dimension
+        A_V = self.attention_V(v)  # Learn attention features with a linear layer and Tanh activation
+        A_U = self.attention_U(v)  # Learn gating mechanism with a linear layer and Sigmoid activation
+        
+        # Compute pre-softmax attention scores
+        pre_softmax_scores = self.attention_W(A_V * A_U)
+        pre_softmax_scores += 1e-7 # Added stability
+
+        # Apply softmax across the correct dimension (assuming the last dimension represents instances)
+        attention_scores = nn.functional.softmax(pre_softmax_scores.squeeze(), dim=0)
+        
+        # Aggregate individual predictions to get the final bag prediction
+        yhat_bag = (attention_scores * yhat_instance).sum(dim=0)
+        yhat_bag = torch.clamp(yhat_bag, min=1e-6, max=1-1e-6)
+        return yhat_bag, yhat_instance
