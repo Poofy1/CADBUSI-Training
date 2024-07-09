@@ -25,15 +25,14 @@ class Instance_Dataset(TUD.Dataset):
 
         self.images = []
         self.final_labels = []
+        self.unique_ids = []
 
-        
         for bag_id, bag_info in bags_dict.items():
             images = bag_info['images']
             image_labels = bag_info['image_labels']
             bag_label = bag_info['bag_labels'][0]  # Assuming each bag has a single label
             
             bag_id_key = bag_id.item() if isinstance(bag_id, torch.Tensor) else bag_id
-            
             
             if bag_id_key in selection_mask:
                 selection_mask_labels, _ = selection_mask[bag_id_key]
@@ -52,7 +51,7 @@ class Instance_Dataset(TUD.Dataset):
                     elif selection_mask_labels is not None and selection_mask_labels[idx] != -1:
                         image_label = selection_mask_labels[idx]
                 else:
-                    # Return all images with unknown possiblity 
+                    # Return all images with unknown possibility 
                     if label[0] is not None:
                         image_label = label[0]
                     elif bag_label == 0:
@@ -65,16 +64,19 @@ class Instance_Dataset(TUD.Dataset):
                 if image_label is not None:
                     self.images.append(img)
                     self.final_labels.append(image_label)
+                    # Create a unique ID combining bag_id and image index
+                    unique_id = f"{bag_id_key}_{idx}"
+                    self.unique_ids.append(unique_id)
 
     def __getitem__(self, index):
         img_path = self.images[index]
         instance_label = self.final_labels[index]
+        unique_id = self.unique_ids[index]
         
         img = Image.open(img_path).convert("RGB")
         image_data = self.transform(img)
 
-        return image_data, instance_label
-
+        return image_data, instance_label, unique_id
 
     def __len__(self):
         return len(self.images)
@@ -85,8 +87,8 @@ class WarmupSampler(Sampler):
         self.dataset = dataset
         self.batch_size = batch_size
         self.strategy = strategy
-        self.indices_0 = [i for i, label in enumerate(self.dataset.final_labels) if label == 0]
-        self.indices_1 = [i for i, label in enumerate(self.dataset.final_labels) if label == 1]
+        self.indices_positive = [i for i, label in enumerate(self.dataset.final_labels) if label == 1]
+        self.indices_negative = [i for i, label in enumerate(self.dataset.final_labels) if label in [0, -1]]
 
     def __iter__(self):
         total_batches = len(self.dataset) // self.batch_size
@@ -94,7 +96,7 @@ class WarmupSampler(Sampler):
         for _ in range(total_batches):
             if self.strategy == 1:
                 # Ensure at least one positive sample
-                num_positives = random.randint(1, max(1, min(len(self.indices_1), self.batch_size - 1)))
+                num_positives = random.randint(1, max(1, min(len(self.indices_positive), self.batch_size - 1)))
                 num_negatives = self.batch_size - num_positives
             elif self.strategy == 2:
                 # Aim for 50/50 balance
@@ -103,8 +105,8 @@ class WarmupSampler(Sampler):
             else:
                 raise ValueError("Invalid strategy. Choose 1 or 2")
 
-            batch_positives = random.sample(self.indices_1, num_positives)
-            batch_negatives = random.sample(self.indices_0, num_negatives)
+            batch_positives = random.sample(self.indices_positive, num_positives)
+            batch_negatives = random.sample(self.indices_negative, num_negatives)
 
             batch = batch_positives + batch_negatives
             random.shuffle(batch)
@@ -117,16 +119,18 @@ class WarmupSampler(Sampler):
 def collate_instance(batch):
     batch_data = []
     batch_labels = []
+    batch_ids = []
 
-    for image_data, bag_label in batch:
+    for image_data, bag_label, unique_id in batch:
         batch_data.append(image_data)
         batch_labels.append(bag_label)
+        batch_ids.append(unique_id)
 
     # Stack the images and labels
     batch_data = torch.stack(batch_data)
     batch_labels = torch.tensor(batch_labels, dtype=torch.long)
 
-    return batch_data, batch_labels
+    return batch_data, batch_labels, batch_ids
 
 
 def collate_bag(batch):
@@ -322,7 +326,20 @@ class PALM(nn.Module):
         predicted_classes = proto_classes[prototype_indices]
         
         return predicted_classes
-           
+    
+    def get_nearest_prototype(self, features):
+        # Compute distances to all prototypes
+        distances = torch.cdist(features, self.protos)
+        
+        # Find the closest prototype for each feature
+        closest_distances, closest_indices = torch.min(distances, dim=1)
+        
+        # Get the class labels for the closest prototypes
+        _, proto_classes = torch.max(self.proto_class_counts, dim=1)
+        closest_classes = proto_classes[closest_indices]
+        
+        return closest_distances, closest_classes
+
     def forward(self, features, targets):
         loss = 0
         loss_dict = {}
@@ -413,9 +430,9 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "Palm2_SingleIns"
+    head_name = "Palm5_test1"
     
-    dataset_name = 'export_oneLesions' #'export_03_18_2024'
+    """dataset_name = 'export_oneLesions' #'export_03_18_2024'
     label_columns = ['Has_Malignant']
     instance_columns = ['Malignant Lesion Present']  
     img_size = 300
@@ -423,9 +440,9 @@ if __name__ == '__main__':
     min_bag_size = 2
     max_bag_size = 25
     instance_batch_size =  50
-    use_efficient_net = False
+    use_efficient_net = False"""
     
-    """dataset_name = 'imagenette2_insane'
+    dataset_name = 'imagenette2_hard'
     label_columns = ['Has_Fish']
     instance_columns = ['Has_Fish']  
     img_size = 128
@@ -434,7 +451,7 @@ if __name__ == '__main__':
     max_bag_size = 25
     instance_batch_size =  25
     use_efficient_net = False
-    """
+
     #ITS2CLR Config
     feature_extractor_train_count = 6 # 6
     MIL_train_count = 6
@@ -443,7 +460,7 @@ if __name__ == '__main__':
     total_epochs = 9999
     warmup_epochs = 20
     
-    arch = "resnet50"
+    arch = "resnet18"
     pretrained_arch = False
     reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
     
@@ -506,6 +523,8 @@ if __name__ == '__main__':
             self.cache_size = cache_size
     palm_args = Args(nviews=1, cache_size=50)
     palm = PALM(palm_args).cuda()
+    BCE_loss = nn.BCELoss()
+    CE_loss = nn.CrossEntropyLoss()
     
     optimizer = optim.SGD(model.parameters(),
                         lr=learning_rate,
@@ -513,7 +532,7 @@ if __name__ == '__main__':
                         nesterov=True,
                         weight_decay=0.001)
     
-    BCE_loss = nn.BCELoss()
+    
     train_losses = []
     valid_losses = []
 
@@ -612,6 +631,14 @@ if __name__ == '__main__':
             with open(f'{head_folder}model_architecture.txt', 'w') as f:
                 print(model, file=f)
 
+
+
+
+
+    # Initialize dictionary for unknown labels
+    unknown_labels = {}
+    unknown_label_momentum = 0.9  # Adjust this value as needed
+
     # Training loop
     while epoch < total_epochs:
         
@@ -619,7 +646,7 @@ if __name__ == '__main__':
         if not pickup_warmup: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
-            instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, warmup=True)
+            instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, warmup=False)
             instance_dataset_val = Instance_Dataset(bags_val, selection_mask, transform=val_transform, warmup=True)
             train_sampler = WarmupSampler(instance_dataset_train, instance_batch_size, strategy=1)
             val_sampler = WarmupSampler(instance_dataset_val, instance_batch_size, strategy=2)
@@ -636,12 +663,6 @@ if __name__ == '__main__':
 
             print('Training Feature Extractor')
             
-            # Unfreeze encoder
-            for param in model.encoder.parameters():
-                param.requires_grad = True
-
-            
-            
             for i in range(target_count): 
                 model.train()
                 losses = AverageMeter()
@@ -650,7 +671,7 @@ if __name__ == '__main__':
                 total_samples = 0
                 
                 # Iterate over the training data
-                for idx, (images, instance_labels) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
+                for idx, (images, instance_labels, unique_ids) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
                     images = images.cuda(non_blocking=True)
                     instance_labels = instance_labels.cuda(non_blocking=True)
   
@@ -659,14 +680,53 @@ if __name__ == '__main__':
                     _, _, instance_predictions, features = model(images, projector=True)
                     features.to(device)
                     
-                    # Get loss from PALM
-                    palm_loss, loss_dict = palm(features, instance_labels)
                     
-                    # Calculate BCE loss
-                    bce_loss_value = BCE_loss(instance_predictions, instance_labels.float())
+                    # Create masks for different label types
+                    unlabeled_mask = (instance_labels == -1)
+                    labeled_mask = ~unlabeled_mask  # This includes both 0 and 1 labels
+
+                    # Handle labeled instances (0 and 1)
+                    if labeled_mask.any():
+                        labeled_features = features[labeled_mask]
+                        labeled_instance_labels = instance_labels[labeled_mask]
+                        
+                        # Get loss from PALM for labeled instances
+                        palm_loss, loss_dict = palm(labeled_features, labeled_instance_labels)
+                    else:
+                        palm_loss = torch.tensor(0.0).to(device)
+                        loss_dict = {}
+                    
+                    # Handle unlabeled instances (-1)
+                    if unlabeled_mask.any():
+                        unlabeled_features = features[unlabeled_mask]
+                        unlabeled_ids = [unique_ids[i] for i in range(len(unique_ids)) if unlabeled_mask[i]]
+                        
+                        with torch.no_grad():
+                            proto_dist, proto_class = palm.get_nearest_prototype(unlabeled_features)
+                        
+                        for i, unique_id in enumerate(unlabeled_ids):
+                            if unique_id not in unknown_labels:
+                                unknown_labels[unique_id] = 0.5  # Initialize to 0.5 if not present
+                            
+                            # Apply momentum update
+                            current_label = unknown_labels[unique_id]
+                            new_label = proto_class[i].item()
+                            updated_label = unknown_label_momentum * current_label + (1 - unknown_label_momentum) * new_label
+                            unknown_labels[unique_id] = updated_label
+                        
+
+                                    
+                    # Convert instance labels to one-hot vectors [Neg class, Pos class]
+                    instance_labels_one_hot = F.one_hot(instance_labels[labeled_mask], num_classes=2).float()
+                    instance_predictions_vector = instance_predictions[labeled_mask].unsqueeze(1)
+                    instance_predictions_vector = torch.cat([1 - instance_predictions_vector, instance_predictions_vector], dim=1)
+
+
+                    # Calculate CE loss
+                    ce_loss_value = CE_loss(instance_predictions_vector, instance_labels_one_hot)
 
                     # Backward pass and optimization step
-                    total_loss = palm_loss + bce_loss_value
+                    total_loss = palm_loss + ce_loss_value
                     total_loss.backward()
                     optimizer.step()
         
@@ -701,7 +761,7 @@ if __name__ == '__main__':
                 total_samples = 0
 
                 with torch.no_grad():
-                    for idx, (images, instance_labels) in enumerate(tqdm(instance_dataloader_val, total=len(instance_dataloader_val))):
+                    for idx, (images, instance_labels, unique_ids) in enumerate(tqdm(instance_dataloader_val, total=len(instance_dataloader_val))):
                         images = images.cuda(non_blocking=True)
                         instance_labels = instance_labels.cuda(non_blocking=True)
 
