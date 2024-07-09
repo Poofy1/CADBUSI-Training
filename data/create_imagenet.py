@@ -4,10 +4,12 @@ import tarfile
 import csv
 import random
 import shutil
+import pandas as pd
 
 output_dir = "D:\DATA\CASBUSI\exports"
-export_name = "imagenette2_insane"
-positive_percentage = 0.1  # Percentage of positive instances to include 
+export_name = "imagenette2_hard3"
+positive_percentage = 0.2  # Percentage of positive instances to include 
+target_label = 'n01440764'
 
 
 if not os.path.exists(f'{output_dir}/imagenette2.tgz'):
@@ -27,11 +29,9 @@ if not os.path.exists(f'{output_dir}/{export_name}'):
 
 # Set up the directories
 images_dir = f'{output_dir}/{export_name}/images'
-train_dir = f'{output_dir}/{export_name}/train'
 os.makedirs(images_dir, exist_ok=True)
-os.makedirs(train_dir, exist_ok=True)
 
-# Create the intermediate CSV file to store image labels
+# Create the raw data csv file
 with open(f'{output_dir}/{export_name}/image_labels.csv', 'w', newline='') as file:
     writer = csv.writer(file)
     writer.writerow(['Image', 'Label'])
@@ -47,13 +47,12 @@ with open(f'{output_dir}/{export_name}/image_labels.csv', 'w', newline='') as fi
                     shutil.move(src_path, dst_path)
                     writer.writerow([file, label_dir])
 
-# Read the image labels from the intermediate CSV file
-image_labels = {}
-with open(f'{output_dir}/{export_name}/image_labels.csv', 'r') as file:
-    reader = csv.reader(file)
-    next(reader)  # Skip the header row
-    for row in reader:
-        image_labels[row[0]] = row[1]
+
+shutil.rmtree(f'{output_dir}/{export_name}/imagenette2/')
+
+# Read the CSV file
+df = pd.read_csv(f'{output_dir}/{export_name}/image_labels.csv')
+image_labels = dict(zip(df['Image'], df['Label']))
 
 # Create the train.csv file and store bag information
 train_data = []
@@ -65,7 +64,7 @@ while all_images:
     bag_size = random.randint(2, 10)
     bag_images = all_images[:bag_size]
     all_images = all_images[bag_size:]
-    has_fish = 'n01440764' in [image_labels[image_name] for image_name in bag_images]
+    has_fish = target_label in [image_labels[image_name] for image_name in bag_images]
     is_valid = random.random() < 0.2  # 20% probability of being in the validation set
     train_data.append([int(is_valid), bag_images, bag_id, has_fish, bag_id])
     
@@ -80,20 +79,15 @@ selected_bags = random.sample(range(bag_id), int(bag_id * positive_percentage))
 for image_name, label in image_labels.items():
     bag_id = bag_info[image_name]
     if bag_id in selected_bags:
-        has_fish = label == 'n01440764'
-        accession_number = bag_id
-        instance_data.append([accession_number, int(has_fish), image_name])
+        has_fish = label == target_label
+        instance_data.append([bag_id, int(has_fish), image_name])
 
-# Write the train.csv file
-with open(f'{output_dir}/{export_name}/TrainData.csv', 'w', newline='') as file:
-    writer = csv.writer(file)
-    writer.writerow(['Valid', 'Images', 'ID', 'Has_Fish', 'Accession_Number'])
-    writer.writerows(train_data)
+# Create DataFrames
+train_df = pd.DataFrame(train_data, columns=['Valid', 'Images', 'ID', 'Has_Fish', 'Accession_Number'])
+instance_df = pd.DataFrame(instance_data, columns=['Accession_Number', 'Has_Fish', 'ImageName'])
 
-# Write the InstanceData.csv file
-with open(f'{output_dir}/{export_name}/InstanceData.csv', 'w', newline='') as file:
-    writer = csv.writer(file)
-    writer.writerow(['Accession_Number', 'Has_Fish', 'ImageName'])
-    writer.writerows(instance_data)
+# Write DataFrames to CSV files
+train_df.to_csv(f'{output_dir}/{export_name}/TrainData.csv', index=False)
+instance_df.to_csv(f'{output_dir}/{export_name}/InstanceData.csv', index=False)
 
 print("Dataset formatting completed.")

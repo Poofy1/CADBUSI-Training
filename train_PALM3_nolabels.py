@@ -1,17 +1,19 @@
 import os, pickle
 from fastai.vision.all import *
 import torch.utils.data as TUD
+import scipy.stats
 from tqdm import tqdm
 import pickle
 from torch import nn
 from archs.save_arch import *
 from data.Gen_ITS2CLR_util import *
+import torch.optim as optim
 from torch.utils.data import Sampler
 from torch.optim import Adam
 from archs.backbone import create_timm_body
 from torchvision.models import efficientnet_b3, EfficientNet_B3_Weights
 from data.format_data import *
-from archs.model_GenSCL import *
+from archs.model_PALM import *
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -19,12 +21,12 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
     
     
 class Instance_Dataset(TUD.Dataset):
-    def __init__(self, bags_dict, selection_mask, transform=None, warmup=True):
+    def __init__(self, bags_dict, selection_mask, transform=None, show_groundtruth = True):
         self.transform = transform
-        self.warmup = warmup 
+
         self.images = []
         self.final_labels = []
-        self.warmup_mask = []
+
         
         for bag_id, bag_info in bags_dict.items():
             images = bag_info['images']
@@ -41,91 +43,80 @@ class Instance_Dataset(TUD.Dataset):
 
             for idx, (img, label) in enumerate(zip(images, image_labels)):
                 image_label = None
-                warmup_mask_value = 0
                 
-                if not self.warmup:
-                    # Only include confident instances (selection_mask) or negative bags or instance labels
-                    if label[0] is not None:
-                        image_label = label[0]
-                    elif selection_mask_labels is not None and selection_mask_labels[idx] != -1:
-                        image_label = selection_mask_labels[idx]
-                    elif bag_label == 0:
-                        image_label = 0
-                else:
-                    # Include all data but replace with image_labels if present
-                    if label[0] is not None:
-                        image_label = label[0]
-                    else:
-                        image_label = bag_label  # Use bag label if instance label is not present
-                        if bag_label == 1:
-                            warmup_mask_value = 1 # Set warmup mask to 1 for instances without label[0] and bag_label is 1
+                # Only include confident instances (selection_mask) or negative bags or instance labels
+                if label[0] is not None and show_groundtruth:
+                    image_label = label[0]
+                elif bag_label == 0:
+                    image_label = 0
+                elif selection_mask_labels is not None and selection_mask_labels[idx] != -1:
+                    image_label = selection_mask_labels[idx]
                 
                 if image_label is not None:
                     self.images.append(img)
                     self.final_labels.append(image_label)
-                    self.warmup_mask.append(warmup_mask_value)
 
     def __getitem__(self, index):
         img_path = self.images[index]
         instance_label = self.final_labels[index]
-        warmup_unconfident = self.warmup_mask[index]
         
         img = Image.open(img_path).convert("RGB")
-        image_data_q = self.transform(img)
-        image_data_k = self.transform(img)
+        image_data = self.transform(img)
 
-        return (image_data_q, image_data_k), instance_label, warmup_unconfident
+        return image_data, instance_label
 
 
     def __len__(self):
         return len(self.images)
 
 
-class WarmupSampler(Sampler):
-    def __init__(self, dataset, batch_size):
+class InstanceSampler(Sampler):
+    def __init__(self, dataset, batch_size, strategy=1):
         self.dataset = dataset
         self.batch_size = batch_size
-        self.indices_0 = [i for i, mask in enumerate(self.dataset.warmup_mask) if mask == 0]
-        self.indices_1 = [i for i, mask in enumerate(self.dataset.warmup_mask) if mask == 1]
+        self.strategy = strategy
+        self.indices_0 = [i for i, label in enumerate(self.dataset.final_labels) if label == 0]
+        self.indices_1 = [i for i, label in enumerate(self.dataset.final_labels) if label == 1]
 
     def __iter__(self):
         total_batches = len(self.dataset) // self.batch_size
 
         for _ in range(total_batches):
-            # Randomly decide how many mask 0s to include, ensuring at least 1
-            num_mask_0 = random.randint(1, max(1, min(len(self.indices_0), self.batch_size - 1)))
-            batch_mask_0 = random.sample(self.indices_0, num_mask_0)
+            if self.strategy == 1:
+                # Ensure at least one positive sample
+                num_positives = random.randint(1, max(1, min(len(self.indices_1), self.batch_size - 1)))
+                num_negatives = self.batch_size - num_positives
+            elif self.strategy == 2:
+                # Aim for 50/50 balance
+                num_positives = self.batch_size // 2
+                num_negatives = self.batch_size - num_positives
+            else:
+                raise ValueError("Invalid strategy. Choose 1 or 2")
 
-            # Fill the rest of the batch with mask 1s, if any space left
-            num_mask_1 = self.batch_size - num_mask_0 
-            batch_mask_1 = random.sample(self.indices_1, num_mask_1) if num_mask_1 > 0 else []
+            batch_positives = random.sample(self.indices_1, num_positives)
+            batch_negatives = random.sample(self.indices_0, num_negatives)
 
-            batch = batch_mask_0 + batch_mask_1
+            batch = batch_positives + batch_negatives
             random.shuffle(batch)
             yield batch
             
     def __len__(self):
         return len(self.dataset) // self.batch_size
     
+    
 def collate_instance(batch):
-    batch_data_q = []
-    batch_data_k = [] 
+    batch_data = []
     batch_labels = []
-    batch_unconfident = []
 
-    for (image_data_q, image_data_k), bag_label, warmup_unconfident in batch:
-        batch_data_q.append(image_data_q)
-        batch_data_k.append(image_data_k)
+    for image_data, bag_label in batch:
+        batch_data.append(image_data)
         batch_labels.append(bag_label)
-        batch_unconfident.append(warmup_unconfident)
 
     # Stack the images and labels
-    batch_data_q = torch.stack(batch_data_q)
-    batch_data_k = torch.stack(batch_data_k)
+    batch_data = torch.stack(batch_data)
     batch_labels = torch.tensor(batch_labels, dtype=torch.long)
-    batch_unconfident = torch.tensor(batch_unconfident, dtype=torch.long)
 
-    return (batch_data_q, batch_data_k), batch_labels, batch_unconfident
+    return batch_data, batch_labels
 
 
 def collate_bag(batch):
@@ -151,58 +142,177 @@ def collate_bag(batch):
 
 
 
-class GenSupConLossv2(nn.Module):
-    def __init__(self, temperature=0.07, base_temperature=0.07):
-        super(GenSupConLossv2, self).__init__()
-        self.temperature = temperature
-        self.base_temperature = base_temperature
 
-    def forward(self, features, labels, anc_mask = None):
-        '''
-        Args:
-            feats: (anchor_features, contrast_features), each: [N, feat_dim]
-            labels: (anchor_labels, contrast_labels) each: [N, num_cls]
-            anc_mask: (anchors_mask, contrast_mask) each: [N]
-        '''
+class PALM(nn.Module):
+    def __init__(self, args, num_classes=2, n_protos=100, proto_m=0.99, temp=0.1, lambda_pcon=1, k=5, feat_dim=128, epsilon=0.05):
+        super(PALM, self).__init__()
+        self.num_classes = num_classes
+        self.temp = temp  # temperature scaling
+        self.nviews = args.nviews
+        self.cache_size = args.cache_size
+        
+        self.lambda_pcon = lambda_pcon
+        
+        self.feat_dim = feat_dim
+        
+        self.epsilon = epsilon
+        self.sinkhorn_iterations = 3
+        self.k = min(k, self.cache_size)
+        
+        self.n_protos = n_protos
+        self.proto_m = proto_m
+        self.register_buffer("protos", torch.rand(self.n_protos,feat_dim))
+        self.protos = F.normalize(self.protos, dim=-1)
+        
+        
+        
+        # Initialize class counts for each prototype
+        self.proto_class_counts = torch.zeros(self.n_protos, self.num_classes).cuda() # ADDED
+        
+    def sinkhorn(self, features):
+        out = torch.matmul(features, self.protos.detach().T)
+            
+        Q = torch.exp(out.detach() / self.epsilon).t()# Q is K-by-B for consistency with notations from our paper
+        B = Q.shape[1]  # number of samples to assign
+        K = Q.shape[0] # how many prototypes
 
-        anchor_labels = torch.cat(labels, dim=0).float()
-        contrast_labels = anchor_labels
-        anchor_features = torch.cat(features, dim=0)
-        contrast_features = anchor_features
+        # make the matrix sums to 1
+        sum_Q = torch.sum(Q)
+        if torch.isinf(sum_Q):
+            self.protos = F.normalize(self.protos, dim=1, p=2)
+            out = torch.matmul(features, self.ws(self.protos.detach()).T)
+            Q = torch.exp(out.detach() / self.epsilon).t()# Q is K-by-B for consistency with notations from our paper
+            sum_Q = torch.sum(Q)
+        Q /= sum_Q
+
+        for _ in range(self.sinkhorn_iterations):
+            # normalize each row: total weight per prototype must be 1/K
+            Q = F.normalize(Q, dim=1, p=1)
+            Q /= K
+
+            # normalize each column: total weight per sample must be 1/B
+            Q = F.normalize(Q, dim=0, p=1)
+            Q /= B
+
+        Q *= B
+        return Q.t()
         
-        # 1. compute similarities among targets
-        anchor_norm = torch.norm(anchor_labels, p=2, dim=-1, keepdim=True) # [anchor_N, 1]
-        contrast_norm = torch.norm(contrast_labels, p=2, dim=-1, keepdim=True) # [contrast_N, 1]
-        deno = torch.mm(anchor_norm, contrast_norm.T)
-        mask = torch.mm(anchor_labels, contrast_labels.T) / deno # cosine similarity: [anchor_N, contrast_N]
-        logits_mask = torch.ones_like(mask)
-        logits_mask.fill_diagonal_(0)
-        mask = mask * logits_mask
+    def mle_loss(self, features, targets):
+        # update prototypes by EMA
+        #features = torch.cat(torch.unbind(features, dim=1), dim=0)
+        # Disabled becuase features are already correct shape?
         
-        # 2. compute logits
+        anchor_labels = targets.contiguous().repeat(self.nviews).view(-1, 1)
+        contrast_labels = torch.arange(self.num_classes).repeat(self.cache_size).view(-1,1).cuda()
+        mask = torch.eq(anchor_labels, contrast_labels.T).float().cuda()
+                
+        Q = self.sinkhorn(features)
+
+        # topk
+        if self.k > 0:
+            update_mask = mask*Q
+            _, topk_idx = torch.topk(update_mask, self.k, dim=1)
+            topk_mask = torch.scatter(
+                torch.zeros_like(update_mask),
+                1,
+                topk_idx,
+                1
+            ).cuda()
+            update_mask = F.normalize(F.normalize(topk_mask*update_mask, dim=1, p=1),dim=0, p=1)
+        # original
+        else:
+            update_mask = F.normalize(F.normalize(mask * Q, dim=1, p=1),dim=0, p=1)
+        update_features = torch.matmul(update_mask.T, features)
+        
+        self.proto_class_counts += torch.matmul(update_mask.T, F.one_hot(targets, num_classes=self.num_classes).float()) # ADDED
+        
+        protos = self.protos
+        protos = self.proto_m * protos + (1-self.proto_m) * update_features
+
+        self.protos = F.normalize(protos, dim=1, p=2)
+        
+        Q = self.sinkhorn(features)
+        
+        proto_dis = torch.matmul(features, self.protos.detach().T)
+        anchor_dot_contrast = torch.div(proto_dis, self.temp)
+        logits = anchor_dot_contrast
+       
+        if self.k > 0:
+            loss_mask = mask*Q
+            _, topk_idx = torch.topk(update_mask, self.k, dim=1)
+            topk_mask = torch.scatter(
+                torch.zeros_like(update_mask),
+                1,
+                topk_idx,
+                1
+            ).cuda()
+            loss_mask = F.normalize(topk_mask*loss_mask, dim=1, p=1)
+            masked_logits = loss_mask * logits 
+        else:  
+            masked_logits = F.normalize(Q*mask, dim=1, p=1) * logits
+    
+        pos=torch.sum(masked_logits, dim=1)
+        neg=torch.log(torch.sum(torch.exp(logits), dim=1, keepdim=True))
+        log_prob=pos-neg
+        
+        loss = -torch.mean(log_prob)
+        return loss   
+    
+    def proto_contra(self):
+        
+        protos = F.normalize(self.protos, dim=1)
+        batch_size = self.num_classes
+        
+        proto_labels = torch.arange(self.num_classes).repeat(self.cache_size).view(-1,1).cuda()
+        mask = torch.eq(proto_labels, proto_labels.T).float().cuda()    
+
+        contrast_count = self.cache_size
+        contrast_feature = protos
+
+        anchor_feature = contrast_feature
+        anchor_count = contrast_count
+
+        # compute logits
         anchor_dot_contrast = torch.div(
-            torch.matmul(anchor_features, contrast_features.T),
-            self.temperature
-        )
+            torch.matmul(anchor_feature, contrast_feature.T),
+            0.5)
         # for numerical stability
         logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
         logits = anchor_dot_contrast - logits_max.detach()
-        
-        # compute log_prob
-        exp_logits = torch.exp(logits) * logits_mask
-        log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True))
-        mean_log_prob_pos = (mask * log_prob).sum(1) / (mask.sum(1) + 1e-8)
-        
-        # loss
-        loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
-        if anc_mask:
-            select = torch.cat( anc_mask )
-            loss = loss[select]
-            
-        loss = loss.mean()
 
+        # mask-out self-contrast cases
+        logits_mask = torch.scatter(
+            torch.ones_like(mask),
+            1,
+            torch.arange(batch_size * anchor_count).view(-1, 1).to('cuda'),
+            0
+        )
+        mask = mask*logits_mask
+        
+        pos = torch.sum(F.normalize(mask, dim=1, p=1)*logits, dim=1)
+        neg=torch.log(torch.sum(logits_mask * torch.exp(logits), dim=1))
+        log_prob=pos-neg
+
+        # loss
+        loss = - torch.mean(log_prob)
         return loss
-    
+            
+    def forward(self, features, targets):
+        loss = 0
+        loss_dict = {}
+
+        g_con = self.mle_loss(features, targets)
+        loss += g_con
+        loss_dict['mle'] = g_con.cpu().item()
+                    
+        if self.lambda_pcon > 0:            
+            g_dis = self.lambda_pcon * self.proto_contra()
+            loss += g_dis
+            loss_dict['proto_contra'] = g_dis.cpu().item()
+                                
+        self.protos = self.protos.detach()
+                
+        return loss, loss_dict
     
 
 
@@ -259,14 +369,14 @@ def load_state(stats_path, target_folder):
         train_losses = saved_stats['train_losses']
         valid_losses = saved_stats['valid_losses']
         epoch = saved_stats['epoch']
-        val_loss_best = saved_stats['val_loss']
+        val_acc_best = saved_stats['val_loss']
     
     # Load the selection_mask dictionary from the file
     if os.path.exists(f'{target_folder}/selection_mask.pkl'):
         with open(f'{target_folder}/selection_mask.pkl', 'rb') as file:
             selection_mask = pickle.load(file)
             
-    return train_losses, valid_losses, epoch, val_loss_best, selection_mask
+    return train_losses, valid_losses, epoch, val_acc_best, selection_mask
 
 
 
@@ -274,30 +384,20 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "OneLesionCases"
+    head_name = "Palm3_noInstances"
+
     
-    
-    """
-    dataset_name = 'cifar10'
-    label_columns = ['Has_Truck']
-    instance_columns = ['']
-    img_size = 32
-    bag_batch_size = 30
-    min_bag_size = 2
-    max_bag_size = 25
-    instance_batch_size =  200"""
-    
-    dataset_name = 'export_oneLesions'
+    """dataset_name = 'export_03_18_2024'
     label_columns = ['Has_Malignant']
     instance_columns = ['Malignant Lesion Present']  
     img_size = 300
     bag_batch_size = 5
     min_bag_size = 2
     max_bag_size = 25
-    instance_batch_size =  25
-    use_efficient_net = False
+    instance_batch_size =  100
+    use_efficient_net = False"""
     
-    dataset_name = 'imagenette2_hard'
+    dataset_name = 'imagenette2'
     label_columns = ['Has_Fish']
     instance_columns = ['Has_Fish']  
     img_size = 128
@@ -313,15 +413,13 @@ if __name__ == '__main__':
     initial_ratio = .3 #0.3 # --% preditions included
     final_ratio = 1 #0.85 # --% preditions included
     total_epochs = 20
-    warmup_epochs = 15
+    warmup_epochs = 30
     
-    arch = "resnet50"
-    pretrained_arch = True
+    arch = "resnet18"
+    pretrained_arch = False
     reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
     
     learning_rate=0.001
-    mix_alpha=0  #0.2
-    mix='mixup'
     num_classes = len(label_columns) + 1
 
     
@@ -389,12 +487,22 @@ if __name__ == '__main__':
     
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total Parameters: {total_params}")        
-        
-    optimizer = Adam(model.parameters(), lr=learning_rate)
+    
+    
+    class Args:
+        def __init__(self, nviews, cache_size):
+            self.nviews = nviews
+            self.cache_size = cache_size
+    palm_args = Args(nviews=1, cache_size=50)
+    palm = PALM(palm_args, n_protos=100).cuda()
     BCE_loss = nn.BCELoss()
-    genscl = GenSupConLossv2(temperature=0.07, base_temperature=0.07)
-    train_losses = []
-    valid_losses = []
+    
+    optimizer = optim.SGD(model.parameters(),
+                        lr=learning_rate,
+                        momentum=0.9,
+                        nesterov=True,
+                        weight_decay=0.001)
+    
 
     model_name = f"{dataset_name}_{arch}_{model_version}"
     pretrained_name = f"Head_{head_name}_{arch}"
@@ -409,13 +517,13 @@ if __name__ == '__main__':
     optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
     stats_path = f"{model_folder}/{model_name}_stats.pkl"
     
-    
-    
-    val_loss_best = 99999
+    val_acc_best = 0
     selection_mask = []
     epoch = 0
     warmup = False
     pickup_warmup = False
+    train_losses = []
+    valid_losses = []
 
     if os.path.exists(model_path): # If main model exists
         #model.load_state_dict(torch.load(model_path))
@@ -427,7 +535,7 @@ if __name__ == '__main__':
         encoder_state_dict = {k.replace('encoder.', ''): v for k, v in encoder_state_dict.items() if k.startswith('encoder.')}
         model.encoder.load_state_dict(encoder_state_dict)
 
-        train_losses, valid_losses, epoch, val_loss_best, selection_mask = load_state(stats_path, model_folder)
+        train_losses, valid_losses, epoch, val_acc_best, selection_mask = load_state(stats_path, model_folder)
         
     else:
         print(f"{model_name} does not exist, creating new instance")
@@ -453,7 +561,6 @@ if __name__ == '__main__':
             "reset_aggregator": reset_aggregator,
             "warmup_epochs": warmup_epochs,
             "learning_rate": learning_rate,
-            "mix_alpha": mix_alpha
         }
         
 
@@ -492,72 +599,161 @@ if __name__ == '__main__':
             with open(f'{head_folder}model_architecture.txt', 'w') as f:
                 print(model, file=f)
 
-    
 
 
     # Training loop
     while epoch < total_epochs:
-        
+
         print(f'Warmup Mode: {warmup}')
         if not pickup_warmup: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
-            instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, warmup=warmup)
+            instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, show_groundtruth = False)
+            instance_dataset_val = Instance_Dataset(bags_val, selection_mask, transform=train_transform, show_groundtruth = True)
+            #train_sampler = InstanceSampler(instance_dataset_train, instance_batch_size, strategy=1)
+            val_sampler = InstanceSampler(instance_dataset_val, instance_batch_size, strategy=2)
+            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_size=instance_batch_size, collate_fn = collate_instance)
+            instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_sampler=val_sampler, collate_fn = collate_instance)
             
             if warmup:
-                sampler = WarmupSampler(instance_dataset_train, instance_batch_size)
-                instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=sampler, collate_fn = collate_instance)
                 target_count = warmup_epochs
             else:
-                instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_size=instance_batch_size, collate_fn = collate_instance, drop_last=True, shuffle = True)
                 target_count = feature_extractor_train_count
             
-
+            
+            
             print('Training Feature Extractor')
             
-            # Unfreeze encoder
-            for param in model.encoder.parameters():
-                param.requires_grad = True
-        
-            # Generalized Supervised Contrastive Learning phase
-            
+
             model.train()
             for i in range(target_count): 
                 losses = AverageMeter()
-
+                total_correct = 0
+                total_samples = 0
+                
                 # Iterate over the training data
-                for idx, (images, instance_labels, unconfident_mask) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
-                    #warmup_learning_rate(args, epoch, idx, len(instance_dataloader_train), optimizer)
-                    
-
-                    # Data preparation 
-                    bsz = instance_labels.shape[0]
-                    im_q, im_k = images
-                    im_q = im_q.cuda(non_blocking=True)
-                    im_k = im_k.cuda(non_blocking=True)
+                for idx, (images, instance_labels) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
+                    images = images.cuda(non_blocking=True)
                     instance_labels = instance_labels.cuda(non_blocking=True)
-                    
-                    # image-based regularizations (lam 1 = no mixup)
-                    im_q, y0a, y0b, lam0 = mix_fn(im_q, instance_labels, mix_alpha, mix)
-                    im_k, y1a, y1b, lam1 = mix_fn(im_k, instance_labels, mix_alpha, mix)
-                    images = [im_q, im_k]
-                    l_q = mix_target(y0a, y0b, lam0, num_classes)
-                    l_k = mix_target(y1a, y1b, lam1, num_classes)
-                    
+  
                     # forward
                     optimizer.zero_grad()
                     _, _, features = model(images, projector=True)
-                    zk, zq = torch.split(features, [bsz, bsz], dim=0)
+                    features.to(device)
                     
-                    # get loss (no teacher)
-                    mapped_anchors = ~unconfident_mask.bool()
-                    loss = genscl([zk, zq], [l_q, l_k], (mapped_anchors, mapped_anchors))
-                    losses.update(loss.item(), bsz)
+                    # Get loss from PALM
+                    loss, loss_dict = palm(features, instance_labels)
 
+                    # Backward pass and optimization step
                     loss.backward()
                     optimizer.step()
+        
+                    # Update the loss meter
+                    losses.update(loss.item(), images[0].size(0))
                     
-                print(f'[{i+1}/{target_count}] Gen_SCL Loss: {losses.avg:.5f}')
+
+
+                
+                
+                # Validation loop
+                model.eval()
+                val_losses = AverageMeter()
+                val_total_correct = 0
+                val_total_samples = 0
+
+                # Collect features
+                ftrain = []
+                ftest = []
+
+                with torch.no_grad():
+                    ftrain = []
+                    ftest = []
+                    instance_labels_list = []  # New list to store instance labels
+
+                    # Collect training features
+                    for idx, (images, _) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
+                        images = images.cuda(non_blocking=True)
+                        _, _, features = model(images, projector=True)
+                        ftrain.append(features.cpu().numpy())
+
+                    # Collect validation features and labels
+                    for idx, (images, instance_labels) in enumerate(tqdm(instance_dataloader_val, total=len(instance_dataloader_val))):
+                        images = images.cuda(non_blocking=True)
+                        _, _, features = model(images, projector=True)
+                        ftest.append(features.cpu().numpy())
+                        instance_labels_list.append(instance_labels.cpu().numpy())  # Save labels
+
+                ftrain = np.concatenate(ftrain, axis=0)
+                ftest = np.concatenate(ftest, axis=0)
+                instance_labels = np.concatenate(instance_labels_list, axis=0)  # Concatenate all labels
+
+                # Normalize features
+                normalizer = lambda x: x / (np.linalg.norm(x, ord=2, axis=-1, keepdims=True) + 1e-10)
+                prepos_feat = lambda x: np.ascontiguousarray(normalizer(x))
+                ftrain = prepos_feat(ftrain)
+                ftest = prepos_feat(ftest)
+
+                mean_feat = ftrain.mean(0)
+                std_feat = ftrain.std(0)
+                prepos_feat_ssd = lambda x: (x - mean_feat) / (std_feat + 1e-10)
+                ftrain_ssd = prepos_feat_ssd(ftrain)
+                ftest_ssd = prepos_feat_ssd(ftest)
+
+                cov = lambda x: np.cov(x.T, bias=True)
+
+                def maha_score(X):
+                    z = X - mean_feat
+                    inv_sigma = np.linalg.pinv(cov(ftrain_ssd))
+                    return -np.sum(z * (inv_sigma.dot(z.T)).T, axis=-1)
+
+                dtrain = maha_score(ftrain_ssd)  # Calculate scores for training data
+                dtest = maha_score(ftest_ssd)    # Calculate scores for test data
+
+                # Set threshold based on training data
+                threshold = np.percentile(dtrain, 5)  # Assuming lower 5% of training scores are positive
+                predicted_classes = (dtest <= threshold).astype(int)
+
+                # Calculate accuracy
+                correct = (predicted_classes == instance_labels).sum()
+                total = len(instance_labels)
+                val_acc = correct / total
+
+                print(f'[{i+1}/{target_count}] Val Loss: N/A, Val Acc: {val_acc:.5f}')
+
+                # Optional: print score distribution
+                print(f"Training Mahalanobis scores range: {dtrain.min():.4f} to {dtrain.max():.4f}")
+                print(f"Test Mahalanobis scores range: {dtest.min():.4f} to {dtest.max():.4f}")
+                print(f"Threshold (based on training data): {threshold:.4f}")
+                print(f"Shape of predicted_classes: {predicted_classes.shape}")
+                print(f"Shape of instance_labels: {instance_labels.shape}")
+
+                # Additional debugging information
+                print(f"Number of positive predictions: {np.sum(predicted_classes)} / {len(predicted_classes)}")
+                print(f"Number of positive labels: {np.sum(instance_labels)} / {len(instance_labels)}")
+                                            
+                """# Save the model
+                if val_acc > val_acc_best:
+                    val_acc_best = val_losses.avg
+                    target_folder = head_folder
+                    target_name = pretrained_name
+                    all_targs = []
+                    all_preds = []
+                    
+                    save_state(epoch, label_columns, train_acc, val_losses.avg, val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, train_losses, valid_losses,)
+                    print("Saved checkpoint due to improved val_acc")"""
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -570,20 +766,9 @@ if __name__ == '__main__':
             
             print("Warmup Phase Finished")
             warmup = False
-            
-            
         
         
-        print('Training Aggregator')
-        
-        if reset_aggregator:
-            model.aggregator.reset_parameters() # Reset the model.aggregator weights before training
-        
-        # Freeze the encoder
-        for param in model.encoder.parameters():
-            param.requires_grad = False
-        
-        # Training phase
+        """print('Training Aggregator')   
         for i in range(MIL_train_count):
             
             model.train()
@@ -665,8 +850,8 @@ if __name__ == '__main__':
             
 
             # Save the model
-            if val_loss < val_loss_best:
-                val_loss_best = val_loss
+            if val_loss < val_acc_best:
+                val_acc_best = val_loss
                 if warmup:
                     target_folder = head_folder
                     target_name = pretrained_name
@@ -687,53 +872,12 @@ if __name__ == '__main__':
                 
                 # Save selection
                 with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
-                    pickle.dump(selection_mask, file)
-
-           
-           
+                    pickle.dump(selection_mask, file)"""
+                    
+                    
+                    
+                    
+                    
+                    
             #exit() # TEMP DEBUGGING
-            
-                  
-        """# Evaluation phase
-        model.eval()
-        total_val_loss = 0.0
-        total_val_acc = 0.0
-        total = 0
-        correct = 0
-        all_targs = []
-        all_preds = []
-
-        with torch.no_grad():
-            for (data, yb, instance_yb, id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)):
-                xb, yb = data, yb.cuda()
-
-                outputs, instance_pred, _ = model(xb, pred_on=True)
-                instance_pred = [pred.cpu() for pred in instance_pred]  # Move instance_pred to CPU
-
-                # Calculate bag-level loss
-                loss = BCE_loss(outputs, yb)
-                total_val_loss += loss.item() * yb.size(0)
-
-                # Calculate instance-level accuracy
-                for i in range(len(instance_yb)):
-                    valid_indices = torch.tensor(instance_yb[i]) != -1  # Mask for valid instances (0 or 1)
-                    instance_pred_i = instance_pred[i][valid_indices]
-                    instance_yb_i = torch.tensor(instance_yb[i])[valid_indices]
-
-                    instance_pred_i_binary = (instance_pred_i >= 0.6).float()  # Convert probabilities to binary predictions
-
-                    total += len(instance_yb_i)
-                    correct += (instance_pred_i_binary == instance_yb_i).sum().item()
-        
-        val_loss = total_val_loss / len(bag_dataloader_val)
-        val_acc = correct / total
-
-        valid_losses.append(val_loss)
-
-        print(f"[] | Acc | Loss")
-        print(f"Val | {val_acc:.4f} | {val_loss:.4f}")
-                            """
-                    
-                    
-
 
