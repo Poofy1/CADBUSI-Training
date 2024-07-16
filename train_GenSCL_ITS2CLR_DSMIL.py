@@ -8,8 +8,6 @@ from archs.save_arch import *
 from data.Gen_ITS2CLR_util import *
 from torch.utils.data import Sampler
 from torch.optim import Adam
-from archs.backbone import create_timm_body
-from torchvision.models import efficientnet_b3, EfficientNet_B3_Weights
 from data.format_data import *
 from archs.model_GenSCL_DSMIL import *
 env = os.path.dirname(os.path.abspath(__file__))
@@ -128,28 +126,6 @@ def collate_instance(batch):
     return (batch_data_q, batch_data_k), batch_labels, batch_unconfident
 
 
-def collate_bag(batch):
-    batch_data = []
-    batch_bag_labels = []
-    batch_instance_labels = []
-    batch_ids = []
-
-    for sample in batch:
-        image_data, bag_labels, instance_labels, bag_id = sample  # Updated to unpack four items
-        batch_data.append(image_data)
-        batch_bag_labels.append(bag_labels)
-        batch_instance_labels.append(instance_labels)
-        batch_ids.append(bag_id)
-
-    # Use torch.stack for bag labels to handle multiple labels per bag
-    out_bag_labels = torch.stack(batch_bag_labels).cuda()
-
-    # Converting to a tensor
-    out_ids = torch.tensor(batch_ids, dtype=torch.long).cuda()
-
-    return batch_data, out_bag_labels, batch_instance_labels, out_ids
-
-
 
 class GenSupConLossv2(nn.Module):
     def __init__(self, temperature=0.07, contrast_mode='all',
@@ -263,49 +239,33 @@ def create_selection_mask(train_bag_logits, include_ratio):
     
     
 
-def load_state(stats_path, target_folder):
-    selection_mask = []
-    
-    with open(stats_path, 'rb') as f:
-        saved_stats = pickle.load(f)
-        train_losses = saved_stats['train_losses']
-        valid_losses = saved_stats['valid_losses']
-        epoch = saved_stats['epoch']
-        val_loss_best = saved_stats['val_loss']
-    
-    # Load the selection_mask dictionary from the file
-    if os.path.exists(f'{target_folder}/selection_mask.pkl'):
-        with open(f'{target_folder}/selection_mask.pkl', 'rb') as file:
-            selection_mask = pickle.load(file)
-            
-    return train_losses, valid_losses, epoch, val_loss_best, selection_mask
-
 
 if __name__ == '__main__':
 
     # Config
-    model_version = '03'
-    dataset_name = 'cifar10'
+    model_version = '1'
+    head_name = "OneLesionCases_Deleteme"
     
-    label_columns = ['Has_Truck']
-    instance_columns = ['']
-    img_size = 32
-    bag_batch_size = 30
-    min_bag_size = 2
-    max_bag_size = 25
-    instance_batch_size =  200
-    
-    """pretrained_name = "03_18_2024_Res50_Head_5"
-    model_name = '03_18_2024_Res50_05'
-    dataset_name = 'export_03_18_2024'
+    """dataset_name = 'export_oneLesions' #'export_03_18_2024'
     label_columns = ['Has_Malignant']
     instance_columns = ['Malignant Lesion Present']  
     img_size = 300
     bag_batch_size = 5
     min_bag_size = 2
     max_bag_size = 25
-    instance_batch_size =  25"""
-    use_efficient_net = False
+    instance_batch_size =  50
+    arch = 'resnet50'
+    """
+    
+    dataset_name = 'imagenette2_hard'
+    label_columns = ['Has_Fish']
+    instance_columns = ['Has_Fish']  
+    img_size = 128
+    bag_batch_size = 5
+    min_bag_size = 2
+    max_bag_size = 25
+    instance_batch_size =  25
+    arch = 'resnet18'
     
     #ITS2CLR Config
     feature_extractor_train_count = 6
@@ -315,7 +275,6 @@ if __name__ == '__main__':
     total_epochs = 20
     warmup_epochs = 15
     
-    arch = "resnet50"
     pretrained_arch = False
     reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
     
@@ -373,115 +332,41 @@ if __name__ == '__main__':
     bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True)
 
 
-    # Get Model
-    if "resnet" in arch:
-        encoder = create_timm_body(arch, pretrained=pretrained_arch)
-        nf = num_features_model( nn.Sequential(*encoder.children()))
-    else:
-        encoder = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
-        nf = 512
-        # Replace the last fully connected layer with a new one
-        num_features = encoder.classifier[1].in_features
-        encoder.classifier[1] = nn.Linear(num_features, nf)
-    
-
-    model = Embeddingmodel(encoder = encoder, nf = nf, num_classes = num_labels, efficient_net = use_efficient_net).cuda()
-    
-    total_params = sum(p.numel() for p in model.parameters())
-    print(f"Total Parameters: {total_params}")        
+    model = Embeddingmodel(arch, pretrained_arch, num_classes = num_labels).cuda()
+    print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")          
         
     optimizer = Adam(model.parameters(), lr=learning_rate)
     BCE_loss = nn.BCELoss()
     genscl = GenSupConLossv2(temperature=0.07, contrast_mode='all', base_temperature=0.07)
-    train_losses = []
-    valid_losses = []
-
-    model_name = f"{dataset_name}_{arch}_{model_version}"
-    pretrained_name = f"Head_{model_name}"
     
     
-    # Check if the model already exists
-    model_folder = f"{env}/models/{model_name}/"
-    model_path = f"{model_folder}/{model_name}.pth"
-    optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
-    stats_path = f"{model_folder}/{model_name}_stats.pkl"
-    
-    head_folder = f"{env}/models/{pretrained_name}/"
-    head_path = f"{head_folder}/{pretrained_name}.pth"
-    head_optimizer_path = f"{head_folder}/{pretrained_name}_optimizer.pth"
-    
-    val_loss_best = 99999
-    selection_mask = []
-    epoch = 0
-    warmup = False
-    pickup_warmup = False
+    config = {
+        "head_name": head_name,
+        "model_version": model_version,
+        "dataset_name": dataset_name,
+        "arch": arch,
+        "pretrained_arch": pretrained_arch,
+        "label_columns": label_columns,
+        "instance_columns": instance_columns,
+        "img_size": img_size,
+        "bag_batch_size": bag_batch_size,
+        "min_bag_size": min_bag_size,
+        "max_bag_size": max_bag_size,
+        "instance_batch_size": instance_batch_size,
+        "feature_extractor_train_count": feature_extractor_train_count,
+        "MIL_train_count": MIL_train_count,
+        "initial_ratio": initial_ratio,
+        "final_ratio": final_ratio,
+        "total_epochs": total_epochs,
+        "reset_aggregator": reset_aggregator,
+        "warmup_epochs": warmup_epochs,
+        "learning_rate": learning_rate,
+    }
 
-    if os.path.exists(model_path): # If main model exists
-        model.load_state_dict(torch.load(model_path))
-        optimizer.load_state_dict(torch.load(optimizer_path))
-        print(f"Loaded pre-existing model from {model_name}")
-
-        train_losses, valid_losses, epoch, val_loss_best, selection_mask = load_state(stats_path, model_folder)
-        
-    else:
-        print(f"{model_name} does not exist, creating new instance")
-        os.makedirs(model_folder, exist_ok=True)
-        
-        # Save the current configuration as a human-readable file
-        config = {
-            "dataset_name": dataset_name,
-            "arch": arch,
-            "pretrained_arch": pretrained_arch,
-            "label_columns": label_columns,
-            "instance_columns": instance_columns,
-            "img_size": img_size,
-            "bag_batch_size": bag_batch_size,
-            "min_bag_size": min_bag_size,
-            "max_bag_size": max_bag_size,
-            "instance_batch_size": instance_batch_size,
-            "use_efficient_net": use_efficient_net,
-            "feature_extractor_train_count": feature_extractor_train_count,
-            "MIL_train_count": MIL_train_count,
-            "initial_ratio": initial_ratio,
-            "final_ratio": final_ratio,
-            "total_epochs": total_epochs,
-            "reset_aggregator": reset_aggregator,
-            "warmup_epochs": warmup_epochs,
-            "learning_rate": learning_rate,
-            "mix_alpha": mix_alpha
-        }
-        
-
-        if os.path.exists(head_path):  # If main head model exists
-            pickup_warmup = True
-            #model.load_state_dict(torch.load(head_path))
-            
-            # Load only the encoder state dictionary
-            encoder_state_dict = torch.load(head_path)
-            encoder_state_dict = {k.replace('encoder.', ''): v for k, v in encoder_state_dict.items() if k.startswith('encoder.')}
-            model.encoder.load_state_dict(encoder_state_dict)
-            optimizer.load_state_dict(torch.load(head_optimizer_path))
-            print(f"Loaded pre-trained model from {pretrained_name}")
-            
-            config_path = f"{model_folder}/config.json"
-            with open(config_path, 'w') as f:
-                json.dump(config, f, indent=4)
-            
-                
-            with open(f'{model_folder}model_architecture.txt', 'w') as f:
-                print(model, file=f)
-             
-        else: # If main head model DOES NOT exists
-            warmup = True
-            os.makedirs(head_folder, exist_ok=True)
-
-                
-            config_path = f"{head_folder}/config.txt"
-            with open(config_path, 'w') as f:
-                json.dump(config, f, indent=4)
-            
-            with open(f'{head_folder}model_architecture.txt', 'w') as f:
-                print(model, file=f)
+    (model, optimizer, head_folder, pretrained_name, 
+    model_folder, model_name, train_losses, valid_losses, epoch,
+    val_acc_best, val_loss_best, selection_mask, 
+    warmup, pickup_warmup) = setup_model(model, optimizer, config)
             
 
     # Training loop
@@ -554,10 +439,6 @@ if __name__ == '__main__':
         if pickup_warmup: 
             pickup_warmup = False
         if warmup:
-            # Save the model and optimizer
-            torch.save(model.state_dict(), head_path)
-            torch.save(optimizer.state_dict(), head_optimizer_path)
-            
             print("Warmup Phase Finished")
             warmup = False
             

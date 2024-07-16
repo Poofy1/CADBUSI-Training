@@ -189,6 +189,30 @@ class BagOfImagesDataset(TUD.Dataset):
 
 
 
+def collate_bag(batch):
+    batch_data = []
+    batch_bag_labels = []
+    batch_instance_labels = []
+    batch_ids = []
+
+    for sample in batch:
+        image_data, bag_labels, instance_labels, bag_id = sample  # Updated to unpack four items
+        batch_data.append(image_data)
+        batch_bag_labels.append(bag_labels)
+        batch_instance_labels.append(instance_labels)
+        batch_ids.append(bag_id)
+
+    # Use torch.stack for bag labels to handle multiple labels per bag
+    out_bag_labels = torch.stack(batch_bag_labels).cuda()
+
+    # Converting to a tensor
+    out_ids = torch.tensor(batch_ids, dtype=torch.long).cuda()
+
+    return batch_data, out_bag_labels, batch_instance_labels, out_ids
+
+
+
+
 def create_bags(data, min_size, max_size, root_dir, label_columns, instance_columns=None, instance_data=None):
     bags_dict = {}  # Indexed by ID
     

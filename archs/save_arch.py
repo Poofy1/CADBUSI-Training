@@ -178,3 +178,93 @@ def save_state(e, label_columns, train_acc, val_loss, val_acc, model_folder, mod
     if len(all_targs) > 0 and len(all_preds) > 0 and n_classes == 1:
         vocab = ['not malignant', 'malignant']
         plot_Confusion(all_targs, all_preds, vocab, f"{model_folder}/{model_name}_confusion.png")
+        
+        
+        
+
+def setup_model(model, optimizer, config):
+    """
+    Set up the model, handle loading/saving, and manage configurations.
+    
+    :param model: The model to set up
+    :param optimizer: The optimizer for the model
+    :param config: A dictionary containing all necessary configuration parameters
+    :return: Tuple containing (model, optimizer, epoch, val_acc_best, val_loss_best, selection_mask, warmup, pickup_warmup)
+    """
+    # Get the directory of the current script
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    # Get the parent directory
+    parent_dir = os.path.dirname(current_dir)
+    
+    dataset_name = config['dataset_name']
+    arch = config['arch']
+    model_version = config['model_version']
+    model_name = f"{dataset_name}_{arch}_{model_version}"
+    pretrained_name = f"Head_{config['head_name']}_{arch}"
+    
+    head_folder = os.path.join(parent_dir, "models", pretrained_name)
+    head_path = os.path.join(head_folder, f"{pretrained_name}.pth")
+
+    model_folder = os.path.join(parent_dir, "models", pretrained_name, model_name)
+    model_path = os.path.join(model_folder, f"{model_name}.pth")
+    stats_path = os.path.join(model_folder, f"{model_name}_stats.pkl")
+    
+    val_acc_best = 0
+    val_loss_best = 99999
+    selection_mask = []
+    train_losses = []
+    valid_losses = []
+    epoch = 0
+    warmup = False
+    pickup_warmup = False
+
+    if os.path.exists(model_path):
+        print(f"Loaded pre-existing model from {model_name}")
+        encoder_state_dict = torch.load(model_path)
+        encoder_state_dict = {k.replace('encoder.', ''): v for k, v in encoder_state_dict.items() if k.startswith('encoder.')}
+        model.encoder.load_state_dict(encoder_state_dict)
+        train_losses, valid_losses, epoch, val_acc_best, selection_mask = load_state(stats_path, model_folder)
+    else:
+        print(f"{model_name} does not exist, creating new instance")
+        os.makedirs(model_folder, exist_ok=True)
+        
+        if os.path.exists(head_path):
+            pickup_warmup = True
+            encoder_state_dict = torch.load(head_path)
+            encoder_state_dict = {k.replace('encoder.', ''): v for k, v in encoder_state_dict.items() if k.startswith('encoder.')}
+            model.encoder.load_state_dict(encoder_state_dict)
+            print(f"Loaded pre-trained model from {pretrained_name}")
+        else:
+            warmup = True
+            os.makedirs(head_folder, exist_ok=True)
+
+        save_config(config, model_folder)
+        save_model_architecture(model, model_folder)
+
+    return model, optimizer, head_folder, pretrained_name, model_folder, model_name, train_losses, valid_losses, epoch, val_acc_best, val_loss_best, selection_mask, warmup, pickup_warmup
+
+def save_config(config, folder):
+    config_path = os.path.join(folder, "config.json")
+    with open(config_path, 'w') as f:
+        json.dump(config, f, indent=4)
+
+def save_model_architecture(model, folder):
+    with open(os.path.join(folder, 'model_architecture.txt'), 'w') as f:
+        print(model, file=f)
+
+def load_state(stats_path, target_folder):
+    selection_mask = []
+    
+    with open(stats_path, 'rb') as f:
+        saved_stats = pickle.load(f)
+        train_losses = saved_stats['train_losses']
+        valid_losses = saved_stats['valid_losses']
+        epoch = saved_stats['epoch']
+        val_loss_best = saved_stats['val_loss']
+    
+    # Load the selection_mask dictionary from the file
+    if os.path.exists(f'{target_folder}/selection_mask.pkl'):
+        with open(f'{target_folder}/selection_mask.pkl', 'rb') as file:
+            selection_mask = pickle.load(file)
+            
+    return train_losses, valid_losses, epoch, val_loss_best, selection_mask

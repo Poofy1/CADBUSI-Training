@@ -1,12 +1,28 @@
 import torch
 import torch.nn as nn
+from fastai.vision.all import *
 import torch.nn.functional as F
+from archs.backbone import create_timm_body
+from torchvision.models import efficientnet_b3, EfficientNet_B3_Weights
 
 class Embeddingmodel(nn.Module):
-    def __init__(self, encoder, nf, num_classes=1, efficient_net=False):
+    def __init__(self, arch, pretrained_arch, num_classes=1, feat_dim=128):
         super(Embeddingmodel, self).__init__()
-        self.encoder = encoder
-        self.efficient_net = efficient_net
+        
+        # Get Head
+        self.is_efficientnet = "efficientnet" in arch.lower()
+        
+        if self.is_efficientnet:
+            self.encoder = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
+            nf = 512
+            # Replace the last fully connected layer with a new one
+            num_features = self.encoder.classifier[1].in_features
+            self.encoder.classifier[1] = nn.Linear(num_features, nf)
+        else:
+            self.encoder = create_timm_body(arch, pretrained=pretrained_arch)
+            nf = num_features_model(nn.Sequential(*self.encoder.children()))
+            
+            
         self.num_classes = num_classes
         self.nf = nf
         self.aggregator = DSMIL(input_size=self.nf, num_classes=num_classes)
@@ -25,7 +41,7 @@ class Embeddingmodel(nn.Module):
         # Calculate the embeddings for all images in one go
         feat = self.encoder(all_images)
         #print(feat.shape)
-        if not self.efficient_net:
+        if not self.is_efficientnet:
             # Max pooling
             #feat = torch.max(feat, dim=2).values
             #feat = torch.max(feat, dim=2).values
