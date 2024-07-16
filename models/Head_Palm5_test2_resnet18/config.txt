@@ -1,26 +1,25 @@
 {
-    "dataset_name": "cifar10",
+    "dataset_name": "imagenette2_hard",
     "arch": "resnet18",
     "pretrained_arch": false,
     "label_columns": [
-        "Has_Truck"
+        "Has_Fish"
     ],
     "instance_columns": [
-        ""
+        "Has_Fish"
     ],
-    "img_size": 32,
-    "bag_batch_size": 30,
+    "img_size": 128,
+    "bag_batch_size": 5,
     "min_bag_size": 2,
     "max_bag_size": 25,
-    "instance_batch_size": 200,
+    "instance_batch_size": 25,
     "use_efficient_net": false,
     "feature_extractor_train_count": 6,
-    "MIL_train_count": 8,
+    "MIL_train_count": 6,
     "initial_ratio": 0.3,
-    "final_ratio": 0.85,
-    "total_epochs": 20,
+    "final_ratio": 0.8,
+    "total_epochs": 9999,
     "reset_aggregator": true,
-    "warmup_epochs": 15,
-    "learning_rate": 0.001,
-    "mix_alpha": 0.2
+    "warmup_epochs": 40,
+    "learning_rate": 0.001
 }

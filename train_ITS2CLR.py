@@ -87,28 +87,6 @@ class ITS2CLR_Dataset(TUD.Dataset):
     def n_features(self):
         return self.data.size(1)
     
-def collate_custom(batch):
-    batch_data = []
-    batch_bag_labels = []
-    batch_instance_labels = []
-    batch_ids = []  # List to store bag IDs
-
-    for sample in batch:
-        image_data, bag_labels, instance_labels, bag_id = sample  # Updated to unpack four items
-        batch_data.append(image_data)
-        batch_bag_labels.append(bag_labels)
-        batch_instance_labels.append(instance_labels)
-        batch_ids.append(bag_id)
-
-    # Use torch.stack for bag labels to handle multiple labels per bag
-    out_bag_labels = torch.stack(batch_bag_labels).cuda()
-
-    # Converting to a tensor
-    out_ids = torch.tensor(batch_ids, dtype=torch.long).cuda()
-
-    return batch_data, out_bag_labels, batch_instance_labels, out_ids
-
-
 
 class EmbeddingBagModel(nn.Module):
     
@@ -432,10 +410,10 @@ if __name__ == '__main__':
 
             
     # Create data loaders
-    pos_train_dl =  TUD.DataLoader(positive_train_dataset, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
-    neg_train_dl =  TUD.DataLoader(negative_train_dataset, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
-    train_dl =  TUD.DataLoader(train_dataset, batch_size=batch_size, collate_fn = collate_custom, drop_last=True, shuffle = True)
-    val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_custom, drop_last=True)
+    pos_train_dl =  TUD.DataLoader(positive_train_dataset, batch_size=batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
+    neg_train_dl =  TUD.DataLoader(negative_train_dataset, batch_size=batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
+    train_dl =  TUD.DataLoader(train_dataset, batch_size=batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
+    val_dl =    TUD.DataLoader(dataset_val, batch_size=batch_size, collate_fn = collate_bag, drop_last=True)
 
     
     encoder = create_timm_body(encoder_arch)

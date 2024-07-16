@@ -6,10 +6,23 @@ from archs.backbone import create_timm_body
 from torchvision.models import efficientnet_b3, EfficientNet_B3_Weights
 
 class Embeddingmodel(nn.Module):
-    def __init__(self, encoder, nf, num_classes=1, feat_dim=128, efficient_net=False):
+    def __init__(self, arch, pretrained_arch, num_classes=1, feat_dim=128):
         super(Embeddingmodel, self).__init__()
-        self.encoder = encoder
-        self.efficient_net = efficient_net
+        
+        # Get Head
+        self.is_efficientnet = "efficientnet" in arch.lower()
+        
+        if self.is_efficientnet:
+            self.encoder = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
+            nf = 512
+            # Replace the last fully connected layer with a new one
+            num_features = self.encoder.classifier[1].in_features
+            self.encoder.classifier[1] = nn.Linear(num_features, nf)
+        else:
+            self.encoder = create_timm_body(arch, pretrained=pretrained_arch)
+            nf = num_features_model(nn.Sequential(*self.encoder.children()))
+            
+            
         self.num_classes = num_classes
         self.nf = nf
 
@@ -64,12 +77,11 @@ class Embeddingmodel(nn.Module):
             # Split the embeddings back into per-bag embeddings
             split_sizes = [bag.size(0) for bag in input]
             h_per_bag = torch.split(feat, split_sizes, dim=0)
-            y_hat_per_bag = torch.split(instance_predictions, split_sizes, dim=0)
             bag_pred = torch.empty(num_bags, self.num_classes).cuda()
             bag_instance_predictions = []
-            for i, (h, y_h) in enumerate(zip(h_per_bag, y_hat_per_bag)):
+            for i, h in enumerate(h_per_bag):
                 # Pass both h and y_hat to the aggregator
-                yhat_bag, yhat_ins = self.aggregator(h, y_h)
+                yhat_bag, yhat_ins = self.aggregator(h)
                 bag_pred[i] = yhat_bag
                 bag_instance_predictions.append(yhat_ins) 
         
@@ -102,6 +114,12 @@ class Linear_Classifier(nn.Module):
             nn.Linear(L, 1),
         )
         
+        self.fc = nn.Sequential(
+            nn.Linear(nf, num_classes),
+            nn.Sigmoid()
+        )
+        
+        
     def reset_parameters(self):
         # Reset the parameters of all the submodules in the Linear_Classifier
         for module in self.modules():
@@ -109,7 +127,7 @@ class Linear_Classifier(nn.Module):
                 module.reset_parameters()
         
         
-    def forward(self, v, y_hat):
+    def forward(self, v):
         
         A_V = self.attention_V(v)  # KxL
         A_U = self.attention_U(v)  # KxL
@@ -117,12 +135,14 @@ class Linear_Classifier(nn.Module):
         A = torch.transpose(instance_scores, 1, 0)  # ATTENTION_BRANCHESxK
         A = F.softmax(A, dim=1)  # softmax over K
         
-
+        # Apply fc layer to feat-level features
+        feat_predictions = self.fc(v)  # KxC
+        
         # Aggregate instance-level predictions
-        Y_prob = torch.mm(A, y_hat)  # ATTENTION_BRANCHESxC
+        Y_prob = torch.mm(A, feat_predictions)  # ATTENTION_BRANCHESxC
 
-        instance_scores = torch.sigmoid(instance_scores.squeeze())
-        return Y_prob, instance_scores
+        bag_instance_scores = torch.sigmoid(instance_scores.squeeze())
+        return Y_prob, bag_instance_scores
     
     
     
