@@ -5,10 +5,11 @@ from tqdm import tqdm
 import pickle
 from torch import nn
 from archs.save_arch import *
-from data.Gen_ITS2CLR_util import *
+from util.Gen_ITS2CLR_util import *
 import torch.optim as optim
 from torch.utils.data import Sampler
-from data.format_data import *
+from util.format_data import *
+from util.sudo_labels import *
 from archs.model_PALM import *
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
@@ -289,49 +290,6 @@ class PALM(nn.Module):
     
 
 
-def create_selection_mask(train_bag_logits, include_ratio):
-    combined_probs = []
-    original_indices = []
-    predictions = []
-    
-    # Loop through train_bag_logits to process probabilities
-    for bag_id, probs in train_bag_logits.items():
-        # Convert tensor bag_id to integer if necessary
-        bag_id_int = bag_id.item() if isinstance(bag_id, torch.Tensor) else bag_id
-        for i, prob in enumerate(probs):
-            combined_probs.append(prob.item())
-            original_indices.append((bag_id_int, i))
-            predictions.append(prob.item())
-
-    total_predictions = len(combined_probs)
-    predictions_included = int(total_predictions * include_ratio)
-    print(f'Including Predictions: {include_ratio:.2f} ({predictions_included})')
-
-    # Rank instances based on their confidence (distance from 0.5)
-    confidence_scores = np.abs(np.array(combined_probs) - 0.5)
-    top_indices = np.argsort(-confidence_scores)[:predictions_included]
-
-    # Initialize combined_dict with all -1 for masks (not selected by default) and placeholders for predictions
-    combined_dict = {}
-    for bag_id, probs in train_bag_logits.items():
-        bag_id_int = bag_id.item() if isinstance(bag_id, torch.Tensor) else bag_id
-        mask = np.full(len(probs), -1, dtype=int)  # Initialize mask to -1 (not selected)
-        pred_list = [None] * len(probs)  # Initialize prediction list
-        combined_dict[bag_id_int] = [mask, pred_list]
-
-    # Update predictions in combined_dict for all instances
-    for idx, (bag_id_int, pos) in enumerate(original_indices):
-        combined_dict[bag_id_int][1][pos] = predictions[idx]  # Update prediction
-
-    # Set mask based on selection
-    for idx in top_indices:
-        original_bag_id, original_position = original_indices[idx]
-        prob = combined_probs[idx]
-        # Update mask based on probability: 0 if below 0.5, 1 if above 0.5
-        combined_dict[original_bag_id][0][original_position] = int(prob > 0.5)
-
-    return combined_dict
-    
     
 
 
@@ -351,6 +309,7 @@ if __name__ == '__main__':
     max_bag_size = 25
     instance_batch_size =  50
     arch = 'resnet50'
+    pretrained_arch = False
     """
     
     dataset_name = 'imagenette2_hard'
@@ -362,40 +321,20 @@ if __name__ == '__main__':
     max_bag_size = 25
     instance_batch_size =  25
     arch = 'resnet18'
-    
-    #ITS2CLR Config
-    feature_extractor_train_count = 15 # 6
-    MIL_train_count = 8
-    initial_ratio = .3 #0.3 # --% preditions included
-    final_ratio = 1 #0.85 # --% preditions included
-    total_epochs = 20
-    warmup_epochs = 30
-    
     pretrained_arch = False
-    reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
-    
-    learning_rate=0.001
-    num_classes = len(label_columns) + 1
 
     
-    # Get Training Data
-    export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
-    cropped_images = f"F:/Temp_SSD_Data/{dataset_name}_{img_size}_images/"
-    bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
-    num_labels = len(label_columns)
+    #ITS2CLR Config
+    feature_extractor_train_count = 6 # 6
+    MIL_train_count = 6
+    initial_ratio = .3 #0.3 # --% preditions included
+    final_ratio = .8 #0.85 # --% preditions included
+    total_epochs = 9999
+    warmup_epochs = 20
+    learning_rate=0.001
+    reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
     
-    """train_transform = T.Compose([
-                T.RandomVerticalFlip(),
-                T.RandomHorizontalFlip(),
-                T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
-                T.ToTensor(),
-                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
-    
-    val_transform = T.Compose([
-                T.ToTensor(),
-                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])"""
+
     
     train_transform = T.Compose([
                 ###T.RandomVerticalFlip(),
@@ -413,23 +352,26 @@ if __name__ == '__main__':
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
+    
+    # Get Training Data
+    export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
+    cropped_images = f"F:/Temp_SSD_Data/{dataset_name}_{img_size}_images/"
+    bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
+    num_classes = len(label_columns) + 1
+    num_labels = len(label_columns)
 
-
-    # Create datasets
-    #bag_dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
-    #bag_dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
+    # Create bag datasets
     bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
     bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
-     
-    # Create bag data loaders
     bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
     bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True)
 
 
+    # Create Model
     model = Embeddingmodel(arch, pretrained_arch, num_classes = num_labels).cuda()
-    print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")           
+    print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
     
-    
+    # LOSS INIT
     class Args:
         def __init__(self, nviews, cache_size):
             self.nviews = nviews
@@ -444,7 +386,7 @@ if __name__ == '__main__':
                         nesterov=True,
                         weight_decay=0.001)
     
-
+    # MODEL INIT
     config = {
         "head_name": head_name,
         "model_version": model_version,
@@ -472,7 +414,6 @@ if __name__ == '__main__':
     model_folder, model_name, train_losses, valid_losses, epoch,
     val_acc_best, val_loss_best, selection_mask, 
     warmup, pickup_warmup) = setup_model(model, optimizer, config)
-
 
     # Training loop
     while epoch < total_epochs:
