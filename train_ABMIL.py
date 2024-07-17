@@ -5,7 +5,7 @@ from tqdm import tqdm
 from torch import nn
 from archs.save_arch import *
 from torch.optim import Adam
-from data.format_data import *
+from util.format_data import *
 from archs.model_ABMIL import *
 from archs.backbone import create_timm_body
 env = os.path.dirname(os.path.abspath(__file__))
