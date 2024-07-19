@@ -222,6 +222,7 @@ if __name__ == '__main__':
     max_bag_size = 25
     instance_batch_size =  50
     arch = 'resnet50'
+    pretrained_arch = False
     """
     
     dataset_name = 'imagenette2_hard'
@@ -233,42 +234,21 @@ if __name__ == '__main__':
     max_bag_size = 25
     instance_batch_size =  25
     arch = 'resnet18'
+    pretrained_arch = False
     
     #ITS2CLR Config
-    feature_extractor_train_count = 10 #6
-    MIL_train_count = 8
-    initial_ratio = 1 #0.3 # --% preditions included
-    final_ratio = 1 #0.85 # --% preditions included
-    total_epochs = 8
-    warmup_epochs = 15
-    
-    pretrained_arch = False
+    feature_extractor_train_count = 6 # 6
+    MIL_train_count = 6
+    initial_ratio = .3 #0.3 # --% preditions included
+    final_ratio = .8 #0.85 # --% preditions included
+    total_epochs = 9999
+    warmup_epochs = 20
+    learning_rate=0.001
     reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
     
-    learning_rate=0.001
     mix_alpha=0.2
     mix='mixup'
-    num_classes = len(label_columns) + 1
 
-    
-    # Get Training Data
-    export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
-    cropped_images = f"F:/Temp_SSD_Data/{dataset_name}_{img_size}_images/"
-    bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
-    num_labels = len(label_columns)
-    
-    """train_transform = T.Compose([
-                T.RandomVerticalFlip(),
-                T.RandomHorizontalFlip(),
-                T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
-                T.ToTensor(),
-                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
-    
-    val_transform = T.Compose([
-                T.ToTensor(),
-                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])"""
     
     train_transform = T.Compose([
                 ###T.RandomVerticalFlip(),
@@ -286,21 +266,24 @@ if __name__ == '__main__':
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
+    
+    # Get Training Data
+    export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
+    cropped_images = f"F:/Temp_SSD_Data/{dataset_name}_{img_size}_images/"
+    bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
+    num_classes = len(label_columns) + 1
+    num_labels = len(label_columns)
 
-
-    # Create datasets
-    #bag_dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
-    #bag_dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
+    # Create bag datasets
     bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
     bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
-     
-    # Create bag data loaders
     bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
     bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True)
 
 
+    # Create Model
     model = Embeddingmodel(arch, pretrained_arch, num_classes = num_labels).cuda()
-    print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")      
+    print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}") 
         
     optimizer = Adam(model.parameters(), lr=learning_rate)
     BCE_loss = nn.BCELoss()
