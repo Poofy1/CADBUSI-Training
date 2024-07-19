@@ -68,7 +68,10 @@ class Instance_Dataset(TUD.Dataset):
         img_path = self.images[index]
         instance_label = self.final_labels[index]
         
-        img = Image.open(img_path).convert("RGB")
+        #img = Image.open(img_path).convert("RGB")
+        img = cv2.imread(img_path)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # OpenCV loads in BGR, so convert to RGB
+        img = Image.fromarray(img)
         image_data = self.transform(img)
 
         return image_data, instance_label
@@ -324,21 +327,21 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "Palm2_delete"
+    head_name = "Palm2_CASBUSI"
     
-    """dataset_name = 'export_oneLesions' #'export_03_18_2024'
+    dataset_name = 'export_oneLesions' #'export_03_18_2024'
     label_columns = ['Has_Malignant']
     instance_columns = ['Malignant Lesion Present']  
     img_size = 300
-    bag_batch_size = 5
+    bag_batch_size = 3
     min_bag_size = 2
     max_bag_size = 25
-    instance_batch_size =  50
-    arch = 'resnet50'
+    instance_batch_size =  15
+    arch = 'efficientnet_b0'
     pretrained_arch = False
-    """
+
     
-    dataset_name = 'imagenette2_hard'
+    """dataset_name = 'imagenette2_hard'
     label_columns = ['Has_Fish']
     instance_columns = ['Has_Fish']  
     img_size = 128
@@ -347,7 +350,7 @@ if __name__ == '__main__':
     max_bag_size = 25
     instance_batch_size =  25
     arch = 'resnet18'
-    pretrained_arch = False
+    pretrained_arch = False"""
 
     #ITS2CLR Config
     feature_extractor_train_count = 6 # 6
@@ -471,11 +474,11 @@ if __name__ == '__main__':
             
             
             for i in range(target_count): 
-                model.train()
                 losses = AverageMeter()
                 palm_total_correct = 0
                 instance_total_correct = 0
                 total_samples = 0
+                model.train()
                 
                 # Iterate over the training data
                 for idx, (images, instance_labels) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
@@ -506,15 +509,15 @@ if __name__ == '__main__':
                         palm_predicted_classes = palm.predict(features)
                         instance_predicted_classes = (instance_predictions) > 0.5
 
-                    # Calculate accuracy for PALM predictions
-                    palm_correct = (palm_predicted_classes == instance_labels).sum().item()
-                    palm_total_correct += palm_correct
-                    
-                    # Calculate accuracy for instance predictions
-                    instance_correct = (instance_predicted_classes == instance_labels).sum().item()
-                    instance_total_correct += instance_correct
-                    
-                    total_samples += instance_labels.size(0)
+                        # Calculate accuracy for PALM predictions
+                        palm_correct = (palm_predicted_classes == instance_labels).sum().item()
+                        palm_total_correct += palm_correct
+                        
+                        # Calculate accuracy for instance predictions
+                        instance_correct = (instance_predicted_classes == instance_labels).sum().item()
+                        instance_total_correct += instance_correct
+                        
+                        total_samples += instance_labels.size(0)
 
                 # Calculate accuracies
                 palm_train_acc = palm_total_correct / total_samples

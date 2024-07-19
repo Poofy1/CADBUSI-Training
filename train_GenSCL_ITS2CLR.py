@@ -1,4 +1,4 @@
-import os, pickle
+import os, pickle, cv2
 from fastai.vision.all import *
 import torch.utils.data as TUD
 from tqdm import tqdm
@@ -69,11 +69,14 @@ class Instance_Dataset(TUD.Dataset):
         instance_label = self.final_labels[index]
         warmup_unconfident = self.warmup_mask[index]
         
-        img = Image.open(img_path).convert("RGB")
-        image_data_q = self.transform(img)
-        image_data_k = self.transform(img)
+        img = cv2.imread(img_path)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # OpenCV loads in BGR, so convert to RGB
+        img = Image.fromarray(img)
 
-        return (image_data_q, image_data_k), instance_label, warmup_unconfident
+        image_data_q = self.transform(img)
+        #image_data_k = self.transform(img)
+        
+        return (image_data_q, image_data_q), instance_label, warmup_unconfident
 
 
     def __len__(self):
@@ -189,21 +192,21 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "OneLesionCases_Deleteme"
+    head_name = "GenSCL_CASBUSI"
     
-    
-    """dataset_name = 'export_oneLesions' #'export_03_18_2024'
+    dataset_name = 'export_oneLesions' #'export_03_18_2024'
     label_columns = ['Has_Malignant']
     instance_columns = ['Malignant Lesion Present']  
     img_size = 300
     bag_batch_size = 5
     min_bag_size = 2
     max_bag_size = 25
-    instance_batch_size =  50
-    arch = 'resnet50'
-    """
+    instance_batch_size =  15
+    arch = 'efficientnet_b0'
+    pretrained_arch = False
+
     
-    dataset_name = 'imagenette2_hard'
+    """dataset_name = 'imagenette2_hard'
     label_columns = ['Has_Fish']
     instance_columns = ['Has_Fish']  
     img_size = 128
@@ -211,75 +214,57 @@ if __name__ == '__main__':
     min_bag_size = 2
     max_bag_size = 25
     instance_batch_size =  25
-    arch = 'resnet18'
+    arch = 'efficientnet_b0' #'efficientnet_b0'
+    pretrained_arch = False"""
     
     #ITS2CLR Config
-    feature_extractor_train_count = 15 # 6
-    MIL_train_count = 8
-    initial_ratio = .3 #0.3 # --% preditions included
-    final_ratio = 1 #0.85 # --% preditions included
+    feature_extractor_train_count = 6 # 6
+    MIL_train_count = 6
+    initial_ratio = .5 #0.3 # --% preditions included
+    final_ratio = .8 #0.85 # --% preditions included
     total_epochs = 20
     warmup_epochs = 15
-    
-    pretrained_arch = True
+    learning_rate=0.001
     reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
     
-    learning_rate=0.001
-    mix_alpha=0  #0.2
+    mix_alpha=0.0
     mix='mixup'
-    num_classes = len(label_columns) + 1
 
-    
-    # Get Training Data
-    export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
-    cropped_images = f"F:/Temp_SSD_Data/{dataset_name}_{img_size}_images/"
-    bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
-    num_labels = len(label_columns)
-    
-    """train_transform = T.Compose([
-                T.RandomVerticalFlip(),
-                T.RandomHorizontalFlip(),
-                T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
-                T.ToTensor(),
-                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
-    
-    val_transform = T.Compose([
-                T.ToTensor(),
-                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])"""
     
     train_transform = T.Compose([
                 ###T.RandomVerticalFlip(),
                 T.RandomHorizontalFlip(),
                 T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
                 T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
-                CLAHETransform(),
+                #CLAHETransform(),
                 T.ToTensor(),
                 ###GaussianNoise(mean=0, std=0.015), 
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
     
     val_transform = T.Compose([
-                CLAHETransform(),
+                #CLAHETransform(),
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
+    
+    # Get Training Data
+    export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
+    cropped_images = f"F:/Temp_SSD_Data/{dataset_name}_{img_size}_images/"
+    bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
+    num_classes = len(label_columns) + 1
+    num_labels = len(label_columns)
 
-
-    # Create datasets
-    #bag_dataset_train = TUD.Subset(BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False),list(range(0,100)))
-    #bag_dataset_val = TUD.Subset(BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False),list(range(0,100)))
+    # Create bag datasets
     bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
     bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
-     
-    # Create bag data loaders
     bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
     bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True)
 
 
+    # Create Model
     model = Embeddingmodel(arch, pretrained_arch, num_classes = num_labels).cuda()
-    print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")     
+    print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")    
         
     optimizer = Adam(model.parameters(), lr=learning_rate)
     BCE_loss = nn.BCELoss()
@@ -388,6 +373,11 @@ if __name__ == '__main__':
             print("Warmup Phase Finished")
             warmup = False
             
+            print("Saved Warmup Model")
+            # Save the model and optimizer
+            torch.save(model.state_dict(), os.path.join(head_folder, f"{pretrained_name}.pth"))
+            torch.save(optimizer.state_dict(), f"{head_folder}/{pretrained_name}_optimizer.pth")
+            
             
         
         
@@ -416,6 +406,9 @@ if __name__ == '__main__':
                 optimizer.zero_grad()
                 
                 outputs, instance_pred, _ = model(xb, pred_on = True)
+                #print(outputs)
+                #print(yb)
+                outputs = torch.clamp(outputs, 0, 1) # temp fix
                 
                 # Calculate bag-level loss
                 loss = BCE_loss(outputs, yb)
@@ -449,6 +442,7 @@ if __name__ == '__main__':
 
                     outputs, instance_pred, _ = model(xb, pred_on = True)
                     #print(instance_pred)
+                    outputs = torch.clamp(outputs, 0, 1) # temp fix
 
                     # Calculate bag-level loss
                     loss = BCE_loss(outputs, yb)

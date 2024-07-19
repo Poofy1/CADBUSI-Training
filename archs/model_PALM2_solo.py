@@ -57,7 +57,8 @@ class Embeddingmodel(nn.Module):
 
         # Calculate the embeddings for all images in one go
         feat = self.encoder(all_images)
-        feat_pool = self.adaptive_avg_pool(feat).squeeze()
+        if not self.is_efficientnet:
+            feat = self.adaptive_avg_pool(feat).squeeze()
         
         # SALIENCY CLASS
         """saliency_maps = self.saliency_layer(feat)  # Generate saliency maps using a convolutional layer
@@ -68,8 +69,7 @@ class Embeddingmodel(nn.Module):
         
         
         # INSTANCE CLASS
-        instance_predictions = self.ins_classifier(feat_pool)
-        feat = feat_pool
+        instance_predictions = self.ins_classifier(feat)
 
         bag_pred = None
         bag_instance_predictions = None
@@ -88,7 +88,7 @@ class Embeddingmodel(nn.Module):
         
         proj = None
         if projector:
-            proj = self.projector(feat_pool)
+            proj = self.projector(feat)
             proj = F.normalize(proj, dim=1)
             
 
