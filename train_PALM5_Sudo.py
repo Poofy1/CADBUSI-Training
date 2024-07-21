@@ -505,7 +505,7 @@ if __name__ == '__main__':
                     features.to(device)
                     
                     
-                    # Create masks for different label types
+                    # Create masks for labeled and unlabeled data
                     unlabeled_mask = (instance_labels == -1)
                     labeled_mask = ~unlabeled_mask  # This includes both 0 and 1 labels
 

@@ -130,18 +130,21 @@ def unnormalize(tensor):
 
 class CLAHETransform(object):
     def __init__(self, clip_limit=2.0, tile_grid_size=(8, 8)):
-        self.clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
+        self.clip_limit = clip_limit
+        self.tile_grid_size = tile_grid_size
 
     def __call__(self, img):
+        clahe = cv2.createCLAHE(clipLimit=self.clip_limit, tileGridSize=self.tile_grid_size)
+        
         img = np.array(img)
         if len(img.shape) == 2:
-            img = self.clahe.apply(img)
+            img = clahe.apply(img)
         else:
             img = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
-            img[:, :, 0] = self.clahe.apply(img[:, :, 0])
+            img[:, :, 0] = clahe.apply(img[:, :, 0])
             img = cv2.cvtColor(img, cv2.COLOR_LAB2RGB)
         return Image.fromarray(img)
-
+    
 class BagOfImagesDataset(TUD.Dataset):
 
     def __init__(self, bags_dict, transform=None, save_processed=False):
