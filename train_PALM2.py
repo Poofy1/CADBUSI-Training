@@ -9,13 +9,14 @@ from util.Gen_ITS2CLR_util import *
 import torch.optim as optim
 from torch.utils.data import Sampler
 from util.format_data import *
+import multiprocessing
 from util.sudo_labels import *
 from archs.model_PALM2_solo import *
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
-    
+
 class Instance_Dataset(TUD.Dataset):
     def __init__(self, bags_dict, selection_mask, transform=None, warmup=True):
         self.transform = transform
@@ -327,16 +328,16 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "Palm2_CASBUSI"
+    head_name = "Palm2_CASBUSI_224"
     
     dataset_name = 'export_oneLesions' #'export_03_18_2024'
     label_columns = ['Has_Malignant']
     instance_columns = ['Malignant Lesion Present']  
-    img_size = 300
+    img_size = 224
     bag_batch_size = 3
     min_bag_size = 2
     max_bag_size = 25
-    instance_batch_size =  15
+    instance_batch_size =  50
     arch = 'efficientnet_b0'
     pretrained_arch = False
 
@@ -358,7 +359,7 @@ if __name__ == '__main__':
     initial_ratio = .3 #0.3 # --% preditions included
     final_ratio = .8 #0.85 # --% preditions included
     total_epochs = 9999
-    warmup_epochs = 20
+    warmup_epochs = 10
     learning_rate=0.001
     reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
     
@@ -454,8 +455,8 @@ if __name__ == '__main__':
             instance_dataset_val = Instance_Dataset(bags_val, selection_mask, transform=val_transform, warmup=True)
             train_sampler = WarmupSampler(instance_dataset_train, instance_batch_size, strategy=1)
             val_sampler = WarmupSampler(instance_dataset_val, instance_batch_size, strategy=2)
-            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, collate_fn = collate_instance)
-            instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_sampler=val_sampler, collate_fn = collate_instance)
+            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, num_workers=6, collate_fn = collate_instance, prefetch_factor=4, pin_memory=True)
+            instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_sampler=val_sampler, num_workers=6, collate_fn = collate_instance, prefetch_factor=4, pin_memory=True)
             
             if warmup:
                 target_count = warmup_epochs
@@ -597,6 +598,9 @@ if __name__ == '__main__':
             total_acc = 0
             total = 0
             correct = 0
+            
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
             for (images, yb, instance_labels, id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)):
                 num_bags = len(images)
