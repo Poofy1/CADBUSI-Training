@@ -1,5 +1,4 @@
 import os, pickle
-from fastai.vision.all import *
 import torch.utils.data as TUD
 from tqdm import tqdm
 import pickle
@@ -9,7 +8,6 @@ from util.Gen_ITS2CLR_util import *
 import torch.optim as optim
 from torch.utils.data import Sampler
 from util.format_data import *
-import multiprocessing
 from util.sudo_labels import *
 from archs.model_PALM2_solo import *
 env = os.path.dirname(os.path.abspath(__file__))
@@ -328,7 +326,7 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "Palm2_CASBUSI_224"
+    head_name = "Palm2_CASBUSI_224_2"
     
     dataset_name = 'export_oneLesions' #'export_03_18_2024'
     label_columns = ['Has_Malignant']
@@ -356,9 +354,9 @@ if __name__ == '__main__':
     #ITS2CLR Config
     feature_extractor_train_count = 6 # 6
     MIL_train_count = 6
-    initial_ratio = .3 #0.3 # --% preditions included
+    initial_ratio = .5 #0.3 # --% preditions included
     final_ratio = .8 #0.85 # --% preditions included
-    total_epochs = 9999
+    total_epochs = 50
     warmup_epochs = 10
     learning_rate=0.001
     reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
@@ -412,7 +410,7 @@ if __name__ == '__main__':
                         lr=learning_rate,
                         momentum=0.9,
                         nesterov=True,
-                        weight_decay=0.001)
+                        weight_decay=0.001) # original .001
     
     
     # MODEL INIT
@@ -444,6 +442,8 @@ if __name__ == '__main__':
     val_acc_best, val_loss_best, selection_mask, 
     warmup, pickup_warmup) = setup_model(model, optimizer, config)
 
+    #pickup_warmup = True
+    
     # Training loop
     while epoch < total_epochs:
         
@@ -455,8 +455,8 @@ if __name__ == '__main__':
             instance_dataset_val = Instance_Dataset(bags_val, selection_mask, transform=val_transform, warmup=True)
             train_sampler = WarmupSampler(instance_dataset_train, instance_batch_size, strategy=1)
             val_sampler = WarmupSampler(instance_dataset_val, instance_batch_size, strategy=2)
-            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, num_workers=6, collate_fn = collate_instance, prefetch_factor=4, pin_memory=True)
-            instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_sampler=val_sampler, num_workers=6, collate_fn = collate_instance, prefetch_factor=4, pin_memory=True)
+            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, num_workers=4, collate_fn = collate_instance, pin_memory=True)
+            instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_sampler=val_sampler, collate_fn = collate_instance)
             
             if warmup:
                 target_count = warmup_epochs
@@ -663,9 +663,6 @@ if __name__ == '__main__':
             val_loss = total_val_loss / total
             val_acc = correct / total
                 
-                    
-            #selection_mask = create_selection_mask(train_bag_logits, epoch)
-            #print("Created new sudo labels")
             
 
             print(f"[{a+1}/{MIL_train_count}] | Acc | Loss")
@@ -686,14 +683,14 @@ if __name__ == '__main__':
                 print("Saved checkpoint due to improved val_loss")
                 
                 # Create selection mask
-                #predictions_ratio = prediction_anchor_scheduler(epoch, total_epochs, 0, initial_ratio, final_ratio)
+                predictions_ratio = prediction_anchor_scheduler(epoch, total_epochs, 0, initial_ratio, final_ratio)
                 #predictions_ratio = .9
-                #selection_mask = create_selection_mask(train_bag_logits, predictions_ratio)
-                #print("Created new sudo labels")
+                selection_mask = create_selection_mask(train_bag_logits, predictions_ratio)
+                print("Created new sudo labels")
                 
                 epoch += 1
                 
                 # Save selection
-                #with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
-                #    pickle.dump(selection_mask, file)
+                with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
+                    pickle.dump(selection_mask, file)
 

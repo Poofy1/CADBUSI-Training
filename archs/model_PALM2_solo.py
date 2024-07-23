@@ -33,12 +33,24 @@ class Embeddingmodel(nn.Module):
             nn.Linear(512, feat_dim)
         )
         
+        dropout_rate=0.5
         self.ins_classifier = nn.Sequential(
+            nn.Linear(nf, 512),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout_rate),  # Add dropout after the first ReLU
+            nn.Linear(512, 256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout_rate),  # Add dropout after the second ReLU
+            nn.Linear(256, num_classes),
+            nn.Sigmoid()
+        )
+        
+        """self.ins_classifier = nn.Sequential(
             nn.Linear(nf, 512),
             nn.ReLU(inplace=True),
             nn.Linear(512, num_classes),
             nn.Sigmoid()
-        )
+        )"""
         
         """self.saliency_layer = nn.Sequential(        
             nn.Conv2d(nf, num_classes, (1,1), bias = False),
