@@ -1,5 +1,4 @@
 import os, pickle
-from fastai.vision.all import *
 import torch.utils.data as TUD
 from tqdm import tqdm
 import pickle
@@ -15,9 +14,9 @@ env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
-    
+
 class Instance_Dataset(TUD.Dataset):
-    def __init__(self, bags_dict, selection_mask, transform=None, warmup=True):
+    def __init__(self, bags_dict, selection_mask, transform=None, warmup=False):
         self.transform = transform
         self.warmup = warmup
 
@@ -68,12 +67,15 @@ class Instance_Dataset(TUD.Dataset):
         img_path = self.images[index]
         instance_label = self.final_labels[index]
         
-        img = Image.open(img_path).convert("RGB")
-        image_data_q = self.transform(img)
-        image_data_k = self.transform(img)
+        #img = Image.open(img_path).convert("RGB")
+        img = cv2.imread(img_path)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # OpenCV loads in BGR, so convert to RGB
+        img = Image.fromarray(img)
+        image_data = self.transform(img)
 
-        return (image_data_q, image_data_k), instance_label
-    
+        return image_data, instance_label
+
+
     def __len__(self):
         return len(self.images)
 
@@ -85,6 +87,7 @@ class WarmupSampler(Sampler):
         self.strategy = strategy
         self.indices_0 = [i for i, label in enumerate(self.dataset.final_labels) if label == 0]
         self.indices_1 = [i for i, label in enumerate(self.dataset.final_labels) if label == 1]
+        self.indices_unlabeled = [i for i, label in enumerate(self.dataset.final_labels) if label == -1]
 
     def __iter__(self):
         total_batches = len(self.dataset) // self.batch_size
@@ -94,17 +97,36 @@ class WarmupSampler(Sampler):
                 # Ensure at least one positive sample
                 num_positives = random.randint(1, max(1, min(len(self.indices_1), self.batch_size - 1)))
                 num_negatives = self.batch_size - num_positives
+                batch_positives = random.sample(self.indices_1, num_positives)
+                batch_negatives = random.sample(self.indices_0, num_negatives)
+                batch = batch_positives + batch_negatives
             elif self.strategy == 2:
                 # Aim for 50/50 balance
                 num_positives = self.batch_size // 2
                 num_negatives = self.batch_size - num_positives
+                batch_positives = random.sample(self.indices_1, num_positives)
+                batch_negatives = random.sample(self.indices_0, num_negatives)
+                batch = batch_positives + batch_negatives
+            elif self.strategy == 3:
+                # At least one positive, one negative, and possibility of -1 labels
+                num_positives = max(1, random.randint(1, self.batch_size // 2))
+                num_negatives = max(1, random.randint(1, self.batch_size // 2))
+                num_unlabeled = self.batch_size - num_positives - num_negatives
+
+                batch_positives = random.sample(self.indices_1, num_positives)
+                batch_negatives = random.sample(self.indices_0, num_negatives)
+                
+                if num_unlabeled > 0 and self.indices_unlabeled:
+                    batch_unlabeled = random.sample(self.indices_unlabeled, min(num_unlabeled, len(self.indices_unlabeled)))
+                    batch = batch_positives + batch_negatives + batch_unlabeled
+                else:
+                    # If no unlabeled samples or not enough space, fill with more labeled samples
+                    remaining = self.batch_size - len(batch_positives) - len(batch_negatives)
+                    additional_samples = random.sample(self.indices_0 + self.indices_1, remaining)
+                    batch = batch_positives + batch_negatives + additional_samples
             else:
-                raise ValueError("Invalid strategy. Choose 1 or 2")
+                raise ValueError("Invalid strategy. Choose 1, 2, or 3")
 
-            batch_positives = random.sample(self.indices_1, num_positives)
-            batch_negatives = random.sample(self.indices_0, num_negatives)
-
-            batch = batch_positives + batch_negatives
             random.shuffle(batch)
             yield batch
             
@@ -113,83 +135,30 @@ class WarmupSampler(Sampler):
     
     
 def collate_instance(batch):
-    batch_data_q = []
-    batch_data_k = [] 
+    batch_data = []
     batch_labels = []
 
-    for (image_data_q, image_data_k), bag_label in batch:
-        batch_data_q.append(image_data_q)
-        batch_data_k.append(image_data_k)
+    for image_data, bag_label in batch:
+        batch_data.append(image_data)
         batch_labels.append(bag_label)
 
     # Stack the images and labels
-    batch_data_q = torch.stack(batch_data_q)
-    batch_data_k = torch.stack(batch_data_k)
+    batch_data = torch.stack(batch_data)
     batch_labels = torch.tensor(batch_labels, dtype=torch.long)
 
-    return (batch_data_q, batch_data_k), batch_labels
+    return batch_data, batch_labels
 
 
 
-class GenSupConLossv2(nn.Module):
-    def __init__(self, temperature=0.07, base_temperature=0.07):
-        super(GenSupConLossv2, self).__init__()
-        self.temperature = temperature
-        self.base_temperature = base_temperature
-
-    def forward(self, features, labels, anc_mask = None):
-        '''
-        Args:
-            feats: (anchor_features, contrast_features), each: [N, feat_dim]
-            labels: (anchor_labels, contrast_labels) each: [N, num_cls]
-            anc_mask: (anchors_mask, contrast_mask) each: [N]
-        '''
-
-        anchor_labels = torch.cat(labels, dim=0).float()
-        contrast_labels = anchor_labels
-        anchor_features = torch.cat(features, dim=0)
-        contrast_features = anchor_features
-        
-        # 1. compute similarities among targets
-        anchor_norm = torch.norm(anchor_labels, p=2, dim=-1, keepdim=True) # [anchor_N, 1]
-        contrast_norm = torch.norm(contrast_labels, p=2, dim=-1, keepdim=True) # [contrast_N, 1]
-        deno = torch.mm(anchor_norm, contrast_norm.T)
-        mask = torch.mm(anchor_labels, contrast_labels.T) / deno # cosine similarity: [anchor_N, contrast_N]
-        logits_mask = torch.ones_like(mask)
-        logits_mask.fill_diagonal_(0)
-        mask = mask * logits_mask
-        
-        # 2. compute logits
-        anchor_dot_contrast = torch.div(
-            torch.matmul(anchor_features, contrast_features.T),
-            self.temperature
-        )
-        # for numerical stability
-        logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
-        logits = anchor_dot_contrast - logits_max.detach()
-        
-        # compute log_prob
-        exp_logits = torch.exp(logits) * logits_mask
-        log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True))
-        mean_log_prob_pos = (mask * log_prob).sum(1) / (mask.sum(1) + 1e-8)
-        
-        # loss
-        loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
-        if anc_mask:
-            select = torch.cat( anc_mask )
-            loss = loss[select]
-            
-        loss = loss.mean()
-
-        return loss
 
 class PALM(nn.Module):
-    def __init__(self, args, num_classes=2, n_protos=100, proto_m=0.99, temp=0.1, lambda_pcon=1, k=5, feat_dim=128, epsilon=0.05):
+    def __init__(self, args, num_classes=2, n_protos=100, proto_m=0.99, temp=0.1, lambda_pcon=1, k=5, feat_dim=128, epsilon=0.05, unlabeled_weight=0.5):
         super(PALM, self).__init__()
         self.num_classes = num_classes
         self.temp = temp  # temperature scaling
         self.nviews = args.nviews
         self.cache_size = args.cache_size
+        self.unlabeled_weight = unlabeled_weight
         
         self.lambda_pcon = lambda_pcon
         
@@ -353,25 +322,45 @@ class PALM(nn.Module):
         
         return predicted_classes
            
-    def forward(self, features, targets):
+    def unlabeled_loss(self, features):
+        # Compute similarities between features and prototypes
+        similarities = torch.matmul(features, self.protos.T)
+        
+        # Find the closest prototype for each feature
+        closest_proto_idx = torch.argmax(similarities, dim=1)
+        
+        # Compute the loss as 1 minus cosine similarity to the closest prototype
+        closest_similarities = similarities[torch.arange(features.size(0)), closest_proto_idx]
+        loss = 1 - closest_similarities
+        
+        return loss.mean()  # Average loss per feature
+
+    def forward(self, features, targets, unlabeled_features=None):
         loss = 0
         loss_dict = {}
 
+        # Labeled data loss
         g_con = self.mle_loss(features, targets)
         loss += g_con
         loss_dict['mle'] = g_con.cpu().item()
-                    
-        if self.lambda_pcon > 0:            
+
+        if self.lambda_pcon > 0:
             g_dis = self.lambda_pcon * self.proto_contra()
             loss += g_dis
             loss_dict['proto_contra'] = g_dis.cpu().item()
-                                
+
+        # Unlabeled data loss
+        if unlabeled_features is not None and unlabeled_features.numel() > 0:
+            u_loss = self.unlabeled_weight * self.unlabeled_loss(unlabeled_features)
+            loss += u_loss
+            #print(u_loss)
+            loss_dict['unlabeled'] = u_loss.cpu().item()
+            
+        
         self.protos = self.protos.detach()
-                
+        
         return loss, loss_dict
     
-
-
     
 
 
@@ -380,7 +369,7 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "Palm4_CASBUSI"
+    head_name = "Palm6_CASBUSI_224"
     
     dataset_name = 'export_oneLesions' #'export_03_18_2024'
     label_columns = ['Has_Malignant']
@@ -389,7 +378,7 @@ if __name__ == '__main__':
     bag_batch_size = 3
     min_bag_size = 2
     max_bag_size = 25
-    instance_batch_size =  25
+    instance_batch_size =  50
     arch = 'efficientnet_b0'
     pretrained_arch = False
 
@@ -408,15 +397,10 @@ if __name__ == '__main__':
     #ITS2CLR Config
     feature_extractor_train_count = 6 # 6
     MIL_train_count = 6
-    initial_ratio = .3 #0.3 # --% preditions included
-    final_ratio = .8 #0.85 # --% preditions included
-    total_epochs = 9999
-    warmup_epochs = 20
+    total_epochs = 50
+    warmup_epochs = 10
     learning_rate=0.001
     reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
-
-    mix_alpha=0  #0.2
-    mix='mixup'
     
     
     train_transform = T.Compose([
@@ -454,26 +438,23 @@ if __name__ == '__main__':
     model = Embeddingmodel(arch, pretrained_arch, num_classes = num_labels).cuda()
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
     
-    
+    # LOSS INIT
     class Args:
         def __init__(self, nviews, cache_size):
             self.nviews = nviews
             self.cache_size = cache_size
     palm_args = Args(nviews=1, cache_size=50)
-    palm = PALM(palm_args, lambda_pcon=0).cuda()
-    genscl = GenSupConLossv2(temperature=0.07, base_temperature=0.07)
+    palm = PALM(palm_args).cuda()
     BCE_loss = nn.BCELoss()
     
     optimizer = optim.SGD(model.parameters(),
                         lr=learning_rate,
                         momentum=0.9,
                         nesterov=True,
-                        weight_decay=0.001)
+                        weight_decay=0.001) # original .001
     
     
-    
-    
-    
+    # MODEL INIT
     config = {
         "head_name": head_name,
         "model_version": model_version,
@@ -489,8 +470,6 @@ if __name__ == '__main__':
         "instance_batch_size": instance_batch_size,
         "feature_extractor_train_count": feature_extractor_train_count,
         "MIL_train_count": MIL_train_count,
-        "initial_ratio": initial_ratio,
-        "final_ratio": final_ratio,
         "total_epochs": total_epochs,
         "reset_aggregator": reset_aggregator,
         "warmup_epochs": warmup_epochs,
@@ -502,6 +481,9 @@ if __name__ == '__main__':
     val_acc_best, val_loss_best, selection_mask, 
     warmup, pickup_warmup) = setup_model(model, optimizer, config)
 
+    #pickup_warmup = False
+    warmup = true
+    
     # Training loop
     while epoch < total_epochs:
         
@@ -509,11 +491,11 @@ if __name__ == '__main__':
         if not pickup_warmup: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
-            instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, warmup=True)
+            instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, warmup=warmup)
             instance_dataset_val = Instance_Dataset(bags_val, selection_mask, transform=val_transform, warmup=True)
-            train_sampler = WarmupSampler(instance_dataset_train, instance_batch_size, strategy=1)
-            val_sampler = WarmupSampler(instance_dataset_val, instance_batch_size, strategy=2)
-            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, collate_fn = collate_instance)
+            train_sampler = WarmupSampler(instance_dataset_train, instance_batch_size, strategy=3)
+            val_sampler = WarmupSampler(instance_dataset_val, instance_batch_size, strategy=1)
+            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, num_workers=4, collate_fn = collate_instance, pin_memory=True)
             instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_sampler=val_sampler, collate_fn = collate_instance)
             
             if warmup:
@@ -525,57 +507,45 @@ if __name__ == '__main__':
             
 
             print('Training Feature Extractor')
-            
-            # Unfreeze encoder
-            for param in model.encoder.parameters():
-                param.requires_grad = True
-
+            print(f'Warmup Mode: {warmup}')
             
             
             for i in range(target_count): 
-                model.train()
                 losses = AverageMeter()
                 palm_total_correct = 0
                 instance_total_correct = 0
                 total_samples = 0
+                model.train()
                 
                 # Iterate over the training data
                 for idx, (images, instance_labels) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
-                    bsz = instance_labels.shape[0]
-                    im_q, im_k = images
-                    im_q = im_q.cuda(non_blocking=True)
-                    im_k = im_k.cuda(non_blocking=True)
+                    images = images.cuda(non_blocking=True)
                     instance_labels = instance_labels.cuda(non_blocking=True)
-                    
+  
                     # forward
                     optimizer.zero_grad()
-                    _, _, instance_predictions, features = model(images, pred_on=True, projector=True)
+                    _, _, instance_predictions, features = model(images, projector=True)
                     features.to(device)
                     
                     
-
+                    # Separate labeled and unlabeled data
+                    labeled_mask = instance_labels != -1
+                    unlabeled_mask = instance_labels == -1
+                    labeled_instance_labels = instance_labels[labeled_mask]
+                    labeled_features = features[labeled_mask]
+                    unlabeled_features = features[unlabeled_mask]
+                    labeled_instance_predictions = instance_predictions[labeled_mask]
                     
-                    # image-based regularizations (lam 1 = no mixup)
-                    im_q, y0a, y0b, lam0 = mix_fn(im_q, instance_labels, mix_alpha, mix)
-                    im_k, y1a, y1b, lam1 = mix_fn(im_k, instance_labels, mix_alpha, mix)
-                    images = [im_q, im_k]
-                    l_q = mix_target(y0a, y0b, lam0, num_classes)
-                    l_k = mix_target(y1a, y1b, lam1, num_classes)
-
-                    zk, zq = torch.split(features, [bsz, bsz], dim=0)
-                    
-                    # Get loss contrastive loss
-                    palm_loss, loss_dict = palm(zk, instance_labels)
-                    
-                    # get loss (no teacher)
-                    genscl_loss = genscl([zk, zq], [l_q, l_k], None)
-                    #print(genscl_loss)
+                    # Get loss from PALM
+                    palm_loss, loss_dict = palm(labeled_features, labeled_instance_labels, unlabeled_features)
+                    #print(palm_loss)
                     
                     # Calculate BCE loss
-                    bce_loss_value = BCE_loss(instance_predictions[:bsz], instance_labels.float())
+                    bce_loss_value = BCE_loss(labeled_instance_predictions, labeled_instance_labels.float())
+                    #print(bce_loss_value)
 
                     # Backward pass and optimization step
-                    total_loss = palm_loss + bce_loss_value + genscl_loss
+                    total_loss = palm_loss + bce_loss_value
                     total_loss.backward()
                     optimizer.step()
         
@@ -584,18 +554,18 @@ if __name__ == '__main__':
                     
                     # Get predictions from PALM
                     with torch.no_grad():
-                        palm_predicted_classes = palm.predict(zk)
-                        instance_predicted_classes = (instance_predictions[:bsz]) > 0.5
+                        palm_predicted_classes = palm.predict(labeled_features)
+                        instance_predicted_classes = (labeled_instance_labels) > 0.5
 
-                    # Calculate accuracy for PALM predictions
-                    palm_correct = (palm_predicted_classes == instance_labels).sum().item()
-                    palm_total_correct += palm_correct
-                    
-                    # Calculate accuracy for instance predictions
-                    instance_correct = (instance_predicted_classes == instance_labels).sum().item()
-                    instance_total_correct += instance_correct
-                    
-                    total_samples += instance_labels.size(0)
+                        # Calculate accuracy for PALM predictions
+                        palm_correct = (palm_predicted_classes == labeled_instance_labels).sum().item()
+                        palm_total_correct += palm_correct
+                        
+                        # Calculate accuracy for instance predictions
+                        instance_correct = (instance_predicted_classes == labeled_instance_labels).sum().item()
+                        instance_total_correct += instance_correct
+                        
+                        total_samples += labeled_instance_labels.size(0)
 
                 # Calculate accuracies
                 palm_train_acc = palm_total_correct / total_samples
@@ -611,12 +581,11 @@ if __name__ == '__main__':
 
                 with torch.no_grad():
                     for idx, (images, instance_labels) in enumerate(tqdm(instance_dataloader_val, total=len(instance_dataloader_val))):
-                        im_q, im_k = images
-                        im_q = im_q.cuda(non_blocking=True)
+                        images = images.cuda(non_blocking=True)
                         instance_labels = instance_labels.cuda(non_blocking=True)
 
                         # Forward pass
-                        _, _, instance_predictions, features = model(im_q, projector=True)
+                        _, _, instance_predictions, features = model(images, projector=True)
                         features.to(device)
 
                         # Get predictions
@@ -676,6 +645,9 @@ if __name__ == '__main__':
             total_acc = 0
             total = 0
             correct = 0
+            
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
             for (images, yb, instance_labels, id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)):
                 num_bags = len(images)
@@ -738,7 +710,6 @@ if __name__ == '__main__':
             val_loss = total_val_loss / total
             val_acc = correct / total
                 
-
             
 
             print(f"[{a+1}/{MIL_train_count}] | Acc | Loss")
@@ -757,15 +728,6 @@ if __name__ == '__main__':
                 
                 save_state(epoch, label_columns, train_acc, val_loss, val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, train_losses, valid_losses,)
                 print("Saved checkpoint due to improved val_loss")
-                
-                # Create selection mask
-                """predictions_ratio = prediction_anchor_scheduler(epoch, total_epochs, 0, initial_ratio, final_ratio)
-                selection_mask = create_selection_mask(train_bag_logits, predictions_ratio)
-                print("Created new sudo labels")"""
+
                 
                 epoch += 1
-                
-                """# Save selection
-                with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
-                    pickle.dump(selection_mask, file)"""
-
