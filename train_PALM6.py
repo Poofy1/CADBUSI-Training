@@ -150,14 +150,13 @@ def collate_instance(batch):
 
 
 
-
 class PALM(nn.Module):
-    def __init__(self, args, num_classes=2, n_protos=100, proto_m=0.99, temp=0.1, lambda_pcon=1, k=5, feat_dim=128, epsilon=0.05, unlabeled_weight=0.5):
+    def __init__(self, nviews, num_classes=2, n_protos=50, proto_m=0.99, temp=0.1, lambda_pcon=1, k=5, feat_dim=128, epsilon=0.05, unlabeled_weight=0.5):
         super(PALM, self).__init__()
         self.num_classes = num_classes
         self.temp = temp  # temperature scaling
-        self.nviews = args.nviews
-        self.cache_size = args.cache_size
+        self.nviews = nviews
+        self.cache_size = int(n_protos / num_classes)
         self.unlabeled_weight = unlabeled_weight
         
         self.lambda_pcon = lambda_pcon
@@ -322,18 +321,13 @@ class PALM(nn.Module):
         
         return predicted_classes
            
-    def unlabeled_loss(self, features):
-        # Compute similarities between features and prototypes
-        similarities = torch.matmul(features, self.protos.T)
-        
-        # Find the closest prototype for each feature
-        closest_proto_idx = torch.argmax(similarities, dim=1)
-        
-        # Compute the loss as 1 minus cosine similarity to the closest prototype
-        closest_similarities = similarities[torch.arange(features.size(0)), closest_proto_idx]
-        loss = 1 - closest_similarities
-        
-        return loss.mean()  # Average loss per feature
+    def pseudo_label(self, features, confidence_threshold=0.9):
+        with torch.no_grad():
+            similarities = torch.matmul(features, self.protos.T)
+            max_similarities, closest_proto_idx = torch.max(similarities, dim=1)
+            pseudo_labels = self.predict(features)
+            mask = max_similarities > confidence_threshold
+        return pseudo_labels[mask], features[mask]
 
     def forward(self, features, targets, unlabeled_features=None):
         loss = 0
@@ -349,14 +343,14 @@ class PALM(nn.Module):
             loss += g_dis
             loss_dict['proto_contra'] = g_dis.cpu().item()
 
-        # Unlabeled data loss
+        # Pseudo-labeling for unlabeled data
         if unlabeled_features is not None and unlabeled_features.numel() > 0:
-            u_loss = self.unlabeled_weight * self.unlabeled_loss(unlabeled_features)
-            loss += u_loss
-            #print(u_loss)
-            loss_dict['unlabeled'] = u_loss.cpu().item()
-            
-        
+            pseudo_labels, pseudo_features = self.pseudo_label(unlabeled_features)
+            if pseudo_features.numel() > 0:
+                pseudo_loss = self.mle_loss(pseudo_features, pseudo_labels)
+                loss += self.unlabeled_weight * pseudo_loss
+                loss_dict['pseudo_labeled'] = pseudo_loss.cpu().item()
+
         self.protos = self.protos.detach()
         
         return loss, loss_dict
@@ -369,7 +363,7 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "Palm6_CASBUSI_224"
+    head_name = "Palm6_CASBUSI_224_2"
     
     dataset_name = 'export_oneLesions' #'export_03_18_2024'
     label_columns = ['Has_Malignant']
@@ -439,12 +433,7 @@ if __name__ == '__main__':
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
     
     # LOSS INIT
-    class Args:
-        def __init__(self, nviews, cache_size):
-            self.nviews = nviews
-            self.cache_size = cache_size
-    palm_args = Args(nviews=1, cache_size=50)
-    palm = PALM(palm_args).cuda()
+    palm = PALM(nviews = 1, num_classes=2, n_protos=6, k = 5, lambda_pcon=1).cuda()
     BCE_loss = nn.BCELoss()
     
     optimizer = optim.SGD(model.parameters(),
@@ -482,7 +471,7 @@ if __name__ == '__main__':
     warmup, pickup_warmup) = setup_model(model, optimizer, config)
 
     #pickup_warmup = False
-    warmup = true
+    #warmup = true
     
     # Training loop
     while epoch < total_epochs:
@@ -555,7 +544,7 @@ if __name__ == '__main__':
                     # Get predictions from PALM
                     with torch.no_grad():
                         palm_predicted_classes = palm.predict(labeled_features)
-                        instance_predicted_classes = (labeled_instance_labels) > 0.5
+                        instance_predicted_classes = (labeled_instance_predictions) > 0.5
 
                         # Calculate accuracy for PALM predictions
                         palm_correct = (palm_predicted_classes == labeled_instance_labels).sum().item()

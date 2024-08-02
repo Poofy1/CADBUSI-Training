@@ -695,10 +695,7 @@ Embeddingmodel(
     (avgpool): AdaptiveAvgPool2d(output_size=1)
     (classifier): Sequential(
       (0): Dropout(p=0.3, inplace=True)
-      (1): Sequential(
-        (0): Dropout(p=0.5, inplace=False)
-        (1): Linear(in_features=1536, out_features=512, bias=True)
-      )
+      (1): Linear(in_features=1536, out_features=512, bias=True)
     )
   )
   (aggregator): Linear_Classifier(

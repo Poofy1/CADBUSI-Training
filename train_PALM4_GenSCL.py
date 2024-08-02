@@ -184,12 +184,12 @@ class GenSupConLossv2(nn.Module):
         return loss
 
 class PALM(nn.Module):
-    def __init__(self, args, num_classes=2, n_protos=100, proto_m=0.99, temp=0.1, lambda_pcon=1, k=5, feat_dim=128, epsilon=0.05):
+    def __init__(self, nviews, num_classes=2, n_protos=50, proto_m=0.99, temp=0.1, lambda_pcon=1, k=5, feat_dim=128, epsilon=0.05):
         super(PALM, self).__init__()
         self.num_classes = num_classes
         self.temp = temp  # temperature scaling
-        self.nviews = args.nviews
-        self.cache_size = args.cache_size
+        self.nviews = nviews
+        self.cache_size = int(n_protos / num_classes)
         
         self.lambda_pcon = lambda_pcon
         
@@ -455,12 +455,7 @@ if __name__ == '__main__':
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
     
     
-    class Args:
-        def __init__(self, nviews, cache_size):
-            self.nviews = nviews
-            self.cache_size = cache_size
-    palm_args = Args(nviews=1, cache_size=50)
-    palm = PALM(palm_args, lambda_pcon=0).cuda()
+    palm = PALM(nviews = 1, num_classes=2, n_protos=6, k = 5, lambda_pcon=0).cuda() #lambda_pcon = 0 means prototypes are not moved
     genscl = GenSupConLossv2(temperature=0.07, base_temperature=0.07)
     BCE_loss = nn.BCELoss()
     
@@ -501,6 +496,8 @@ if __name__ == '__main__':
     model_folder, model_name, train_losses, valid_losses, epoch,
     val_acc_best, val_loss_best, selection_mask, 
     warmup, pickup_warmup) = setup_model(model, optimizer, config)
+
+    pickup_warmup = False
 
     # Training loop
     while epoch < total_epochs:

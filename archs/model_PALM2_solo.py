@@ -17,7 +17,11 @@ class Embeddingmodel(nn.Module):
             nf = 512
             # Replace the last fully connected layer with a new one
             num_features = self.encoder.classifier[1].in_features
-            self.encoder.classifier[1] = nn.Linear(num_features, nf)
+            #self.encoder.classifier[1] = nn.Linear(num_features, nf)
+            self.encoder.classifier[1] = nn.Sequential(
+                nn.Dropout(0.5),
+                nn.Linear(num_features, nf)
+            )
         else:
             self.encoder = create_timm_body(arch, pretrained=pretrained_arch)
             nf = num_features_model(nn.Sequential(*self.encoder.children()))
@@ -142,7 +146,6 @@ class Linear_Classifier(nn.Module):
         A = torch.transpose(instance_scores, 1, 0)  # ATTENTION_BRANCHESxK
         A = F.softmax(A, dim=1)  # softmax over K
         
-
         # Aggregate instance-level predictions
         Y_prob = torch.mm(A, y_hat)  # ATTENTION_BRANCHESxC
 
