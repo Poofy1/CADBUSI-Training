@@ -10,7 +10,8 @@ import torch.optim as optim
 from torch.utils.data import Sampler
 from util.format_data import *
 from util.sudo_labels import *
-from archs.model_PALM2_split import *
+from archs.model_PALM2_solo import *
+from loss.palm import PALM
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -129,208 +130,6 @@ def collate_instance(batch):
     batch_labels = torch.tensor(batch_labels, dtype=torch.long)
 
     return batch_data, batch_labels, batch_ids
-
-
-
-class PALM(nn.Module):
-    def __init__(self, nviews, num_classes=2, n_protos=50, proto_m=0.99, temp=0.1, lambda_pcon=1, k=5, feat_dim=128, epsilon=0.05):
-        super(PALM, self).__init__()
-        self.num_classes = num_classes
-        self.temp = temp  # temperature scaling
-        self.nviews = nviews
-        self.cache_size = int(n_protos / num_classes)
-        
-        self.lambda_pcon = lambda_pcon
-        
-        self.feat_dim = feat_dim
-        
-        self.epsilon = epsilon
-        self.sinkhorn_iterations = 3
-        self.k = min(k, self.cache_size)
-        
-        self.n_protos = n_protos
-        self.proto_m = proto_m
-        self.register_buffer("protos", torch.rand(self.n_protos,feat_dim))
-        self.protos = F.normalize(self.protos, dim=-1)
-        
-        
-        
-        # Initialize class counts for each prototype
-        self.proto_class_counts = torch.zeros(self.n_protos, self.num_classes).cuda() # ADDED
-        
-    def sinkhorn(self, features):
-        out = torch.matmul(features, self.protos.detach().T)
-            
-        Q = torch.exp(out.detach() / self.epsilon).t()# Q is K-by-B for consistency with notations from our paper
-        B = Q.shape[1]  # number of samples to assign
-        K = Q.shape[0] # how many prototypes
-
-        # make the matrix sums to 1
-        sum_Q = torch.sum(Q)
-        if torch.isinf(sum_Q):
-            self.protos = F.normalize(self.protos, dim=1, p=2)
-            out = torch.matmul(features, self.ws(self.protos.detach()).T)
-            Q = torch.exp(out.detach() / self.epsilon).t()# Q is K-by-B for consistency with notations from our paper
-            sum_Q = torch.sum(Q)
-        Q /= sum_Q
-
-        for _ in range(self.sinkhorn_iterations):
-            # normalize each row: total weight per prototype must be 1/K
-            Q = F.normalize(Q, dim=1, p=1)
-            Q /= K
-
-            # normalize each column: total weight per sample must be 1/B
-            Q = F.normalize(Q, dim=0, p=1)
-            Q /= B
-
-        Q *= B
-        return Q.t()
-        
-    def mle_loss(self, features, targets):
-        # update prototypes by EMA
-        #features = torch.cat(torch.unbind(features, dim=1), dim=0)
-        # Disabled becuase features are already correct shape?
-        
-        anchor_labels = targets.contiguous().repeat(self.nviews).view(-1, 1)
-        contrast_labels = torch.arange(self.num_classes).repeat(self.cache_size).view(-1,1).cuda()
-        mask = torch.eq(anchor_labels, contrast_labels.T).float().cuda()
-                
-        Q = self.sinkhorn(features)
-
-        # topk
-        if self.k > 0:
-            update_mask = mask*Q
-            _, topk_idx = torch.topk(update_mask, self.k, dim=1)
-            topk_mask = torch.scatter(
-                torch.zeros_like(update_mask),
-                1,
-                topk_idx,
-                1
-            ).cuda()
-            update_mask = F.normalize(F.normalize(topk_mask*update_mask, dim=1, p=1),dim=0, p=1)
-        # original
-        else:
-            update_mask = F.normalize(F.normalize(mask * Q, dim=1, p=1),dim=0, p=1)
-        update_features = torch.matmul(update_mask.T, features)
-        
-        self.proto_class_counts += torch.matmul(update_mask.T, F.one_hot(targets, num_classes=self.num_classes).float()) # ADDED
-        
-        protos = self.protos
-        protos = self.proto_m * protos + (1-self.proto_m) * update_features
-
-        self.protos = F.normalize(protos, dim=1, p=2)
-        
-        Q = self.sinkhorn(features)
-        
-        proto_dis = torch.matmul(features, self.protos.detach().T)
-        anchor_dot_contrast = torch.div(proto_dis, self.temp)
-        logits = anchor_dot_contrast
-       
-        if self.k > 0:
-            loss_mask = mask*Q
-            _, topk_idx = torch.topk(update_mask, self.k, dim=1)
-            topk_mask = torch.scatter(
-                torch.zeros_like(update_mask),
-                1,
-                topk_idx,
-                1
-            ).cuda()
-            loss_mask = F.normalize(topk_mask*loss_mask, dim=1, p=1)
-            masked_logits = loss_mask * logits 
-        else:  
-            masked_logits = F.normalize(Q*mask, dim=1, p=1) * logits
-    
-        pos=torch.sum(masked_logits, dim=1)
-        neg=torch.log(torch.sum(torch.exp(logits), dim=1, keepdim=True))
-        log_prob=pos-neg
-        
-        loss = -torch.mean(log_prob)
-        return loss   
-    
-    def proto_contra(self):
-        
-        protos = F.normalize(self.protos, dim=1)
-        batch_size = self.num_classes
-        
-        proto_labels = torch.arange(self.num_classes).repeat(self.cache_size).view(-1,1).cuda()
-        mask = torch.eq(proto_labels, proto_labels.T).float().cuda()    
-
-        contrast_count = self.cache_size
-        contrast_feature = protos
-
-        anchor_feature = contrast_feature
-        anchor_count = contrast_count
-
-        # compute logits
-        anchor_dot_contrast = torch.div(
-            torch.matmul(anchor_feature, contrast_feature.T),
-            0.5)
-        # for numerical stability
-        logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
-        logits = anchor_dot_contrast - logits_max.detach()
-
-        # mask-out self-contrast cases
-        logits_mask = torch.scatter(
-            torch.ones_like(mask),
-            1,
-            torch.arange(batch_size * anchor_count).view(-1, 1).to('cuda'),
-            0
-        )
-        mask = mask*logits_mask
-        
-        pos = torch.sum(F.normalize(mask, dim=1, p=1)*logits, dim=1)
-        neg=torch.log(torch.sum(logits_mask * torch.exp(logits), dim=1))
-        log_prob=pos-neg
-
-        # loss
-        loss = - torch.mean(log_prob)
-        return loss
-    
-    
-    def predict(self, features):
-        # Assign the majority class to each prototype based on class counts
-        _, proto_classes = torch.max(self.proto_class_counts, dim=1)
-        
-        # Compute the similarity between input features and prototypes
-        similarity = torch.matmul(features, self.protos.T)
-        
-        # Get the index of the prototype with the highest similarity
-        _, prototype_indices = torch.max(similarity, dim=1)
-        
-        # Map the prototype indices to their corresponding class labels
-        predicted_classes = proto_classes[prototype_indices]
-        
-        return predicted_classes
-    
-    def get_nearest_prototype(self, features):
-        # Compute distances to all prototypes
-        distances = torch.cdist(features, self.protos)
-        
-        # Find the closest prototype for each feature
-        closest_distances, closest_indices = torch.min(distances, dim=1)
-        
-        # Get the class labels for the closest prototypes
-        _, proto_classes = torch.max(self.proto_class_counts, dim=1)
-        closest_classes = proto_classes[closest_indices]
-        
-        return closest_distances, closest_classes
-
-    def forward(self, features, targets):
-        loss = 0
-        loss_dict = {}
-
-        g_con = self.mle_loss(features, targets)
-        loss += g_con
-        loss_dict['mle'] = g_con.cpu().item()
-                    
-        if self.lambda_pcon > 0:            
-            g_dis = self.lambda_pcon * self.proto_contra()
-            loss += g_dis
-            loss_dict['proto_contra'] = g_dis.cpu().item()
-                                
-        self.protos = self.protos.detach()
-                
-        return loss, loss_dict
     
     
 
@@ -411,7 +210,7 @@ if __name__ == '__main__':
     model = Embeddingmodel(arch, pretrained_arch, num_classes = num_labels).cuda()
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")  
     
-    palm = PALM(nviews = 1, num_classes=2, n_protos=6, k = 5, lambda_pcon=1).cuda()
+    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 90, lambda_pcon=1).cuda()
     BCE_loss = nn.BCELoss()
     CE_loss = nn.CrossEntropyLoss()
     
@@ -513,12 +312,9 @@ if __name__ == '__main__':
                         palm_loss, loss_dict = palm(labeled_features, labeled_instance_labels)
                     else:
                         palm_loss = torch.tensor(0.0).to(device)
-                        loss_dict = {}
-                    
-                    # Create a tensor to hold all labels, including pseudo-labels for unlabeled data
-                    combined_labels = instance_labels.clone().float()
-                    confidence_mask = torch.ones_like(instance_labels, dtype=torch.bool)
 
+                    combined_labels = instance_labels.clone().float()
+    
                     # Handle unlabeled instances (-1)
                     if unlabeled_mask.any():
                         unlabeled_features = features[unlabeled_mask]
@@ -529,39 +325,32 @@ if __name__ == '__main__':
                         
                         for i, idx in enumerate(unlabeled_indices):
                             unique_id = unique_ids[idx]
-                            instance_pred = instance_predictions[idx].item()
                             
-                            # Only update if prediction is confident (> 0.8 or < 0.2)
-                            if instance_pred > 0.8 or instance_pred < 0.2 or unique_id in unknown_labels:
-                                if unique_id not in unknown_labels:
-                                    unknown_labels[unique_id] = 0.5  # Initialize to 0.5 if not present
-                                
-                                # Apply momentum update
-                                current_label = unknown_labels[unique_id]
-                                new_label = proto_class[i].item()
-                                updated_label = unknown_label_momentum * current_label + (1 - unknown_label_momentum) * new_label
-                                updated_label = max(0, min(1, updated_label)) # Clamp the updated label to [0, 1]
-                                unknown_labels[unique_id] = updated_label
-                                
-                                # Update the combined_labels tensor with the new pseudo-label
-                                combined_labels[idx] = updated_label
-                            else:
-                                # If not confident, mark this instance to be excluded from loss calculation
-                                confidence_mask[idx] = False
-
-                    # Apply confidence mask to combined_labels and instance_predictions
-                    confident_combined_labels = combined_labels[confidence_mask]
-                    confident_instance_predictions = instance_predictions[confidence_mask]
+                            if unique_id not in unknown_labels:
+                                unknown_labels[unique_id] = 0.5  # Initialize to 0.5 if not present
+                            
+                            # Apply momentum update to all instances
+                            current_label = unknown_labels[unique_id]
+                            new_label = proto_class[i].item()
+                            updated_label = unknown_label_momentum * current_label + (1 - unknown_label_momentum) * new_label
+                            updated_label = max(0, min(1, updated_label))  # Clamp the updated label to [0, 1]
+                            unknown_labels[unique_id] = updated_label
+                            
+                            # Update the combined_labels tensor with the new pseudo-label
+                            combined_labels[idx] = updated_label
                     
                     # Convert confident combined labels to one-hot vectors [Neg class, Pos class]
-                    combined_labels_one_hot = torch.zeros(confident_combined_labels.size(0), 2, device=device)
-                    combined_labels_one_hot[:, 0] = 1 - confident_combined_labels
-                    combined_labels_one_hot[:, 1] = confident_combined_labels
+                    combined_labels_one_hot = torch.zeros(combined_labels.size(0), 2, device=device)
+                    combined_labels_one_hot[:, 0] = 1 - combined_labels
+                    combined_labels_one_hot[:, 1] = combined_labels
 
                     # Prepare confident instance predictions
-                    instance_predictions_vector = confident_instance_predictions.unsqueeze(1)
+                    instance_predictions_vector = instance_predictions.unsqueeze(1)
                     instance_predictions_vector = torch.cat([1 - instance_predictions_vector, instance_predictions_vector], dim=1)
-
+                    
+                    
+                    
+                    
                     # Calculate CE loss for confident instances
                     ce_loss_value = CE_loss(instance_predictions_vector, combined_labels_one_hot)
 
@@ -608,6 +397,7 @@ if __name__ == '__main__':
                         # Forward pass
                         _, _, instance_predictions, features = model(images, projector=True)
                         features.to(device)
+
 
                         # Get predictions
                         palm_predicted_classes = palm.predict(features)
