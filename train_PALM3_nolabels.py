@@ -234,33 +234,32 @@ if __name__ == '__main__':
         "learning_rate": learning_rate,
     }
 
-    (model, optimizer, head_folder, pretrained_name, 
-    model_folder, model_name, train_losses, valid_losses, epoch,
-    val_acc_best, val_loss_best, selection_mask, 
-    warmup, pickup_warmup) = setup_model(model, optimizer, config)
-
+    model, optimizer, state = setup_model(model, optimizer, config)
+    
     # Training loop
-    while epoch < total_epochs:
-
-        print(f'Warmup Mode: {warmup}')
-        if not pickup_warmup: # Are we resuming from a head model?
+    while state['epoch'] < total_epochs:
+        
+        
+        if not state['pickup_warmup']: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
-            instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, show_groundtruth = False)
-            instance_dataset_val = Instance_Dataset(bags_val, selection_mask, transform=train_transform, show_groundtruth = True)
+            instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=False)
+            instance_dataset_val = Instance_Dataset(bags_val, state['selection_mask'], transform=val_transform, warmup=True)
             #train_sampler = InstanceSampler(instance_dataset_train, instance_batch_size, strategy=1)
             val_sampler = InstanceSampler(instance_dataset_val, instance_batch_size, strategy=2)
             instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_size=instance_batch_size, collate_fn = collate_instance)
             instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_sampler=val_sampler, collate_fn = collate_instance)
             
-            if warmup:
+            if state['warmup']:
                 target_count = warmup_epochs
             else:
                 target_count = feature_extractor_train_count
             
             
             
+
             print('Training Feature Extractor')
+            print(f'Warmup Mode: {state["warmup"]}')
             
 
             model.train()
@@ -370,148 +369,27 @@ if __name__ == '__main__':
                 print(f"Number of positive labels: {np.sum(instance_labels)} / {len(instance_labels)}")
                                             
                 """# Save the model
-                if val_acc > val_acc_best:
-                    val_acc_best = val_losses.avg
-                    target_folder = head_folder
-                    target_name = pretrained_name
+                if instance_val_acc > state['val_acc_best']:
+                    state['val_acc_best'] = instance_val_acc
+                    if state['warmup']:
+                        target_folder = state['head_folder']
+                        target_name = state['pretrained_name']
+                    else:
+                        target_folder = state['model_folder']
+                        target_name = state['model_name']
                     all_targs = []
                     all_preds = []
                     
-                    save_state(epoch, label_columns, train_acc, val_losses.avg, val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, train_losses, valid_losses,)
-                    print("Saved checkpoint due to improved val_acc")"""
+                    
+                    save_state(state['epoch'], label_columns, instance_train_acc, 0, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
+                    print("Saved checkpoint due to improved val_acc")
+                """
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-        if pickup_warmup: 
-            pickup_warmup = False
-        if warmup:
+        if state['pickup_warmup']: 
+            state['pickup_warmup'] = False
+        if state['warmup']:
             print("Warmup Phase Finished")
-            warmup = False
+            state['warmup'] = False
         
-        
-        """print('Training Aggregator')   
-        for i in range(MIL_train_count):
-            
-            model.train()
-            total_loss = 0.0
-            train_bag_logits = {}
-            total_acc = 0
-            total = 0
-            correct = 0
-
-            for (data, yb, instance_yb, id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)):
-                xb, yb = data, yb.cuda()
-            
-                optimizer.zero_grad()
-                
-                outputs, instance_pred, _ = model(xb, pred_on = True)
-                
-                # Calculate bag-level loss
-                loss = BCE_loss(outputs, yb)
-
-                loss.backward()
-                optimizer.step()
-
-                total_loss += loss.item() * yb.size(0)
-                predicted = (outputs > 0.5).float()
-                total += yb.size(0)
-                correct += (predicted == yb).sum().item()
-                
-                for instance_id, bag_id in enumerate(id):
-                    train_bag_logits[bag_id] = instance_pred[instance_id].detach().cpu().numpy()
-
-            train_loss = total_loss / total
-            train_acc = correct / total
-
-            # Evaluation phase
-            model.eval()
-            total_val_loss = 0.0
-            total_val_acc = 0.0
-            total = 0
-            correct = 0
-            all_targs = []
-            all_preds = []
-
-            with torch.no_grad():
-                for (data, yb, instance_yb, id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
-                    xb, yb = data, yb.cuda()
-
-                    outputs, instance_pred, _ = model(xb, pred_on = True)
-                    #print(instance_pred)
-
-                    # Calculate bag-level loss
-                    loss = BCE_loss(outputs, yb)
-                    total_val_loss += loss.item() * yb.size(0)
-
-                    predicted = (outputs > 0.5).float()
-                    total += yb.size(0)
-                    correct += (predicted == yb).sum().item()
-
-                    # Confusion Matrix data
-                    all_targs.extend(yb.cpu().numpy())
-                    if len(predicted.size()) == 0:
-                        predicted = predicted.view(1)
-                    all_preds.extend(predicted.cpu().detach().numpy())
-            
-
-            val_loss = total_val_loss / total
-            val_acc = correct / total
-
-            train_losses.append(train_loss)
-            valid_losses.append(val_loss)
-
-            print(f"[{i+1}/{MIL_train_count}] | Acc | Loss")
-            print(f"Train | {train_acc:.4f} | {train_loss:.4f}")
-            print(f"Val | {val_acc:.4f} | {val_loss:.4f}")
-            
-            
-                        
-            
-            
-            
-
-            # Save the model
-            if val_loss < val_acc_best:
-                val_acc_best = val_loss
-                if warmup:
-                    target_folder = head_folder
-                    target_name = pretrained_name
-                else:
-                    target_folder = model_folder
-                    target_name = model_name
-                
-                save_state(epoch, label_columns, train_acc, val_loss, val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, train_losses, valid_losses,)
-                print("Saved checkpoint due to improved val_loss")
-                
-                # Create selection mask
-                predictions_ratio = prediction_anchor_scheduler(epoch, total_epochs, 0, initial_ratio, final_ratio)
-                #predictions_ratio = .9
-                selection_mask = create_selection_mask(train_bag_logits, predictions_ratio)
-                print("Created new sudo labels")
-                
-                epoch += 1
-                
-                # Save selection
-                with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
-                    pickle.dump(selection_mask, file)"""
-                    
-                    
-                    
-                    
-                    
-                    
-            #exit() # TEMP DEBUGGING
-

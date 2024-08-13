@@ -307,28 +307,23 @@ if __name__ == '__main__':
         "learning_rate": learning_rate,
     }
 
-    (model, optimizer, head_folder, pretrained_name, 
-    model_folder, model_name, train_losses, valid_losses, epoch,
-    val_acc_best, val_loss_best, selection_mask, 
-    warmup, pickup_warmup) = setup_model(model, optimizer, config)
-
-    pickup_warmup = False
-
+    model, optimizer, state = setup_model(model, optimizer, config)
+    
     # Training loop
-    while epoch < total_epochs:
+    while state['epoch'] < total_epochs:
         
         
-        if not pickup_warmup: # Are we resuming from a head model?
+        if not state['pickup_warmup']: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
-            instance_dataset_train = Instance_Dataset(bags_train, selection_mask, transform=train_transform, warmup=True)
-            instance_dataset_val = Instance_Dataset(bags_val, selection_mask, transform=val_transform, warmup=True)
+            instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=True)
+            instance_dataset_val = Instance_Dataset(bags_val, state['selection_mask'], transform=val_transform, warmup=True)
             train_sampler = WarmupSampler(instance_dataset_train, instance_batch_size, strategy=1)
-            val_sampler = WarmupSampler(instance_dataset_val, instance_batch_size, strategy=2)
-            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, collate_fn = collate_instance)
+            val_sampler = WarmupSampler(instance_dataset_val, instance_batch_size, strategy=1)
+            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, num_workers=4, collate_fn = collate_instance, pin_memory=True)
             instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_sampler=val_sampler, collate_fn = collate_instance)
             
-            if warmup:
+            if state['warmup']:
                 target_count = warmup_epochs
             else:
                 target_count = feature_extractor_train_count
@@ -337,6 +332,7 @@ if __name__ == '__main__':
             
 
             print('Training Feature Extractor')
+            print(f'Warmup Mode: {state["warmup"]}')
             
             # Unfreeze encoder
             for param in model.encoder.parameters():
@@ -453,29 +449,29 @@ if __name__ == '__main__':
                 print(f'[{i+1}/{target_count}] Val Loss:   N/A, Val Palm Acc: {palm_val_acc:.5f}, Val FC Acc: {instance_val_acc:.5f}')
                 
                 # Save the model
-                if instance_val_acc > val_acc_best:
-                    val_acc_best = instance_val_acc
-                    if warmup:
-                        target_folder = head_folder
-                        target_name = pretrained_name
+                if instance_val_acc > state['val_acc_best']:
+                    state['val_acc_best'] = instance_val_acc
+                    if state['warmup']:
+                        target_folder = state['head_folder']
+                        target_name = state['pretrained_name']
                     else:
-                        target_folder = model_folder
-                        target_name = model_name
+                        target_folder = state['model_folder']
+                        target_name = state['model_name']
                     all_targs = []
                     all_preds = []
                     
                     
-                    save_state(epoch, label_columns, instance_train_acc, 0, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, train_losses, valid_losses,)
+                    save_state(state['epoch'], label_columns, instance_train_acc, 0, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
                     print("Saved checkpoint due to improved val_acc")
 
 
 
 
-        if pickup_warmup: 
-            pickup_warmup = False
-        if warmup:
+        if state['pickup_warmup']: 
+            state['pickup_warmup'] = False
+        if state['warmup']:
             print("Warmup Phase Finished")
-            warmup = False
+            state['warmup'] = False
             
 
         
@@ -550,32 +546,33 @@ if __name__ == '__main__':
             val_loss = total_val_loss / total
             val_acc = correct / total
                 
-
+            state['train_losses'].append(train_loss)
+            state['valid_losses'].append(val_loss)    
             
-
             print(f"[{a+1}/{MIL_train_count}] | Acc | Loss")
             print(f"Train | {train_acc:.4f} | {train_loss:.4f}")
             print(f"Val | {val_acc:.4f} | {val_loss:.4f}")
 
             # Save the model
-            if val_loss < val_loss_best:
-                val_loss_best = val_loss
-                if warmup:
-                    target_folder = head_folder
-                    target_name = pretrained_name
+            if val_loss < state['val_loss_best']:
+                state['val_loss_best'] = val_loss
+                if state['warmup']:
+                    target_folder = state['head_folder']
+                    target_name = state['pretrained_name']
                 else:
-                    target_folder = model_folder
-                    target_name = model_name
+                    target_folder = state['model_folder']
+                    target_name = state['model_name']
                 
-                save_state(epoch, label_columns, train_acc, val_loss, val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, train_losses, valid_losses,)
+                save_state(state['epoch'], label_columns, train_acc, val_loss, val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
                 print("Saved checkpoint due to improved val_loss")
+
+                
+                state['epoch'] += 1
                 
                 # Create selection mask
-                predictions_ratio = prediction_anchor_scheduler(epoch, total_epochs, 0, initial_ratio, final_ratio)
+                predictions_ratio = prediction_anchor_scheduler(state['epoch'], total_epochs, 0, initial_ratio, final_ratio)
                 selection_mask = create_selection_mask(train_bag_logits, predictions_ratio)
                 print("Created new sudo labels")
-                
-                epoch += 1
                 
                 # Save selection
                 with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:

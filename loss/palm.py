@@ -25,8 +25,6 @@ class PALM(nn.Module):
         self.register_buffer("protos", torch.rand(self.n_protos,feat_dim))
         self.protos = F.normalize(self.protos, dim=-1)
         
-        
-        
         # Initialize class counts for each prototype
         self.proto_class_counts = torch.zeros(self.n_protos, self.num_classes).cuda() # ADDED
         
@@ -202,3 +200,37 @@ class PALM(nn.Module):
         self.protos = self.protos.detach()
                 
         return loss, loss_dict
+    
+    
+    
+    
+    # Saving / Loading State
+    def save_state(self, filename):
+        state = {
+            'protos': self.protos,
+            'proto_class_counts': self.proto_class_counts,
+            'num_classes': self.num_classes,
+            'temp': self.temp,
+            'nviews': self.nviews,
+            'cache_size': self.cache_size,
+            'lambda_pcon': self.lambda_pcon,
+            'feat_dim': self.feat_dim,
+            'epsilon': self.epsilon,
+            'sinkhorn_iterations': self.sinkhorn_iterations,
+            'k': self.k,
+            'n_protos': self.n_protos,
+            'proto_m': self.proto_m
+        }
+        
+        with open(filename, 'wb') as f:
+            pickle.dump(state, f)
+        
+    def load_state(self, filename):
+        with open(filename, 'rb') as f:
+            state = pickle.load(f)
+        
+        # Update all the attributes
+        for key, value in state.items():
+            setattr(self, key, value)
+            
+        print(f"PALM state loaded")

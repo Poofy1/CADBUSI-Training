@@ -7,12 +7,17 @@ from itertools import cycle
 
     
 def plot_loss(train_losses, valid_losses, save_path):
+    
+    if not train_losses or not valid_losses:
+        print("No loss data available to plot.")
+        return
+    
     # Create a plot
     plt.figure(figsize=(10, 6))
     plt.plot(train_losses, label='Training Loss', color='blue')
     plt.plot(valid_losses, label='Validation Loss', color='red')
 
-    plt.title('Training and Validation Losses')
+    plt.title('Bag Loss')
     plt.xlabel('Epochs')
     plt.ylabel('Loss')
     plt.legend()
@@ -189,7 +194,7 @@ def setup_model(model, optimizer, config):
     :param model: The model to set up
     :param optimizer: The optimizer for the model
     :param config: A dictionary containing all necessary configuration parameters
-    :return: Tuple containing (model, optimizer, epoch, val_acc_best, val_loss_best, selection_mask, warmup, pickup_warmup)
+    :return: A dictionary containing the state of the model setup
     """
     # Get the directory of the current script
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -209,39 +214,47 @@ def setup_model(model, optimizer, config):
     model_path = os.path.join(model_folder, f"{model_name}.pth")
     stats_path = os.path.join(model_folder, f"{model_name}_stats.pkl")
     
-    val_acc_best = 0
-    val_loss_best = 99999
-    selection_mask = []
-    train_losses = []
-    valid_losses = []
-    epoch = 0
-    warmup = False
-    pickup_warmup = False
+    state = {
+        'optimizer': optimizer,
+        'head_folder': head_folder,
+        'pretrained_name': pretrained_name,
+        'model_folder': model_folder,
+        'model_name': model_name,
+        'train_losses': [],
+        'valid_losses': [],
+        'epoch': 0,
+        'val_acc_best': 0,
+        'val_loss_best': 99999,
+        'selection_mask': [],
+        'warmup': False,
+        'pickup_warmup': False
+    }
 
     if os.path.exists(model_path):
         print(f"Loaded pre-existing model from {model_name}")
         encoder_state_dict = torch.load(model_path)
         encoder_state_dict = {k.replace('encoder.', ''): v for k, v in encoder_state_dict.items() if k.startswith('encoder.')}
         model.encoder.load_state_dict(encoder_state_dict)
-        train_losses, valid_losses, epoch, val_acc_best, selection_mask = load_state(stats_path, model_folder)
+        state['train_losses'], state['valid_losses'], state['epoch'], state['val_acc_best'], state['selection_mask'] = load_state(stats_path, model_folder)
     else:
         print(f"{model_name} does not exist, creating new instance")
         os.makedirs(model_folder, exist_ok=True)
         
         if os.path.exists(head_path):
-            pickup_warmup = True
+            state['pickup_warmup'] = True
             encoder_state_dict = torch.load(head_path)
             encoder_state_dict = {k.replace('encoder.', ''): v for k, v in encoder_state_dict.items() if k.startswith('encoder.')}
             model.encoder.load_state_dict(encoder_state_dict)
             print(f"Loaded pre-trained model from {pretrained_name}")
         else:
-            warmup = True
+            state['warmup'] = True
             os.makedirs(head_folder, exist_ok=True)
 
         save_config(config, model_folder)
         save_model_architecture(model, model_folder)
 
-    return model, optimizer, head_folder, pretrained_name, model_folder, model_name, train_losses, valid_losses, epoch, val_acc_best, val_loss_best, selection_mask, warmup, pickup_warmup
+    return model, optimizer, state
+
 
 def save_config(config, folder):
     config_path = os.path.join(folder, "config.json")
