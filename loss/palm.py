@@ -226,11 +226,13 @@ class PALM(nn.Module):
             pickle.dump(state, f)
         
     def load_state(self, filename):
-        with open(filename, 'rb') as f:
-            state = pickle.load(f)
-        
-        # Update all the attributes
-        for key, value in state.items():
-            setattr(self, key, value)
+        print(filename)
+        if os.path.exists(filename):
+            with open(filename, 'rb') as f:
+                state = pickle.load(f)
             
-        print(f"PALM state loaded")
+            # Update all the attributes
+            for key, value in state.items():
+                setattr(self, key, value)
+                
+            print(f"PALM state loaded")

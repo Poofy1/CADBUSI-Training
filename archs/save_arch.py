@@ -213,13 +213,14 @@ def setup_model(model, optimizer, config):
     model_folder = os.path.join(parent_dir, "models", pretrained_name, model_name)
     model_path = os.path.join(model_folder, f"{model_name}.pth")
     stats_path = os.path.join(model_folder, f"{model_name}_stats.pkl")
-    
+
     state = {
         'optimizer': optimizer,
         'head_folder': head_folder,
         'pretrained_name': pretrained_name,
         'model_folder': model_folder,
         'model_name': model_name,
+        'palm_path': None,
         'train_losses': [],
         'valid_losses': [],
         'epoch': 0,
@@ -236,9 +237,11 @@ def setup_model(model, optimizer, config):
         encoder_state_dict = {k.replace('encoder.', ''): v for k, v in encoder_state_dict.items() if k.startswith('encoder.')}
         model.encoder.load_state_dict(encoder_state_dict)
         state['train_losses'], state['valid_losses'], state['epoch'], state['val_acc_best'], state['selection_mask'] = load_state(stats_path, model_folder)
+        state['palm_path'] = os.path.join(model_folder, "palm_state.pkl")
     else:
         print(f"{model_name} does not exist, creating new instance")
         os.makedirs(model_folder, exist_ok=True)
+        state['palm_path'] = os.path.join(head_folder, "palm_state.pkl")
         
         if os.path.exists(head_path):
             state['pickup_warmup'] = True
@@ -252,7 +255,9 @@ def setup_model(model, optimizer, config):
 
         save_config(config, model_folder)
         save_model_architecture(model, model_folder)
-
+        
+    
+    
     return model, optimizer, state
 
 

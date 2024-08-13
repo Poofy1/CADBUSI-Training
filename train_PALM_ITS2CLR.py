@@ -234,6 +234,7 @@ if __name__ == '__main__':
     }
 
     model, optimizer, state = setup_model(model, optimizer, config)
+    palm.load_state(state['palm_path'])
     
     # Training loop
     while state['epoch'] < total_epochs:
@@ -342,6 +343,7 @@ if __name__ == '__main__':
                     
                     
                     save_state(state['epoch'], label_columns, train_acc, val_losses.avg, val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
+                    palm.save_state(os.path.join(target_folder, "palm_state.pkl"))
                     print("Saved checkpoint due to improved val_acc")
 
 

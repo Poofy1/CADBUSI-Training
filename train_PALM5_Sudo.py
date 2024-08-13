@@ -245,7 +245,8 @@ if __name__ == '__main__':
     }
 
     model, optimizer, state = setup_model(model, optimizer, config)
-
+    palm.load_state(state['palm_path'])
+    
     # Initialize dictionary for unknown labels
     unknown_labels = {}
     unknown_label_momentum = 0.9
@@ -426,6 +427,7 @@ if __name__ == '__main__':
                     
                     
                     save_state(state['epoch'], label_columns, instance_train_acc, 0, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
+                    palm.save_state(os.path.join(target_folder, "palm_state.pkl"))
                     print("Saved checkpoint due to improved val_acc")
 
 
