@@ -463,12 +463,6 @@ if __name__ == '__main__':
             print(f"[{i+1}/{MIL_train_count}] | Acc | Loss")
             print(f"Train | {train_acc:.4f} | {train_loss:.4f}")
             print(f"Val | {val_acc:.4f} | {val_loss:.4f}")
-            
-            
-                        
-            
-            
-            
 
             # Save the model
             if val_loss < state['val_loss_best']:

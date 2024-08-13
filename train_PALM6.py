@@ -389,10 +389,10 @@ if __name__ == '__main__':
     pretrained_arch = False
 
     #ITS2CLR Config
-    feature_extractor_train_count = 1 # 6
-    MIL_train_count = 1
+    feature_extractor_train_count = 6 # 6
+    MIL_train_count = 6
     total_epochs = 50
-    warmup_epochs = 1
+    warmup_epochs = 10
     learning_rate=0.001
     reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
     
@@ -466,6 +466,7 @@ if __name__ == '__main__':
     }
     
     model, optimizer, state = setup_model(model, optimizer, config)
+    palm.load_state(state['palm_path'])
     
     # Training loop
     while state['epoch'] < total_epochs:
@@ -606,6 +607,7 @@ if __name__ == '__main__':
                     
                     
                     save_state(state['epoch'], label_columns, instance_train_acc, 0, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
+                    palm.save_state(os.path.join(target_folder, "palm_state.pkl"))
                     print("Saved checkpoint due to improved val_acc")
 
 

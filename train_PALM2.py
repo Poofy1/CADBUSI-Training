@@ -165,12 +165,12 @@ if __name__ == '__main__':
     pretrained_arch = False
 
     #ITS2CLR Config
-    feature_extractor_train_count = 6 # 6
-    MIL_train_count = 6
+    feature_extractor_train_count = 1 # 6
+    MIL_train_count = 1
     initial_ratio = .5 #0.3 # --% preditions included
     final_ratio = .8 #0.85 # --% preditions included
     total_epochs = 50
-    warmup_epochs = 10
+    warmup_epochs = 1
     learning_rate=0.001
     reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
     
@@ -246,12 +246,13 @@ if __name__ == '__main__':
     }
 
     model, optimizer, state = setup_model(model, optimizer, config)
+    palm.load_state(state['palm_path'])
     
     # Training loop
     while state['epoch'] < total_epochs:
         
         
-        if not state['pickup_warmup']: # Are we resuming from a head model?
+        if True: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
             instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=True)
@@ -380,6 +381,7 @@ if __name__ == '__main__':
                     
                     
                     save_state(state['epoch'], label_columns, instance_train_acc, 0, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
+                    palm.save_state(os.path.join(target_folder, "palm_state.pkl"))
                     print("Saved checkpoint due to improved val_acc")
 
 
