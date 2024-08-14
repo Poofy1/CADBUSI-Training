@@ -165,12 +165,12 @@ if __name__ == '__main__':
     pretrained_arch = False
 
     #ITS2CLR Config
-    feature_extractor_train_count = 1 # 6
-    MIL_train_count = 1
+    feature_extractor_train_count = 6 # 6
+    MIL_train_count = 6
     initial_ratio = .5 #0.3 # --% preditions included
     final_ratio = .8 #0.85 # --% preditions included
     total_epochs = 50
-    warmup_epochs = 1
+    warmup_epochs = 10
     learning_rate=0.001
     reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
     
@@ -284,6 +284,7 @@ if __name__ == '__main__':
                 palm_total_correct = 0
                 instance_total_correct = 0
                 total_samples = 0
+                max_dist = 0
                 model.train()
                 
                 # Iterate over the training data
@@ -312,7 +313,7 @@ if __name__ == '__main__':
                     
                     # Get predictions from PALM
                     with torch.no_grad():
-                        palm_predicted_classes = palm.predict(features)
+                        palm_predicted_classes, dist = palm.predict(features)
                         instance_predicted_classes = (instance_predictions) > 0.5
 
                         # Calculate accuracy for PALM predictions
@@ -324,6 +325,10 @@ if __name__ == '__main__':
                         instance_total_correct += instance_correct
                         
                         total_samples += instance_labels.size(0)
+                        
+                        # Update max distance for this epoch
+                        max_dist_batch = dist.max().item()
+                        max_dist = max(max_dist, max_dist_batch)
 
                 # Calculate accuracies
                 palm_train_acc = palm_total_correct / total_samples
@@ -347,7 +352,7 @@ if __name__ == '__main__':
                         features.to(device)
 
                         # Get predictions
-                        palm_predicted_classes = palm.predict(features)
+                        palm_predicted_classes, _ = palm.predict(features)
                         instance_predicted_classes = (instance_predictions) > 0.5
 
                         # Calculate accuracy for PALM predictions
@@ -381,7 +386,7 @@ if __name__ == '__main__':
                     
                     
                     save_state(state['epoch'], label_columns, instance_train_acc, 0, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
-                    palm.save_state(os.path.join(target_folder, "palm_state.pkl"))
+                    palm.save_state(os.path.join(target_folder, "palm_state.pkl"), max_dist)
                     print("Saved checkpoint due to improved val_acc")
 
 

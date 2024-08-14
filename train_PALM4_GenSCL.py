@@ -347,6 +347,7 @@ if __name__ == '__main__':
                 palm_total_correct = 0
                 instance_total_correct = 0
                 total_samples = 0
+                max_dist = 0
                 
                 # Iterate over the training data
                 for idx, (images, instance_labels) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
@@ -393,18 +394,22 @@ if __name__ == '__main__':
                     
                     # Get predictions from PALM
                     with torch.no_grad():
-                        palm_predicted_classes = palm.predict(zk)
+                        palm_predicted_classes, dist = palm.predict(zk)
                         instance_predicted_classes = (instance_predictions[:bsz]) > 0.5
 
-                    # Calculate accuracy for PALM predictions
-                    palm_correct = (palm_predicted_classes == instance_labels).sum().item()
-                    palm_total_correct += palm_correct
-                    
-                    # Calculate accuracy for instance predictions
-                    instance_correct = (instance_predicted_classes == instance_labels).sum().item()
-                    instance_total_correct += instance_correct
-                    
-                    total_samples += instance_labels.size(0)
+                        # Calculate accuracy for PALM predictions
+                        palm_correct = (palm_predicted_classes == instance_labels).sum().item()
+                        palm_total_correct += palm_correct
+                        
+                        # Calculate accuracy for instance predictions
+                        instance_correct = (instance_predicted_classes == instance_labels).sum().item()
+                        instance_total_correct += instance_correct
+                        
+                        total_samples += instance_labels.size(0)
+                        
+                        # Update max distance for this epoch
+                        max_dist_batch = dist.max().item()
+                        max_dist = max(max_dist, max_dist_batch)
 
                 # Calculate accuracies
                 palm_train_acc = palm_total_correct / total_samples
@@ -429,7 +434,7 @@ if __name__ == '__main__':
                         features.to(device)
 
                         # Get predictions
-                        palm_predicted_classes = palm.predict(features)
+                        palm_predicted_classes, _ = palm.predict(features)
                         instance_predicted_classes = (instance_predictions) > 0.5
 
                         # Calculate accuracy for PALM predictions

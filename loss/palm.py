@@ -1,5 +1,4 @@
 import torch
-from torch.utils.data import Sampler
 from util.format_data import *
 from util.sudo_labels import *
 
@@ -27,6 +26,8 @@ class PALM(nn.Module):
         
         # Initialize class counts for each prototype
         self.proto_class_counts = torch.zeros(self.n_protos, self.num_classes).cuda() # ADDED
+        
+        self.distribution_limit = 0
         
     def sinkhorn(self, features):
         out = torch.matmul(features, self.protos.detach().T)
@@ -164,12 +165,16 @@ class PALM(nn.Module):
         similarity = torch.matmul(features, self.protos.T)
         
         # Get the index of the prototype with the highest similarity
-        _, prototype_indices = torch.max(similarity, dim=1)
+        distances, prototype_indices = torch.max(similarity, dim=1)
         
         # Map the prototype indices to their corresponding class labels
         predicted_classes = proto_classes[prototype_indices]
         
-        return predicted_classes
+        # Convert similarity to distance (assuming features and prototypes are normalized)
+        # Distance = 2 - 2 * similarity for normalized vectors
+        distances = 2 - 2 * distances
+        
+        return predicted_classes, distances
     
     def get_nearest_prototype(self, features):
         # Compute distances to all prototypes
@@ -205,7 +210,7 @@ class PALM(nn.Module):
     
     
     # Saving / Loading State
-    def save_state(self, filename):
+    def save_state(self, filename, max_distance = 0):
         state = {
             'protos': self.protos,
             'proto_class_counts': self.proto_class_counts,
@@ -219,14 +224,14 @@ class PALM(nn.Module):
             'sinkhorn_iterations': self.sinkhorn_iterations,
             'k': self.k,
             'n_protos': self.n_protos,
-            'proto_m': self.proto_m
+            'proto_m': self.proto_m,
+            'distribution_limit': max_distance
         }
         
         with open(filename, 'wb') as f:
             pickle.dump(state, f)
         
     def load_state(self, filename):
-        print(filename)
         if os.path.exists(filename):
             with open(filename, 'rb') as f:
                 state = pickle.load(f)

@@ -314,12 +314,16 @@ class PALM(nn.Module):
         similarity = torch.matmul(features, self.protos.T)
         
         # Get the index of the prototype with the highest similarity
-        _, prototype_indices = torch.max(similarity, dim=1)
+        distances, prototype_indices = torch.max(similarity, dim=1)
         
         # Map the prototype indices to their corresponding class labels
         predicted_classes = proto_classes[prototype_indices]
         
-        return predicted_classes
+        # Convert similarity to distance (assuming features and prototypes are normalized)
+        # Distance = 2 - 2 * similarity for normalized vectors
+        distances = 2 - 2 * distances
+        
+        return predicted_classes, distances
            
     def pseudo_label(self, features, confidence_threshold=0.9):
         with torch.no_grad():
@@ -356,6 +360,38 @@ class PALM(nn.Module):
         return loss, loss_dict
     
     
+    # Saving / Loading State
+    def save_state(self, filename, max_distance = 0):
+        state = {
+            'protos': self.protos,
+            'proto_class_counts': self.proto_class_counts,
+            'num_classes': self.num_classes,
+            'temp': self.temp,
+            'nviews': self.nviews,
+            'cache_size': self.cache_size,
+            'lambda_pcon': self.lambda_pcon,
+            'feat_dim': self.feat_dim,
+            'epsilon': self.epsilon,
+            'sinkhorn_iterations': self.sinkhorn_iterations,
+            'k': self.k,
+            'n_protos': self.n_protos,
+            'proto_m': self.proto_m,
+            'distribution_limit': max_distance
+        }
+        
+        with open(filename, 'wb') as f:
+            pickle.dump(state, f)
+        
+    def load_state(self, filename):
+        if os.path.exists(filename):
+            with open(filename, 'rb') as f:
+                state = pickle.load(f)
+            
+            # Update all the attributes
+            for key, value in state.items():
+                setattr(self, key, value)
+                
+            print(f"PALM state loaded")
 
 
 
@@ -499,6 +535,7 @@ if __name__ == '__main__':
                 palm_total_correct = 0
                 instance_total_correct = 0
                 total_samples = 0
+                max_dist = 0
                 model.train()
                 
                 # Iterate over the training data
@@ -538,7 +575,7 @@ if __name__ == '__main__':
                     
                     # Get predictions from PALM
                     with torch.no_grad():
-                        palm_predicted_classes = palm.predict(labeled_features)
+                        palm_predicted_classes, dist = palm.predict(labeled_features)
                         instance_predicted_classes = (labeled_instance_predictions) > 0.5
 
                         # Calculate accuracy for PALM predictions
@@ -550,6 +587,10 @@ if __name__ == '__main__':
                         instance_total_correct += instance_correct
                         
                         total_samples += labeled_instance_labels.size(0)
+                        
+                        # Update max distance for this epoch
+                        max_dist_batch = dist.max().item()
+                        max_dist = max(max_dist, max_dist_batch)
 
                 # Calculate accuracies
                 palm_train_acc = palm_total_correct / total_samples
@@ -573,7 +614,7 @@ if __name__ == '__main__':
                         features.to(device)
 
                         # Get predictions
-                        palm_predicted_classes = palm.predict(features)
+                        palm_predicted_classes, _ = palm.predict(features)
                         instance_predicted_classes = (instance_predictions) > 0.5
 
                         # Calculate accuracy for PALM predictions
@@ -607,7 +648,7 @@ if __name__ == '__main__':
                     
                     
                     save_state(state['epoch'], label_columns, instance_train_acc, 0, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
-                    palm.save_state(os.path.join(target_folder, "palm_state.pkl"))
+                    palm.save_state(os.path.join(target_folder, "palm_state.pkl"), max_dist)
                     print("Saved checkpoint due to improved val_acc")
 
 
