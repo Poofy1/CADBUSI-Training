@@ -127,10 +127,10 @@ def plot_Confusion(all_targs, all_preds, vocab, file_path):
     plt.close(fig)
 
 def save_state(e, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, bagmodel, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs, classifier=None):
-    model_path = f"{model_folder}/{model_name}.pth"
-    classifier_path = f"{model_folder}/{model_name}_classifier.pth"
-    optimizer_path = f"{model_folder}/{model_name}_optimizer.pth"
-    stats_path = f"{model_folder}/{model_name}_stats.pkl"
+    model_path = f"{model_folder}/model.pth"
+    classifier_path = f"{model_folder}/classifier.pth"
+    optimizer_path = f"{model_folder}/optimizer.pth"
+    stats_path = f"{model_folder}/stats.pkl"
 
     # Calculate current epoch metrics
     all_preds_np = all_preds.numpy() if isinstance(all_preds, torch.Tensor) else np.array(all_preds)
@@ -162,7 +162,7 @@ def save_state(e, label_columns, train_acc, val_loss, val_acc, model_folder, mod
             fpr, tpr, _ = roc_curve(all_targs_np, all_preds_np)
             all_fpr.append(fpr)
             all_tpr.append(tpr)
-            plot_single_roc_curve(fpr, tpr, f"{model_folder}/{model_name}_roc.png")
+            plot_single_roc_curve(fpr, tpr, f"{model_folder}/roc.png")
 
     # Save updated stats with all_fpr and all_tpr
     with open(stats_path, 'wb') as f:
@@ -176,13 +176,13 @@ def save_state(e, label_columns, train_acc, val_loss, val_acc, model_folder, mod
         }, f)
 
     # Save the plots
-    plot_loss(train_losses_over_epochs, valid_losses_over_epochs, f"{model_folder}/{model_name}_loss.png")
-    save_accuracy_to_file(e, train_acc, val_acc, label_columns, f"{model_folder}/{model_name}_accuracy.txt")
+    plot_loss(train_losses_over_epochs, valid_losses_over_epochs, f"{model_folder}/loss.png")
+    save_accuracy_to_file(e, train_acc, val_acc, label_columns, f"{model_folder}/accuracy.txt")
 
     # Save the confusion matrix if all_targs and all_preds are not empty
     if len(all_targs) > 0 and len(all_preds) > 0 and n_classes == 1:
         vocab = ['not malignant', 'malignant']
-        plot_Confusion(all_targs, all_preds, vocab, f"{model_folder}/{model_name}_confusion.png")
+        plot_Confusion(all_targs, all_preds, vocab, f"{model_folder}/confusion.png")
         
         
         
@@ -203,16 +203,15 @@ def setup_model(model, optimizer, config):
     
     dataset_name = config['dataset_name']
     arch = config['arch']
-    model_version = config['model_version']
-    model_name = f"{dataset_name}_{arch}_{model_version}"
+    model_name = config['model_version']
     pretrained_name = f"Head_{config['head_name']}_{arch}"
     
     head_folder = os.path.join(parent_dir, "models", pretrained_name)
     head_path = os.path.join(head_folder, f"{pretrained_name}.pth")
 
     model_folder = os.path.join(parent_dir, "models", pretrained_name, model_name)
-    model_path = os.path.join(model_folder, f"{model_name}.pth")
-    stats_path = os.path.join(model_folder, f"{model_name}_stats.pkl")
+    model_path = os.path.join(model_folder, f"model.pth")
+    stats_path = os.path.join(model_folder, f"stats.pkl")
 
     state = {
         'optimizer': optimizer,
@@ -260,6 +259,24 @@ def setup_model(model, optimizer, config):
     
     return model, optimizer, state
 
+
+def load_model_config(folder_path):
+    """
+    Load the configuration for a specific model.
+    """
+
+    # Construct the path to the config file
+    config_path = os.path.join(folder_path, "config.json")
+    
+    # Check if the config file exists
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"No configuration file found for model {folder_path}")
+    
+    # Load and return the configuration
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+    
+    return config
 
 def save_config(config, folder):
     config_path = os.path.join(folder, "config.json")
