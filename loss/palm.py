@@ -241,3 +241,5 @@ class PALM(nn.Module):
                 setattr(self, key, value)
                 
             print(f"PALM state loaded")
+        else:
+            print(f"No palm checkpoint found: {filename}")

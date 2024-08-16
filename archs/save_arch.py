@@ -4,7 +4,7 @@ import numpy as np
 from fastai.vision.all import *
 import seaborn as sns
 from itertools import cycle
-
+import shutil
     
 def plot_loss(train_losses, valid_losses, save_path):
     
@@ -126,7 +126,7 @@ def plot_Confusion(all_targs, all_preds, vocab, file_path):
     fig.savefig(file_path)
     plt.close(fig)
 
-def save_state(e, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, bagmodel, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs, classifier=None):
+def save_state(e, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, bagmodel, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs, classifier=None, palm = None):
     model_path = f"{model_folder}/model.pth"
     classifier_path = f"{model_folder}/classifier.pth"
     optimizer_path = f"{model_folder}/optimizer.pth"
@@ -175,6 +175,18 @@ def save_state(e, label_columns, train_acc, val_loss, val_acc, model_folder, mod
             'all_tpr': all_tpr
         }, f)
 
+    if palm is not None:
+        # Duplicate head palm state
+        palm_state_source = os.path.join(os.path.dirname(model_folder), 'palm_state.pkl')
+        palm_state_destination = os.path.join(model_folder, 'palm_state.pkl')
+        
+        if os.path.exists(palm_state_source) and not os.path.exists(palm_state_destination):
+            shutil.copy2(palm_state_source, palm_state_destination)
+        elif not os.path.exists(palm_state_source):
+            print(f"Warning: palm_state.pkl not found in the parent directory of {model_folder}")
+        else:
+            print(f"palm_state.pkl already exists in {model_folder}")
+            
     # Save the plots
     plot_loss(train_losses_over_epochs, valid_losses_over_epochs, f"{model_folder}/loss.png")
     save_accuracy_to_file(e, train_acc, val_acc, label_columns, f"{model_folder}/accuracy.txt")
