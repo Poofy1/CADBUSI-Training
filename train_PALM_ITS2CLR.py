@@ -320,6 +320,10 @@ if __name__ == '__main__':
                         # Forward pass
                         _, _, features = model(images, projector=True)
                         features.to(device)
+                        
+                        # Get loss
+                        total_loss, loss_dict = palm(features, instance_labels, update_prototypes=False)
+                        val_losses.update(total_loss.item(), images[0].size(0))
 
                         # Get predictions from PALM
                         predicted_classes, _ = palm.predict(features)
@@ -332,7 +336,7 @@ if __name__ == '__main__':
                 val_acc = val_total_correct / val_total_samples
                 
                 print(f'[{i+1}/{target_count}] Train Loss: {losses.avg:.5f}, Train Acc: {train_acc:.5f}')
-                print(f'[{i+1}/{target_count}] Val Loss:   N/A, Val Acc:   {val_acc:.5f}')
+                print(f'[{i+1}/{target_count}] Val Loss:   {val_losses.avg:.5f}, Val Acc:   {val_acc:.5f}')
 
                 # Save the model
                 if val_acc > state['val_acc_best']:

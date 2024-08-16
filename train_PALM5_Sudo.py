@@ -386,6 +386,7 @@ if __name__ == '__main__':
                 palm_total_correct = 0
                 instance_total_correct = 0
                 total_samples = 0
+                val_losses = AverageMeter()
 
                 with torch.no_grad():
                     for idx, (images, instance_labels, unique_ids) in enumerate(tqdm(instance_dataloader_val, total=len(instance_dataloader_val))):
@@ -396,27 +397,72 @@ if __name__ == '__main__':
                         _, _, instance_predictions, features = model(images, projector=True)
                         features.to(device)
 
+                        # Create masks for labeled and unlabeled data
+                        unlabeled_mask = (instance_labels == -1)
+                        labeled_mask = ~unlabeled_mask
+
+                        # Handle labeled instances (0 and 1)
+                        if labeled_mask.any():
+                            labeled_features = features[labeled_mask]
+                            labeled_instance_labels = instance_labels[labeled_mask]
+                            palm_loss, loss_dict = palm(labeled_features, labeled_instance_labels, update_prototypes=False)
+                        else:
+                            palm_loss = torch.tensor(0.0).to(device)
+
+                        combined_labels = instance_labels.clone().float()
+
+                        # Handle unlabeled instances (-1)
+                        if unlabeled_mask.any():
+                            unlabeled_features = features[unlabeled_mask]
+                            unlabeled_indices = torch.where(unlabeled_mask)[0]
+                            
+                            proto_dist, proto_class = palm.get_nearest_prototype(unlabeled_features)
+                            
+                            for i, idx in enumerate(unlabeled_indices):
+                                unique_id = unique_ids[idx]
+                                
+                                if unique_id not in unknown_labels:
+                                    unknown_labels[unique_id] = 0.5  # Initialize to 0.5 if not present
+                                
+                                # Use the stored pseudo-label for validation
+                                combined_labels[idx] = unknown_labels[unique_id]
+
+                        # Convert combined labels to one-hot vectors [Neg class, Pos class]
+                        combined_labels_one_hot = torch.zeros(combined_labels.size(0), 2, device=device)
+                        combined_labels_one_hot[:, 0] = 1 - combined_labels
+                        combined_labels_one_hot[:, 1] = combined_labels
+
+                        # Prepare instance predictions
+                        instance_predictions_vector = instance_predictions.unsqueeze(1)
+                        instance_predictions_vector = torch.cat([1 - instance_predictions_vector, instance_predictions_vector], dim=1)
+
+                        # Calculate CE loss
+                        ce_loss_value = CE_loss(instance_predictions_vector, combined_labels_one_hot)
+
+                        # Calculate total loss
+                        total_loss = palm_loss + ce_loss_value
+                        val_losses.update(total_loss.item(), images.size(0))
 
                         # Get predictions
                         palm_predicted_classes, _ = palm.predict(features)
                         instance_predicted_classes = (instance_predictions) > 0.5
 
-                        # Calculate accuracy for PALM predictions
-                        palm_correct = (palm_predicted_classes == instance_labels).sum().item()
+                        # Calculate accuracy for PALM predictions (only for labeled instances)
+                        palm_correct = (palm_predicted_classes[labeled_mask] == instance_labels[labeled_mask]).sum().item()
                         palm_total_correct += palm_correct
                         
-                        # Calculate accuracy for instance predictions
-                        instance_correct = (instance_predicted_classes == instance_labels).sum().item()
+                        # Calculate accuracy for instance predictions (only for labeled instances)
+                        instance_correct = (instance_predicted_classes[labeled_mask] == instance_labels[labeled_mask]).sum().item()
                         instance_total_correct += instance_correct
                         
-                        total_samples += instance_labels.size(0)
+                        total_samples += labeled_mask.sum().item()
 
                 # Calculate accuracies
-                palm_val_acc = palm_total_correct / total_samples
-                instance_val_acc = instance_total_correct / total_samples
-                
+                palm_val_acc = palm_total_correct / total_samples if total_samples > 0 else 0
+                instance_val_acc = instance_total_correct / total_samples if total_samples > 0 else 0
+
                 print(f'[{i+1}/{target_count}] Train Loss: {losses.avg:.5f}, Train Palm Acc: {palm_train_acc:.5f}, Train FC Acc: {instance_train_acc:.5f}')
-                print(f'[{i+1}/{target_count}] Val Loss:   N/A, Val Palm Acc: {palm_val_acc:.5f}, Val FC Acc: {instance_val_acc:.5f}')
+                print(f'[{i+1}/{target_count}] Val Loss: {val_losses.avg:.5f}, Val Palm Acc: {palm_val_acc:.5f}, Val FC Acc: {instance_val_acc:.5f}')
                 
                 # Save the model
                 if instance_val_acc > state['val_acc_best']:

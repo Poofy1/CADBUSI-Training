@@ -29,6 +29,7 @@ def test_model(model, palm, bag_dataloader, instance_dataloader, device):
     # Out-of-distribution counter
     ood_count = 0
     total_instances = 0
+    print(f"Distribution Limit: {palm.distribution_limit}")
     
     with torch.no_grad():
         # Bag-level testing
@@ -43,8 +44,10 @@ def test_model(model, palm, bag_dataloader, instance_dataloader, device):
             _, _, fc_pred, features = model(images, projector=True)
             palm_pred, dist = palm.predict(features)
             
+
+            
             # Check for out-of-distribution instances
-            ood_instances = (dist > .1).sum().item()
+            ood_instances = (dist > 1.4).sum().item()
             ood_count += ood_instances
             total_instances += len(instance_labels)
             
@@ -91,7 +94,7 @@ if __name__ == '__main__':
     model_folder = os.path.join(parent_dir, "models")  
 
     # Load the model configuration
-    head_name = "Head_Palm2_TEST_324_resnet18"
+    head_name = "Head_Palm4_CASBUSI_4_efficientnet_b0"
     model_version = "1"
     
     # loaded configuration
@@ -102,9 +105,9 @@ if __name__ == '__main__':
     instance_columns = config['instance_columns']
 
     #OVERWRITING 
-    """dataset_name = 'export_oneLesions' 
-    label_columns = ['Has_Malignant']
-    instance_columns = ['Malignant Lesion Present']  """
+    dataset_name = 'imagenette2_hard' 
+    label_columns = ['Has_Fish']
+    instance_columns = ['Has_Fish']
     
     img_size = config['img_size']
     bag_batch_size = config['bag_batch_size']
@@ -114,7 +117,7 @@ if __name__ == '__main__':
     arch = config['arch']
     pretrained_arch = config['pretrained_arch']
     num_labels = len(label_columns)
-    palm_path = os.path.join(model_path, "palm_state.pkl")
+    palm_path = os.path.join(model_folder, head_name, model_version, "palm_state.pkl")
 
     # Define transforms
     test_transform = T.Compose([

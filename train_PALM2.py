@@ -341,6 +341,7 @@ if __name__ == '__main__':
                 palm_total_correct = 0
                 instance_total_correct = 0
                 total_samples = 0
+                val_losses = AverageMeter()
 
                 with torch.no_grad():
                     for idx, (images, instance_labels) in enumerate(tqdm(instance_dataloader_val, total=len(instance_dataloader_val))):
@@ -350,6 +351,12 @@ if __name__ == '__main__':
                         # Forward pass
                         _, _, instance_predictions, features = model(images, projector=True)
                         features.to(device)
+                        
+                        # Get loss
+                        palm_loss, loss_dict = palm(features, instance_labels, update_prototypes=False)
+                        bce_loss_value = BCE_loss(instance_predictions, instance_labels.float())
+                        total_loss = palm_loss + bce_loss_value
+                        val_losses.update(total_loss.item(), images[0].size(0))
 
                         # Get predictions
                         palm_predicted_classes, _ = palm.predict(features)
@@ -370,7 +377,7 @@ if __name__ == '__main__':
                 instance_val_acc = instance_total_correct / total_samples
                 
                 print(f'[{i+1}/{target_count}] Train Loss: {losses.avg:.5f}, Train Palm Acc: {palm_train_acc:.5f}, Train FC Acc: {instance_train_acc:.5f}')
-                print(f'[{i+1}/{target_count}] Val Loss:   N/A, Val Palm Acc: {palm_val_acc:.5f}, Val FC Acc: {instance_val_acc:.5f}')
+                print(f'[{i+1}/{target_count}] Val Loss:   {val_losses.avg:.5f}, Val Palm Acc: {palm_val_acc:.5f}, Val FC Acc: {instance_val_acc:.5f}')
                 
                 # Save the model
                 if instance_val_acc > state['val_acc_best']:

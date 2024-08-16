@@ -195,7 +195,7 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "Palm4_test41234"
+    head_name = "ahbwdujhaw"
     
     """dataset_name = 'export_oneLesions' #'export_03_18_2024'
     label_columns = ['Has_Malignant']
@@ -238,7 +238,7 @@ if __name__ == '__main__':
                 ###T.RandomVerticalFlip(),
                 T.RandomHorizontalFlip(),
                 T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
-                T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
+                T.RandomAffine(degrees=(-90, 90), translate=(0.05, 0.05), scale=(1, 1.2),),
                 CLAHETransform(),
                 T.ToTensor(),
                 ###GaussianNoise(mean=0, std=0.015), 
@@ -414,7 +414,7 @@ if __name__ == '__main__':
                 # Calculate accuracies
                 palm_train_acc = palm_total_correct / total_samples
                 instance_train_acc = instance_total_correct / total_samples
-                                
+                print(f"Max Distance: {max_dist}")                
                 
                 
                 # Validation loop
@@ -422,20 +422,41 @@ if __name__ == '__main__':
                 palm_total_correct = 0
                 instance_total_correct = 0
                 total_samples = 0
+                val_losses = AverageMeter()
 
                 with torch.no_grad():
                     for idx, (images, instance_labels) in enumerate(tqdm(instance_dataloader_val, total=len(instance_dataloader_val))):
                         im_q, im_k = images
                         im_q = im_q.cuda(non_blocking=True)
+                        im_k = im_k.cuda(non_blocking=True)
                         instance_labels = instance_labels.cuda(non_blocking=True)
+                        bsz = instance_labels.shape[0]
 
                         # Forward pass
-                        _, _, instance_predictions, features = model(im_q, projector=True)
+                        _, _, instance_predictions, features = model([im_q, im_k], pred_on=True, projector=True)
                         features.to(device)
 
+                        # Split features
+                        zk, zq = torch.split(features, [bsz, bsz], dim=0)
+
+                        # Apply mix function (using the same mix_fn and mix_target as in training)
+                        im_q, y0a, y0b, lam0 = mix_fn(im_q, instance_labels, mix_alpha, mix)
+                        im_k, y1a, y1b, lam1 = mix_fn(im_k, instance_labels, mix_alpha, mix)
+                        l_q = mix_target(y0a, y0b, lam0, num_classes)
+                        l_k = mix_target(y1a, y1b, lam1, num_classes)
+
+                        # Get loss
+                        palm_loss, loss_dict = palm(zk, instance_labels, update_prototypes=False)
+                        bce_loss_value = BCE_loss(instance_predictions[:bsz], instance_labels.float())
+                        genscl_loss = genscl([zk, zq], [l_q, l_k], None)
+
+                        # Calculate total loss
+                        total_loss = palm_loss + bce_loss_value + genscl_loss
+                        val_losses.update(total_loss.item(), im_q.size(0))
+                        
                         # Get predictions
-                        palm_predicted_classes, _ = palm.predict(features)
-                        instance_predicted_classes = (instance_predictions) > 0.5
+                        palm_predicted_classes, _ = palm.predict(zk)
+                        instance_predicted_classes = (instance_predictions[:bsz]) > 0.5
 
                         # Calculate accuracy for PALM predictions
                         palm_correct = (palm_predicted_classes == instance_labels).sum().item()
@@ -450,9 +471,10 @@ if __name__ == '__main__':
                 # Calculate accuracies
                 palm_val_acc = palm_total_correct / total_samples
                 instance_val_acc = instance_total_correct / total_samples
-                
+
                 print(f'[{i+1}/{target_count}] Train Loss: {losses.avg:.5f}, Train Palm Acc: {palm_train_acc:.5f}, Train FC Acc: {instance_train_acc:.5f}')
-                print(f'[{i+1}/{target_count}] Val Loss:   N/A, Val Palm Acc: {palm_val_acc:.5f}, Val FC Acc: {instance_val_acc:.5f}')
+                print(f'[{i+1}/{target_count}] Val Loss:   {val_losses.avg:.5f}, Val Palm Acc: {palm_val_acc:.5f}, Val FC Acc: {instance_val_acc:.5f}')
+                
                 
                 # Save the model
                 if instance_val_acc > state['val_acc_best']:
@@ -468,7 +490,7 @@ if __name__ == '__main__':
                     
                     
                     save_state(state['epoch'], label_columns, instance_train_acc, 0, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
-                    palm.save_state(os.path.join(target_folder, "palm_state.pkl"))
+                    palm.save_state(os.path.join(target_folder, "palm_state.pkl"), max_dist)
                     print("Saved checkpoint due to improved val_acc")
 
 
