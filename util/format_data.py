@@ -408,3 +408,39 @@ def prepare_all_data(export_location, label_columns, instance_columns, cropped_i
     save_bags_to_csv(bags_train, 'F:/Temp_SSD_Data/bags_testing.csv')
     
     return bags_train, bags_val
+
+
+
+def locate_images(export_location, image_list, output_dir):
+    # Read the TrainData.csv file
+    train_data = pd.read_csv(os.path.join(export_location, 'TrainData.csv'))
+    
+    # Create the output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
+    for bag_id, image_index in image_list:
+        # Find the row in TrainData that corresponds to the bag_id
+        row = train_data[train_data['ID'] == bag_id].iloc[0]
+        
+        # Parse the Images column
+        images = ast.literal_eval(row['Images'])
+        
+        # Get the image filename
+        if 0 <= image_index < len(images):
+            image_filename = images[image_index]
+        else:
+            print(f"Warning: Image index {image_index} is out of range for Bag ID {bag_id}")
+            continue
+        
+        # Construct the full path to the image
+        source_path = os.path.join(export_location, 'images', image_filename)
+        
+        # Construct the destination path
+        dest_path = os.path.join(output_dir, f"bag_{bag_id}_img_{image_index}_{image_filename}")
+        
+        print("Copying Images")
+        # Copy the image to the new location
+        if os.path.exists(source_path):
+            shutil.copy2(source_path, dest_path)
+        else:
+            print(f"Warning: Image {image_filename} not found in {source_path}")
