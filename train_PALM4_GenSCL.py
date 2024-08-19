@@ -12,6 +12,7 @@ from util.format_data import *
 from util.sudo_labels import *
 from archs.model_PALM2_solo import *
 from loss.palm import PALM
+from loss.genSCL import GenSupConLossv2
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -131,62 +132,6 @@ def collate_instance(batch):
     return (batch_data_q, batch_data_k), batch_labels
 
 
-
-class GenSupConLossv2(nn.Module):
-    def __init__(self, temperature=0.07, base_temperature=0.07):
-        super(GenSupConLossv2, self).__init__()
-        self.temperature = temperature
-        self.base_temperature = base_temperature
-
-    def forward(self, features, labels, anc_mask = None):
-        '''
-        Args:
-            feats: (anchor_features, contrast_features), each: [N, feat_dim]
-            labels: (anchor_labels, contrast_labels) each: [N, num_cls]
-            anc_mask: (anchors_mask, contrast_mask) each: [N]
-        '''
-
-        anchor_labels = torch.cat(labels, dim=0).float()
-        contrast_labels = anchor_labels
-        anchor_features = torch.cat(features, dim=0)
-        contrast_features = anchor_features
-        
-        # 1. compute similarities among targets
-        anchor_norm = torch.norm(anchor_labels, p=2, dim=-1, keepdim=True) # [anchor_N, 1]
-        contrast_norm = torch.norm(contrast_labels, p=2, dim=-1, keepdim=True) # [contrast_N, 1]
-        deno = torch.mm(anchor_norm, contrast_norm.T)
-        mask = torch.mm(anchor_labels, contrast_labels.T) / deno # cosine similarity: [anchor_N, contrast_N]
-        logits_mask = torch.ones_like(mask)
-        logits_mask.fill_diagonal_(0)
-        mask = mask * logits_mask
-        
-        # 2. compute logits
-        anchor_dot_contrast = torch.div(
-            torch.matmul(anchor_features, contrast_features.T),
-            self.temperature
-        )
-        # for numerical stability
-        logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
-        logits = anchor_dot_contrast - logits_max.detach()
-        
-        # compute log_prob
-        exp_logits = torch.exp(logits) * logits_mask
-        log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True))
-        mean_log_prob_pos = (mask * log_prob).sum(1) / (mask.sum(1) + 1e-8)
-        
-        # loss
-        loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
-        if anc_mask:
-            select = torch.cat( anc_mask )
-            loss = loss[select]
-            
-        loss = loss.mean()
-
-        return loss
-
-    
-
-
     
 
 
@@ -195,7 +140,7 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "ahbwdujhaw"
+    head_name = "OOD_Testing"
     
     """dataset_name = 'export_oneLesions' #'export_03_18_2024'
     label_columns = ['Has_Malignant']
@@ -217,20 +162,20 @@ if __name__ == '__main__':
     min_bag_size = 2
     max_bag_size = 25
     instance_batch_size =  25
-    arch = 'resnet18'
+    arch = 'efficientnet_b0'
     pretrained_arch = False
 
     #ITS2CLR Config
     feature_extractor_train_count = 6 # 6
-    MIL_train_count = 6
+    MIL_train_count = 0
     initial_ratio = .3 #0.3 # --% preditions included
     final_ratio = .8 #0.85 # --% preditions included
     total_epochs = 9999
-    warmup_epochs = 20
+    warmup_epochs = 10
     learning_rate=0.001
     reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
 
-    mix_alpha=0  #0.2
+    mix_alpha=0.2  #0.2
     mix='mixup'
     
     
@@ -270,7 +215,7 @@ if __name__ == '__main__':
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
     
     
-    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 5, lambda_pcon=1).cuda() #lambda_pcon = 0 means prototypes are not moved
+    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 90, lambda_pcon=0).cuda() #lambda_pcon = 0 means prototypes are not moved
     genscl = GenSupConLossv2(temperature=0.07, base_temperature=0.07)
     BCE_loss = nn.BCELoss()
     
@@ -477,8 +422,8 @@ if __name__ == '__main__':
                 
                 
                 # Save the model
-                if instance_val_acc > state['val_acc_best']:
-                    state['val_acc_best'] = instance_val_acc
+                if val_losses.avg < state['val_loss_instance']:
+                    state['val_loss_instance'] = val_losses.avg
                     if state['warmup']:
                         target_folder = state['head_folder']
                         target_name = state['pretrained_name']
@@ -489,9 +434,9 @@ if __name__ == '__main__':
                     all_preds = []
                     
                     
-                    save_state(state['epoch'], label_columns, instance_train_acc, 0, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
+                    save_state(state['epoch'], label_columns, instance_train_acc, val_losses.avg, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
                     palm.save_state(os.path.join(target_folder, "palm_state.pkl"), max_dist)
-                    print("Saved checkpoint due to improved val_acc")
+                    print("Saved checkpoint due to improved val_loss_instance")
 
 
 
@@ -583,8 +528,8 @@ if __name__ == '__main__':
             print(f"Val | {val_acc:.4f} | {val_loss:.4f}")
 
             # Save the model
-            if val_loss < state['val_loss_best']:
-                state['val_loss_best'] = val_loss
+            if val_loss < state['val_loss_bag']:
+                state['val_loss_bag'] = val_loss
                 if state['warmup']:
                     target_folder = state['head_folder']
                     target_name = state['pretrained_name']
@@ -593,7 +538,7 @@ if __name__ == '__main__':
                     target_name = state['model_name']
                 
                 save_state(state['epoch'], label_columns, train_acc, val_loss, val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
-                print("Saved checkpoint due to improved val_loss")
+                print("Saved checkpoint due to improved val_loss_bag")
 
                 
                 state['epoch'] += 1

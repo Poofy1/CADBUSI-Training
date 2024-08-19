@@ -235,8 +235,8 @@ def setup_model(model, optimizer, config):
         'train_losses': [],
         'valid_losses': [],
         'epoch': 0,
-        'val_acc_best': 0,
-        'val_loss_best': 99999,
+        'val_loss_instance': 99999,
+        'val_loss_bag': 99999,
         'selection_mask': [],
         'warmup': False,
         'pickup_warmup': False
@@ -247,7 +247,7 @@ def setup_model(model, optimizer, config):
         encoder_state_dict = torch.load(model_path)
         encoder_state_dict = {k.replace('encoder.', ''): v for k, v in encoder_state_dict.items() if k.startswith('encoder.')}
         model.encoder.load_state_dict(encoder_state_dict)
-        state['train_losses'], state['valid_losses'], state['epoch'], state['val_acc_best'], state['selection_mask'] = load_state(stats_path, model_folder)
+        state['train_losses'], state['valid_losses'], state['epoch'], state['val_loss_bag'], state['selection_mask'] = load_state(stats_path, model_folder)
         state['palm_path'] = os.path.join(model_folder, "palm_state.pkl")
     else:
         print(f"{model_name} does not exist, creating new instance")
@@ -307,11 +307,12 @@ def load_state(stats_path, target_folder):
         train_losses = saved_stats['train_losses']
         valid_losses = saved_stats['valid_losses']
         epoch = saved_stats['epoch']
-        val_loss_best = saved_stats['val_loss']
+        val_loss_bag = saved_stats.get('val_loss_bag', 99999)
+        val_loss_instance = saved_stats.get('val_loss_instance', 99999)
     
     # Load the selection_mask dictionary from the file
     if os.path.exists(f'{target_folder}/selection_mask.pkl'):
         with open(f'{target_folder}/selection_mask.pkl', 'rb') as file:
             selection_mask = pickle.load(file)
             
-    return train_losses, valid_losses, epoch, val_loss_best, selection_mask
+    return train_losses, valid_losses, epoch, val_loss_bag, val_loss_instance, selection_mask

@@ -419,28 +419,34 @@ def locate_images(export_location, image_list, output_dir):
     os.makedirs(output_dir, exist_ok=True)
     
     for bag_id, image_index in image_list:
-        # Find the row in TrainData that corresponds to the bag_id
-        row = train_data[train_data['ID'] == bag_id].iloc[0]
+        try:
+            # Find the row in TrainData that corresponds to the bag_id
+            row = train_data[train_data['ID'] == bag_id].iloc[0]
+            
+            # Parse the Images column
+            images = ast.literal_eval(row['Images'])
+            
+            # Get the image filename
+            if 0 <= image_index < len(images):
+                image_filename = images[image_index]
+            else:
+                print(f"Warning: Image index {image_index} is out of range for Bag ID {bag_id}")
+                continue
+            
+            # Construct the full path to the image
+            source_path = os.path.join(export_location, 'images', image_filename)
+            
+            # Construct the destination path
+            dest_path = os.path.join(output_dir, f"bag_{bag_id}_img_{image_index}_{image_filename}")
+            
+            print(f"Copying image for Bag ID {bag_id}, Image Index {image_index}")
+            # Copy the image to the new location
+            if os.path.exists(source_path):
+                shutil.copy2(source_path, dest_path)
+            else:
+                print(f"Warning: Image {image_filename} not found in {source_path}")
         
-        # Parse the Images column
-        images = ast.literal_eval(row['Images'])
-        
-        # Get the image filename
-        if 0 <= image_index < len(images):
-            image_filename = images[image_index]
-        else:
-            print(f"Warning: Image index {image_index} is out of range for Bag ID {bag_id}")
-            continue
-        
-        # Construct the full path to the image
-        source_path = os.path.join(export_location, 'images', image_filename)
-        
-        # Construct the destination path
-        dest_path = os.path.join(output_dir, f"bag_{bag_id}_img_{image_index}_{image_filename}")
-        
-        print("Copying Images")
-        # Copy the image to the new location
-        if os.path.exists(source_path):
-            shutil.copy2(source_path, dest_path)
-        else:
-            print(f"Warning: Image {image_filename} not found in {source_path}")
+        except IndexError:
+            print(f"Error: No data found for Bag ID {bag_id}")
+        except Exception as e:
+            print(f"An error occurred while processing Bag ID {bag_id}, Image Index {image_index}: {str(e)}")

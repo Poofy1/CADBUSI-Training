@@ -302,7 +302,7 @@ if __name__ == '__main__':
                     total_correct += correct
                     total_samples += instance_labels.size(0)
 
-                train_acc = total_correct / total_samples
+                instance_train_acc = total_correct / total_samples
                 
                 
                 
@@ -333,14 +333,14 @@ if __name__ == '__main__':
                         val_total_correct += correct
                         val_total_samples += instance_labels.size(0)
 
-                val_acc = val_total_correct / val_total_samples
+                instance_val_acc = val_total_correct / val_total_samples
                 
-                print(f'[{i+1}/{target_count}] Train Loss: {losses.avg:.5f}, Train Acc: {train_acc:.5f}')
-                print(f'[{i+1}/{target_count}] Val Loss:   {val_losses.avg:.5f}, Val Acc:   {val_acc:.5f}')
+                print(f'[{i+1}/{target_count}] Train Loss: {losses.avg:.5f}, Train Acc: {instance_train_acc:.5f}')
+                print(f'[{i+1}/{target_count}] Val Loss:   {val_losses.avg:.5f}, Val Acc:   {instance_val_acc:.5f}')
 
                 # Save the model
-                if val_acc > state['val_acc_best']:
-                    state['val_acc_best'] = val_acc
+                if val_losses.avg < state['val_loss_instance']:
+                    state['val_loss_instance'] = val_losses.avg
                     if state['warmup']:
                         target_folder = state['head_folder']
                         target_name = state['pretrained_name']
@@ -351,11 +351,9 @@ if __name__ == '__main__':
                     all_preds = []
                     
                     
-                    save_state(state['epoch'], label_columns, train_acc, val_losses.avg, val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
+                    save_state(state['epoch'], label_columns, instance_train_acc, val_losses.avg, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
                     palm.save_state(os.path.join(target_folder, "palm_state.pkl"), max_dist)
-                    print("Saved checkpoint due to improved val_acc")
-
-
+                    print("Saved checkpoint due to improved val_loss_instance")
 
 
 
@@ -448,8 +446,8 @@ if __name__ == '__main__':
             
 
             # Save the model
-            if val_loss < state['val_loss_best']:
-                state['val_loss_best'] = val_loss
+            if val_loss < state['val_loss_bag']:
+                state['val_loss_bag'] = val_loss
                 if state['warmup']:
                     target_folder = state['head_folder']
                     target_name = state['pretrained_name']
@@ -458,7 +456,7 @@ if __name__ == '__main__':
                     target_name = state['model_name']
                 
                 save_state(state['epoch'], label_columns, train_acc, val_loss, val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
-                print("Saved checkpoint due to improved val_loss")
+                print("Saved checkpoint due to improved val_loss_bag")
                 
                 # Create selection mask
                 predictions_ratio = prediction_anchor_scheduler(state['epoch'], total_epochs, 0, initial_ratio, final_ratio)
