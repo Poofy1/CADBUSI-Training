@@ -208,7 +208,7 @@ def run_test(dataset_name, label_columns, instance_columns, config):
     bag_dataset_test = BagOfImagesDataset(bags_test, transform=test_transform, save_processed=False)
     bag_dataloader_test = TUD.DataLoader(bag_dataset_test, batch_size=bag_batch_size, collate_fn=collate_bag, shuffle=False)
 
-    instance_dataset_test = Instance_Dataset_with_IDs(bags_train, [], transform=test_transform, warmup=False)
+    instance_dataset_test = Instance_Dataset_with_IDs(bags_train, [], transform=test_transform, warmup=True)
     instance_dataloader_test = TUD.DataLoader(instance_dataset_test, batch_size=instance_batch_size, collate_fn=collate_instance, shuffle=False)
 
     # Load the trained model
@@ -216,7 +216,10 @@ def run_test(dataset_name, label_columns, instance_columns, config):
     model = Embeddingmodel(arch, pretrained_arch, num_classes=num_labels).to(device)
     
     # Load the saved model state
-    model_path = f"{model_folder}/{head_name}/{model_version}/model.pth"
+    if model_version:
+        model_path = f"{model_folder}/{head_name}/{model_version}/model.pth"
+    else:
+        model_path = f"{model_folder}/{head_name}/model.pth"
     model.load_state_dict(torch.load(model_path))
 
     # Test the model
@@ -253,8 +256,8 @@ if __name__ == '__main__':
     model_folder = os.path.join(parent_dir, "models")  
 
     # Load the model configuration
-    head_name = "Head_Palm4_CASBUSI_4_efficientnet_b0"
-    model_version = "1"
+    head_name = "Head_OOD_Testing_efficientnet_b0"
+    model_version = "" #Leave "" to read HEA
     
     # loaded configuration
     model_path = os.path.join(model_folder, head_name, model_version)
@@ -264,13 +267,18 @@ if __name__ == '__main__':
     # Test 1: Original dataset
     distances_1, instance_info_1 = run_test(config['dataset_name'], config['label_columns'], config['instance_columns'], config)
     
+    dataset_name = 'export_oneLesions'
+    label_columns = ['Has_Malignant']
+    instance_columns = ['Malignant Lesion Present'] 
+    
+    
     # Test 2: Imagenette dataset
-    distances_2, _ = run_test('imagenette2_hard', ['Has_Fish'], ['Has_Fish'], config)
+    distances_2, _ = run_test(dataset_name, label_columns, instance_columns, config)
     
     # Create distribution graph
     plt.figure(figsize=(10, 6))
     plt.hist(distances_1, bins=50, alpha=0.5, label=config['dataset_name'])
-    plt.hist(distances_2, bins=50, alpha=0.5, label='imagenette2_hard')
+    plt.hist(distances_2, bins=50, alpha=0.5, label=dataset_name)
     plt.xlabel('Distance to Prototypes')
     plt.ylabel('Frequency')
     plt.title('Distribution of Distances to Prototypes')
