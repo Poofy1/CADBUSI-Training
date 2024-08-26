@@ -1,7 +1,5 @@
 from fastai.vision.all import *
 import torch.utils.data as TUD
-import cv2
-
 
 class BagOfImagesDataset(TUD.Dataset):
 

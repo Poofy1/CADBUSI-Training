@@ -9,7 +9,7 @@ from torch.optim import Adam
 from util.format_data import *
 from util.sudo_labels import *
 from data.bag_loader import *
-from data.dual_instance_loader import *
+from data.instance_loader import *
 from archs.model_GenSCL_DSMIL import *
 from loss.genSCL import GenSupConLossv2
 torch.backends.cudnn.benchmark = True
@@ -133,7 +133,7 @@ if __name__ == '__main__':
         if not state['pickup_warmup']: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
-            instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=state['warmup'])
+            instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=state['warmup'], dual_output=True)
             
             if state['warmup']:
                 sampler = InstanceSampler(instance_dataset_train, instance_batch_size)

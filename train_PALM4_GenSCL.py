@@ -10,7 +10,7 @@ from util.format_data import *
 from util.sudo_labels import *
 from archs.model_PALM2_solo import *
 from data.bag_loader import *
-from data.dual_instance_loader import *
+from data.instance_loader import *
 from loss.palm import PALM
 from loss.genSCL import GenSupConLossv2
 torch.backends.cudnn.benchmark = True
@@ -145,8 +145,8 @@ if __name__ == '__main__':
         if not state['pickup_warmup']: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
-            instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=True)
-            instance_dataset_val = Instance_Dataset(bags_val, state['selection_mask'], transform=val_transform, warmup=True)
+            instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=True, dual_output=True)
+            instance_dataset_val = Instance_Dataset(bags_val, state['selection_mask'], transform=val_transform, warmup=True, dual_output=True)
             train_sampler = InstanceSampler(instance_dataset_train, instance_batch_size, strategy=1)
             val_sampler = InstanceSampler(instance_dataset_val, instance_batch_size, strategy=1)
             instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, num_workers=4, collate_fn = collate_instance, pin_memory=True)
