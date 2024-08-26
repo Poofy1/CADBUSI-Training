@@ -13,7 +13,6 @@ from data.bag_loader import *
 from data.dual_instance_loader import *
 from loss.genSCL import GenSupConLossv2
 from loss.palm import PALM
-env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"

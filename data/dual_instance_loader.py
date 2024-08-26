@@ -59,7 +59,9 @@ class Instance_Dataset(TUD.Dataset):
         instance_label = self.final_labels[index]
         unique_id = self.unique_ids[index]
         
-        img = Image.open(img_path).convert("RGB")
+        img = cv2.imread(img_path)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # OpenCV loads in BGR, so convert to RGB
+        img = Image.fromarray(img)
         image_data_q = self.transform(img)
         image_data_k = self.transform(img)
 

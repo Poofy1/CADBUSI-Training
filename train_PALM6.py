@@ -9,9 +9,8 @@ from torch.utils.data import Sampler
 from util.format_data import *
 from util.sudo_labels import *
 from data.bag_loader import *
-from data.palm6_loader import *
+from data.instance_loader import *
 from archs.model_PALM2_solo import *
-env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
@@ -381,8 +380,8 @@ if __name__ == '__main__':
             # Used the instance predictions from bag training to update the Instance Dataloader
             instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=state['warmup'])
             instance_dataset_val = Instance_Dataset(bags_val, state['selection_mask'], transform=val_transform, warmup=True)
-            train_sampler = WarmupSampler(instance_dataset_train, instance_batch_size, strategy=3)
-            val_sampler = WarmupSampler(instance_dataset_val, instance_batch_size, strategy=1)
+            train_sampler = InstanceSampler(instance_dataset_train, instance_batch_size, strategy=1)
+            val_sampler = InstanceSampler(instance_dataset_val, instance_batch_size, strategy=1)
             instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, num_workers=4, collate_fn = collate_instance, pin_memory=True)
             instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_sampler=val_sampler, collate_fn = collate_instance)
             
@@ -407,7 +406,7 @@ if __name__ == '__main__':
                 model.train()
                 
                 # Iterate over the training data
-                for idx, (images, instance_labels) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
+                for idx, (images, instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
                     images = images.cuda(non_blocking=True)
                     instance_labels = instance_labels.cuda(non_blocking=True)
   
@@ -474,7 +473,7 @@ if __name__ == '__main__':
                 val_losses = AverageMeter()
 
                 with torch.no_grad():
-                    for idx, (images, instance_labels) in enumerate(tqdm(instance_dataloader_val, total=len(instance_dataloader_val))):
+                    for idx, (images, instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_val, total=len(instance_dataloader_val))):
                         images = images.cuda(non_blocking=True)
                         instance_labels = instance_labels.cuda(non_blocking=True)
 

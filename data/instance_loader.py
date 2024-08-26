@@ -10,7 +10,7 @@ class Instance_Dataset(TUD.Dataset):
 
         self.images = []
         self.final_labels = []
-
+        self.unique_ids = []
         
         for bag_id, bag_info in bags_dict.items():
             images = bag_info['images']
@@ -50,10 +50,14 @@ class Instance_Dataset(TUD.Dataset):
                 if image_label is not None:
                     self.images.append(img)
                     self.final_labels.append(image_label)
+                    # Create a unique ID combining bag_id and image index
+                    unique_id = f"{bag_id_key}_{idx}"
+                    self.unique_ids.append(unique_id)
 
     def __getitem__(self, index):
         img_path = self.images[index]
         instance_label = self.final_labels[index]
+        unique_id = self.unique_ids[index]
         
         #img = Image.open(img_path).convert("RGB")
         img = cv2.imread(img_path)
@@ -61,7 +65,7 @@ class Instance_Dataset(TUD.Dataset):
         img = Image.fromarray(img)
         image_data = self.transform(img)
 
-        return image_data, instance_label
+        return image_data, instance_label, unique_id
 
 
     def __len__(self):
@@ -73,16 +77,18 @@ class Instance_Dataset(TUD.Dataset):
 def collate_instance(batch):
     batch_data = []
     batch_labels = []
+    batch_ids = []
 
-    for image_data, bag_label in batch:
+    for image_data, bag_label, unique_id in batch:
         batch_data.append(image_data)
         batch_labels.append(bag_label)
+        batch_ids.append(unique_id)
 
     # Stack the images and labels
     batch_data = torch.stack(batch_data)
     batch_labels = torch.tensor(batch_labels, dtype=torch.long)
 
-    return batch_data, batch_labels
+    return batch_data, batch_labels, batch_ids
 
 
 

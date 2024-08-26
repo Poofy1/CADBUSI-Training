@@ -12,7 +12,6 @@ from data.bag_loader import *
 from data.instance_loader import *
 from archs.model_PALM import *
 from loss.palm import PALM
-env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
@@ -169,7 +168,7 @@ if __name__ == '__main__':
                 total_samples = 0
                 
                 # Iterate over the training data
-                for idx, (images, instance_labels) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
+                for idx, (images, instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
                     images = images.cuda(non_blocking=True)
                     instance_labels = instance_labels.cuda(non_blocking=True)
   
