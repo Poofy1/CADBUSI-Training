@@ -4,9 +4,10 @@ from torch.utils.data import Sampler
 import cv2
 
 class Instance_Dataset(TUD.Dataset):
-    def __init__(self, bags_dict, selection_mask, transform=None, warmup=True):
+    def __init__(self, bags_dict, selection_mask, transform=None, warmup=True, dual_output=False):
         self.transform = transform
         self.warmup = warmup
+        self.dual_output = dual_output
 
         self.images = []
         self.final_labels = []
@@ -59,13 +60,17 @@ class Instance_Dataset(TUD.Dataset):
         instance_label = self.final_labels[index]
         unique_id = self.unique_ids[index]
         
-        #img = Image.open(img_path).convert("RGB")
         img = cv2.imread(img_path)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # OpenCV loads in BGR, so convert to RGB
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = Image.fromarray(img)
-        image_data = self.transform(img)
-
-        return image_data, instance_label, unique_id
+        
+        if self.dual_output:
+            image_data_q = self.transform(img)
+            image_data_k = self.transform(img)
+            return (image_data_q, image_data_k), instance_label, unique_id
+        else:
+            image_data = self.transform(img)
+            return image_data, instance_label, unique_id
 
 
     def __len__(self):
@@ -75,21 +80,37 @@ class Instance_Dataset(TUD.Dataset):
     
     
 def collate_instance(batch):
-    batch_data = []
-    batch_labels = []
-    batch_ids = []
+    if isinstance(batch[0][0], tuple):  # Check if it's dual output
+        batch_data_q = []
+        batch_data_k = []
+        batch_labels = []
+        batch_ids = []
 
-    for image_data, bag_label, unique_id in batch:
-        batch_data.append(image_data)
-        batch_labels.append(bag_label)
-        batch_ids.append(unique_id)
+        for (image_data_q, image_data_k), bag_label, unique_id in batch:
+            batch_data_q.append(image_data_q)
+            batch_data_k.append(image_data_k)
+            batch_labels.append(bag_label)
+            batch_ids.append(unique_id)
 
-    # Stack the images and labels
-    batch_data = torch.stack(batch_data)
-    batch_labels = torch.tensor(batch_labels, dtype=torch.long)
+        batch_data_q = torch.stack(batch_data_q)
+        batch_data_k = torch.stack(batch_data_k)
+        batch_labels = torch.tensor(batch_labels, dtype=torch.long)
 
-    return batch_data, batch_labels, batch_ids
+        return (batch_data_q, batch_data_k), batch_labels, batch_ids
+    else:
+        batch_data = []
+        batch_labels = []
+        batch_ids = []
 
+        for image_data, bag_label, unique_id in batch:
+            batch_data.append(image_data)
+            batch_labels.append(bag_label)
+            batch_ids.append(unique_id)
+
+        batch_data = torch.stack(batch_data)
+        batch_labels = torch.tensor(batch_labels, dtype=torch.long)
+
+        return batch_data, batch_labels, batch_ids
 
 
 class InstanceSampler(Sampler):

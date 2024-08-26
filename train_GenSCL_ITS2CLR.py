@@ -132,7 +132,7 @@ if __name__ == '__main__':
         if not state['pickup_warmup']: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
-            instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=state['warmup'])
+            instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=state['warmup'], dual_output=True)
             
             if state['warmup']:
                 sampler = InstanceSampler(instance_dataset_train, instance_batch_size)
