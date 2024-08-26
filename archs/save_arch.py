@@ -216,7 +216,7 @@ def setup_model(model, optimizer, config):
     dataset_name = config['dataset_name']
     arch = config['arch']
     model_name = config['model_version']
-    pretrained_name = f"Head_{config['head_name']}_{arch}"
+    pretrained_name = f"{config['head_name']}_{arch}"
     
     head_folder = os.path.join(parent_dir, "models", pretrained_name)
     head_path = os.path.join(head_folder, f"{pretrained_name}.pth")
