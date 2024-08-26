@@ -46,7 +46,10 @@ class Embeddingmodel(nn.Module):
 
         # Calculate the embeddings for all images in one go
         feat = self.encoder(all_images)
-        feat_pool = self.adaptive_avg_pool(feat).squeeze()
+        if not self.is_efficientnet:
+            feat_pool = self.adaptive_avg_pool(feat).squeeze()
+        else: 
+            feat_pool = feat
 
         bag_pred = None
         bag_instance_predictions = None

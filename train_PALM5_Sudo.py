@@ -11,6 +11,7 @@ from torch.utils.data import Sampler
 from util.format_data import *
 from util.sudo_labels import *
 from archs.model_PALM2_solo import *
+from loss.genSCL import GenSupConLossv2
 from loss.palm import PALM
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
@@ -73,9 +74,10 @@ class Instance_Dataset(TUD.Dataset):
         unique_id = self.unique_ids[index]
         
         img = Image.open(img_path).convert("RGB")
-        image_data = self.transform(img)
+        image_data_q = self.transform(img)
+        image_data_k = self.transform(img)
 
-        return image_data, instance_label, unique_id
+        return (image_data_q, image_data_k), instance_label, unique_id
 
     def __len__(self):
         return len(self.images)
@@ -116,20 +118,23 @@ class WarmupSampler(Sampler):
     
     
 def collate_instance(batch):
-    batch_data = []
+    batch_data_q = []
+    batch_data_k = [] 
     batch_labels = []
     batch_ids = []
 
-    for image_data, bag_label, unique_id in batch:
-        batch_data.append(image_data)
+    for (image_data_q, image_data_k), bag_label, unique_id in batch:
+        batch_data_q.append(image_data_q)
+        batch_data_k.append(image_data_k)
         batch_labels.append(bag_label)
         batch_ids.append(unique_id)
 
     # Stack the images and labels
-    batch_data = torch.stack(batch_data)
+    batch_data_q = torch.stack(batch_data_q)
+    batch_data_k = torch.stack(batch_data_k)
     batch_labels = torch.tensor(batch_labels, dtype=torch.long)
 
-    return batch_data, batch_labels, batch_ids
+    return (batch_data_q, batch_data_k), batch_labels, batch_ids
     
     
 
@@ -139,7 +144,7 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "Palm5_DeleteMe"
+    head_name = "Palm5_OFFICIAL_2"
     
     """dataset_name = 'export_oneLesions' #'export_03_18_2024'
     label_columns = ['Has_Malignant']
@@ -161,28 +166,28 @@ if __name__ == '__main__':
     min_bag_size = 2
     max_bag_size = 25
     instance_batch_size =  25
-    arch = 'resnet18'
+    arch = 'efficientnet_b0'
     pretrained_arch = False
 
     #ITS2CLR Config
-    feature_extractor_train_count = 6 # 6
-    MIL_train_count = 6
+    feature_extractor_train_count = 8 # 6
+    MIL_train_count = 5
     initial_ratio = .3 #0.3 # --% preditions included
     final_ratio = .8 #0.85 # --% preditions included
-    total_epochs = 9999
-    warmup_epochs = 20
+    total_epochs = 100
+    warmup_epochs = 10
     learning_rate=0.001
-    reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
+    reset_aggregator = False # Reset the model.aggregator weights after contrastive learning
     
+    mix_alpha=0.2  #0.2
+    mix='mixup'
     
     train_transform = T.Compose([
-                ###T.RandomVerticalFlip(),
                 T.RandomHorizontalFlip(),
                 T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
-                T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
+                T.RandomAffine(degrees=(-90, 90), translate=(0.05, 0.05), scale=(1, 1.2),),
                 CLAHETransform(),
                 T.ToTensor(),
-                ###GaussianNoise(mean=0, std=0.015), 
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
     
@@ -191,6 +196,7 @@ if __name__ == '__main__':
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
+
     
     # Get Training Data
     export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
@@ -211,6 +217,7 @@ if __name__ == '__main__':
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")  
     
     palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 90, lambda_pcon=1).cuda()
+    genscl = GenSupConLossv2(temperature=0.07, base_temperature=0.07)
     BCE_loss = nn.BCELoss()
     CE_loss = nn.CrossEntropyLoss()
     
@@ -284,28 +291,45 @@ if __name__ == '__main__':
                 
                 # Iterate over the training data
                 for idx, (images, instance_labels, unique_ids) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
-                    images = images.cuda(non_blocking=True)
                     instance_labels = instance_labels.cuda(non_blocking=True)
-  
+
+                    
                     # forward
                     optimizer.zero_grad()
-                    _, _, instance_predictions, features = model(images, projector=True)
+                    _, _, instance_predictions, features = model(images, pred_on=True, projector=True)
                     features.to(device)
                     
-                    
+                    # Separate query and key images
+                    im_q, im_k = images
+                    im_q = im_q.cuda(non_blocking=True)
+                    im_k = im_k.cuda(non_blocking=True)
+                    feat_q, feat_k = features
+        
                     # Create masks for labeled and unlabeled data
                     unlabeled_mask = (instance_labels == -1)
                     labeled_mask = ~unlabeled_mask  # This includes both 0 and 1 labels
 
                     # Handle labeled instances (0 and 1)
                     if labeled_mask.any():
-                        labeled_features = features[labeled_mask]
+                        labeled_im_q = im_q[labeled_mask]
+                        labeled_im_k = im_k[labeled_mask]
+                        labeled_feature_q = feat_q[labeled_mask]
+                        labeled_feature_k = feat_k[labeled_mask]
                         labeled_instance_labels = instance_labels[labeled_mask]
                         
-                        # Get loss from PALM for labeled instances
-                        palm_loss, loss_dict = palm(labeled_features, labeled_instance_labels)
+                        # GenSCL Loss
+                        bsz = labeled_instance_labels.shape[0]
+                        labeled_im_q, y0a, y0b, lam0 = mix_fn(labeled_im_q, labeled_instance_labels, mix_alpha, mix)
+                        labeled_im_k, y1a, y1b, lam1 = mix_fn(labeled_im_k, labeled_instance_labels, mix_alpha, mix)
+                        l_q = mix_target(y0a, y0b, lam0, num_classes)
+                        l_k = mix_target(y1a, y1b, lam1, num_classes)
+                        genscl_loss = genscl([labeled_feature_k, labeled_feature_q], [l_q, l_k], None)
+                                        
+                        # PALM Loss
+                        palm_loss, loss_dict = palm(labeled_feature_k, labeled_instance_labels)
                     else:
                         palm_loss = torch.tensor(0.0).to(device)
+                        genscl_loss = torch.tensor(0.0).to(device)
 
                     combined_labels = instance_labels.clone().float()
     
@@ -349,7 +373,7 @@ if __name__ == '__main__':
                     ce_loss_value = CE_loss(instance_predictions_vector, combined_labels_one_hot)
 
                     # Backward pass and optimization step
-                    total_loss = palm_loss + ce_loss_value
+                    total_loss = palm_loss + ce_loss_value + genscl_loss
                     total_loss.backward()
                     optimizer.step()
         
@@ -476,8 +500,8 @@ if __name__ == '__main__':
                     all_targs = []
                     all_preds = []
                     
-                    
-                    save_state(state['epoch'], label_columns, instance_train_acc, val_losses.avg, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
+                    if state['warmup']:
+                        save_state(state['epoch'], label_columns, instance_train_acc, val_losses.avg, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
                     palm.save_state(os.path.join(target_folder, "palm_state.pkl"), max_dist)
                     print("Saved checkpoint due to improved val_loss_instance")
 

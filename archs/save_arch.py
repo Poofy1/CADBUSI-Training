@@ -247,7 +247,7 @@ def setup_model(model, optimizer, config):
         encoder_state_dict = torch.load(model_path)
         encoder_state_dict = {k.replace('encoder.', ''): v for k, v in encoder_state_dict.items() if k.startswith('encoder.')}
         model.encoder.load_state_dict(encoder_state_dict)
-        state['train_losses'], state['valid_losses'], state['epoch'], state['val_loss_bag'], state['selection_mask'] = load_state(stats_path, model_folder)
+        state['train_losses'], state['valid_losses'], state['epoch'], state['val_loss_bag'], state['val_loss_instance'], state['selection_mask'] = load_state(stats_path, model_folder)
         state['palm_path'] = os.path.join(model_folder, "palm_state.pkl")
     else:
         print(f"{model_name} does not exist, creating new instance")

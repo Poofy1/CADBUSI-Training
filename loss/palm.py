@@ -170,8 +170,7 @@ class PALM(nn.Module):
         # Map the prototype indices to their corresponding class labels
         predicted_classes = proto_classes[prototype_indices]
         
-        # Convert similarity to distance (assuming features and prototypes are normalized)
-        # Distance = 2 - 2 * similarity for normalized vectors
+        # Convert similarity to distance
         distances = 2 - 2 * distances
         
         return predicted_classes, distances

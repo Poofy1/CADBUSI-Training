@@ -140,7 +140,7 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "OOD_Testing"
+    head_name = "Palm4_OFFICIAL"
     
     """dataset_name = 'export_oneLesions' #'export_03_18_2024'
     label_columns = ['Has_Malignant']
@@ -166,27 +166,26 @@ if __name__ == '__main__':
     pretrained_arch = False
 
     #ITS2CLR Config
-    feature_extractor_train_count = 6 # 6
-    MIL_train_count = 0
+    feature_extractor_train_count = 8 # 6
+    MIL_train_count = 8
     initial_ratio = .3 #0.3 # --% preditions included
     final_ratio = .8 #0.85 # --% preditions included
-    total_epochs = 9999
+    total_epochs = 100
     warmup_epochs = 10
     learning_rate=0.001
     reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
+
 
     mix_alpha=0.2  #0.2
     mix='mixup'
     
     
     train_transform = T.Compose([
-                ###T.RandomVerticalFlip(),
                 T.RandomHorizontalFlip(),
                 T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
                 T.RandomAffine(degrees=(-90, 90), translate=(0.05, 0.05), scale=(1, 1.2),),
                 CLAHETransform(),
                 T.ToTensor(),
-                ###GaussianNoise(mean=0, std=0.015), 
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
     
@@ -195,6 +194,7 @@ if __name__ == '__main__':
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
+
     
     # Get Training Data
     export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
@@ -296,11 +296,6 @@ if __name__ == '__main__':
                 
                 # Iterate over the training data
                 for idx, (images, instance_labels) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
-                    bsz = instance_labels.shape[0]
-                    im_q, im_k = images
-                    im_q = im_q.cuda(non_blocking=True)
-                    im_k = im_k.cuda(non_blocking=True)
-                    instance_labels = instance_labels.cuda(non_blocking=True)
                     
                     # forward
                     optimizer.zero_grad()
@@ -308,25 +303,26 @@ if __name__ == '__main__':
                     features.to(device)
                     
                     
-
-                    
-                    # image-based regularizations (lam 1 = no mixup)
-                    im_q, y0a, y0b, lam0 = mix_fn(im_q, instance_labels, mix_alpha, mix)
+                    # GenSCL Loss
+                    bsz = instance_labels.shape[0]
+                    im_q, im_k = images
+                    im_q = im_q.cuda(non_blocking=True)
+                    im_k = im_k.cuda(non_blocking=True)
+                    instance_labels = instance_labels.cuda(non_blocking=True)
+                                
+                    im_q, y0a, y0b, lam0 = mix_fn(im_q, instance_labels, mix_alpha, mix) # (lam 1 = no mixup)
                     im_k, y1a, y1b, lam1 = mix_fn(im_k, instance_labels, mix_alpha, mix)
                     images = [im_q, im_k]
                     l_q = mix_target(y0a, y0b, lam0, num_classes)
                     l_k = mix_target(y1a, y1b, lam1, num_classes)
-
                     zk, zq = torch.split(features, [bsz, bsz], dim=0)
-                    
-                    # Get loss contrastive loss
-                    palm_loss, loss_dict = palm(zk, instance_labels)
-                    
-                    # get loss (no teacher)
                     genscl_loss = genscl([zk, zq], [l_q, l_k], None)
                     #print(genscl_loss)
                     
-                    # Calculate BCE loss
+                    # Palm Loss
+                    palm_loss, loss_dict = palm(zk, instance_labels)
+                    
+                    # BCE loss
                     bce_loss_value = BCE_loss(instance_predictions[:bsz], instance_labels.float())
 
                     # Backward pass and optimization step
@@ -434,7 +430,8 @@ if __name__ == '__main__':
                     all_preds = []
                     
                     
-                    save_state(state['epoch'], label_columns, instance_train_acc, val_losses.avg, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
+                    if state['warmup']:
+                        save_state(state['epoch'], label_columns, instance_train_acc, val_losses.avg, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
                     palm.save_state(os.path.join(target_folder, "palm_state.pkl"), max_dist)
                     print("Saved checkpoint due to improved val_loss_instance")
 
@@ -447,7 +444,8 @@ if __name__ == '__main__':
             print("Warmup Phase Finished")
             state['warmup'] = False
             
-
+        if reset_aggregator:
+            model.aggregator.reset_parameters()
         
             
         print('Predicting Missing Instances')
@@ -545,10 +543,10 @@ if __name__ == '__main__':
                 
                 # Create selection mask
                 predictions_ratio = prediction_anchor_scheduler(state['epoch'], total_epochs, 0, initial_ratio, final_ratio)
-                selection_mask = create_selection_mask(train_bag_logits, predictions_ratio)
+                state['selection_mask'] = create_selection_mask(train_bag_logits, predictions_ratio)
                 print("Created new sudo labels")
                 
                 # Save selection
                 with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
-                    pickle.dump(selection_mask, file)
+                    pickle.dump(state['selection_mask'], file)
 
