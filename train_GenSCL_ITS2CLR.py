@@ -5,15 +5,13 @@ from tqdm import tqdm
 from torch import nn
 from archs.save_arch import *
 from util.Gen_ITS2CLR_util import *
-from torch.utils.data import Sampler
 from torch.optim import Adam
 from util.format_data import *
 from util.sudo_labels import *
 from archs.model_GenSCL import *
 from data.bag_loader import *
-from data.GenSCL_loader import *
+from data.instance_loader import *
 from loss.genSCL import GenSupConLossv2
-env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
@@ -137,7 +135,7 @@ if __name__ == '__main__':
             instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=state['warmup'])
             
             if state['warmup']:
-                sampler = WarmupSampler(instance_dataset_train, instance_batch_size)
+                sampler = InstanceSampler(instance_dataset_train, instance_batch_size)
                 instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=sampler, collate_fn = collate_instance)
                 target_count = warmup_epochs
             else:
@@ -159,7 +157,7 @@ if __name__ == '__main__':
                 losses = AverageMeter()
 
                 # Iterate over the training data
-                for idx, (images, instance_labels, unconfident_mask) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
+                for idx, (images, instance_labels, unique_ids) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
                     #warmup_learning_rate(args, epoch, idx, len(instance_dataloader_train), optimizer)
                     
 
@@ -183,7 +181,7 @@ if __name__ == '__main__':
                     zk, zq = torch.split(features, [bsz, bsz], dim=0)
                     
                     # get loss (no teacher)
-                    mapped_anchors = ~unconfident_mask.bool()
+                    mapped_anchors = ~(instance_labels == -1).bool()
                     loss = genscl([zk, zq], [l_q, l_k], (mapped_anchors, mapped_anchors))
                     losses.update(loss.item(), bsz)
 
