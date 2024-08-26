@@ -8,11 +8,11 @@ __pycache__/
 
 # User-specific files
 *.png
+*.jpeg
 *.csv
 *.json
 *.ini
 *.zip
-#*.pth
 
 results/ABMIL_12_26_1_Map/
 

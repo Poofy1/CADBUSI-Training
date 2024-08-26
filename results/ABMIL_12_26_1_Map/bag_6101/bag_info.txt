@@ -1,2 +1,0 @@
-Label: 1.0
-Bag Prediction: 0.39914441108703613

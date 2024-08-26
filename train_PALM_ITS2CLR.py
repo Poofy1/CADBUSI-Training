@@ -122,7 +122,7 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "Test13"
+    head_name = "ITS2CLR_OFFICIAL"
 
     """dataset_name = 'export_oneLesions' #'export_03_18_2024'
     label_columns = ['Has_Malignant']
@@ -144,28 +144,27 @@ if __name__ == '__main__':
     min_bag_size = 2
     max_bag_size = 25
     instance_batch_size =  25
-    arch = 'resnet18'
+    arch = 'efficientnet_b0'
     pretrained_arch = False
 
     #ITS2CLR Config
-    feature_extractor_train_count = 6 # 6
-    MIL_train_count = 6
+    feature_extractor_train_count = 8 # 6
+    MIL_train_count = 5
     initial_ratio = .3 #0.3 # --% preditions included
     final_ratio = .8 #0.85 # --% preditions included
-    total_epochs = 9999
-    warmup_epochs = 20
+    total_epochs = 100
+    warmup_epochs = 10
     learning_rate=0.001
-    reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
+    reset_aggregator = False # Reset the model.aggregator weights after contrastive learning
+
     
     
     train_transform = T.Compose([
-                ###T.RandomVerticalFlip(),
                 T.RandomHorizontalFlip(),
                 T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
-                T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
+                T.RandomAffine(degrees=(-90, 90), translate=(0.05, 0.05), scale=(1, 1.2),),
                 CLAHETransform(),
                 T.ToTensor(),
-                ###GaussianNoise(mean=0, std=0.015), 
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
     
@@ -174,6 +173,7 @@ if __name__ == '__main__':
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
+
     
     # Get Training Data
     export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
@@ -194,12 +194,7 @@ if __name__ == '__main__':
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
     
     # LOSS INIT
-    class Args:
-        def __init__(self, nviews, cache_size):
-            self.nviews = nviews
-            self.cache_size = cache_size
-    palm_args = Args(nviews=1, cache_size=50)
-    palm = PALM(palm_args, n_protos=100).cuda()
+    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 90, lambda_pcon=1).cuda()
     BCE_loss = nn.BCELoss()
     
     optimizer = optim.SGD(model.parameters(),
@@ -262,12 +257,13 @@ if __name__ == '__main__':
                 param.requires_grad = True
 
             
-            model.train()
+            
             for i in range(target_count): 
                 losses = AverageMeter()
                 total_correct = 0
                 total_samples = 0
                 max_dist = 0
+                model.train()
                 
                 # Iterate over the training data
                 for idx, (images, instance_labels) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
@@ -278,7 +274,7 @@ if __name__ == '__main__':
                     optimizer.zero_grad()
                     _, _, features = model(images, projector=True)
                     features.to(device)
-                    
+
                     # Get loss from PALM
                     loss, loss_dict = palm(features, instance_labels)
 
@@ -350,8 +346,8 @@ if __name__ == '__main__':
                     all_targs = []
                     all_preds = []
                     
-                    
-                    save_state(state['epoch'], label_columns, instance_train_acc, val_losses.avg, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
+                    if state['warmup']:
+                        save_state(state['epoch'], label_columns, instance_train_acc, val_losses.avg, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
                     palm.save_state(os.path.join(target_folder, "palm_state.pkl"), max_dist)
                     print("Saved checkpoint due to improved val_loss_instance")
 
@@ -461,12 +457,12 @@ if __name__ == '__main__':
                 # Create selection mask
                 predictions_ratio = prediction_anchor_scheduler(state['epoch'], total_epochs, 0, initial_ratio, final_ratio)
                 #predictions_ratio = .9
-                selection_mask = create_selection_mask(train_bag_logits, predictions_ratio)
+                state['selection_mask'] = create_selection_mask(train_bag_logits, predictions_ratio)
                 print("Created new sudo labels")
                 
                 state['epoch'] += 1
                 
                 # Save selection
                 with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
-                    pickle.dump(selection_mask, file)
+                    pickle.dump(state['selection_mask'], file)
 
