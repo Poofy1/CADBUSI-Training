@@ -2,10 +2,7 @@ import os
 from PIL import Image
 from torchvision import transforms
 from fastai.vision.all import *
-import torch.utils.data as TUD
-import torchvision.transforms.functional as TF
 from tqdm import tqdm
-import torchvision.transforms as T
 import numpy as np
 import cv2
 import ast
@@ -13,7 +10,6 @@ from PIL import ImageOps
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from sklearn.utils import resample
-env = os.path.dirname(os.path.abspath(__file__))
 
 
 class GaussianNoise(object):
@@ -121,11 +117,7 @@ class HistogramEqualization(object):
         image_eq = Image.fromarray(image_eq)
         return image_eq
     
-def unnormalize(tensor):
-        mean = torch.tensor([0.485, 0.456, 0.406]).view(-1, 1, 1).to(tensor.device)
-        std = torch.tensor([0.229, 0.224, 0.225]).view(-1, 1, 1).to(tensor.device)
-        tensor = tensor * std + mean  # unnormalize
-        return torch.clamp(tensor, 0, 1)
+
 
 
 class CLAHETransform(object):
@@ -145,74 +137,6 @@ class CLAHETransform(object):
             img = cv2.cvtColor(img, cv2.COLOR_LAB2RGB)
         return Image.fromarray(img)
     
-class BagOfImagesDataset(TUD.Dataset):
-
-    def __init__(self, bags_dict, transform=None, save_processed=False):
-        self.bags_dict = bags_dict
-        self.unique_bag_ids = list(bags_dict.keys())
-        self.save_processed = save_processed
-        self.transform = transform
-    
-    def __getitem__(self, index):
-        actual_id = self.unique_bag_ids[index]
-        bag_info = self.bags_dict[actual_id]
-
-        # Extract labels, image file paths, and instance-level labels
-        bag_labels = bag_info['bag_labels']
-        files_this_bag = bag_info['images']
-        instance_labels = bag_info['image_labels']
-
-        # Process images
-        image_data = torch.stack([self.transform(Image.open(fn).convert("RGB")) for fn in files_this_bag])
-
-        # Save processed images if required
-        if self.save_processed:
-            save_folder = os.path.join(env, 'processed_images')  
-            os.makedirs(save_folder, exist_ok=True)
-            for idx, img_tensor in enumerate(image_data):
-                img_save_path = os.path.join(save_folder, f'bag_{actual_id}_img_{idx}.png')
-                img_tensor = unnormalize(img_tensor)
-                img = TF.to_pil_image(img_tensor.cpu().detach())
-                img.save(img_save_path)
-
-        # Convert bag labels list to a tensor
-        bag_labels_tensor = torch.tensor(bag_labels, dtype=torch.float32)
-
-        # Convert instance labels to a tensor, using -1 for None
-        instance_labels_tensors = [torch.tensor(labels, dtype=torch.float32) if labels != [None] else torch.tensor([-1], dtype=torch.float32) for labels in instance_labels]
-
-        return image_data, bag_labels_tensor, instance_labels_tensors, actual_id
-
-    
-    def __len__(self):
-        return len(self.unique_bag_ids)
-    
-    def n_features(self):
-        return self.data.size(1)
-
-
-
-def collate_bag(batch):
-    batch_data = []
-    batch_bag_labels = []
-    batch_instance_labels = []
-    batch_ids = []
-
-    for sample in batch:
-        image_data, bag_labels, instance_labels, bag_id = sample  # Updated to unpack four items
-        batch_data.append(image_data)
-        batch_bag_labels.append(bag_labels)
-        batch_instance_labels.append(instance_labels)
-        batch_ids.append(bag_id)
-
-    # Use torch.stack for bag labels to handle multiple labels per bag
-    out_bag_labels = torch.stack(batch_bag_labels).cuda()
-
-    # Converting to a tensor
-    out_ids = torch.tensor(batch_ids, dtype=torch.long).cuda()
-
-    return batch_data, out_bag_labels, batch_instance_labels, out_ids
-
 
 
 

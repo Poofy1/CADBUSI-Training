@@ -2,7 +2,6 @@ import os, pickle
 from fastai.vision.all import *
 import torch.utils.data as TUD
 from tqdm import tqdm
-import pickle
 from torch import nn
 from archs.save_arch import *
 from util.Gen_ITS2CLR_util import *
@@ -10,6 +9,8 @@ from torch.utils.data import Sampler
 from torch.optim import Adam
 from util.format_data import *
 from util.sudo_labels import *
+from data.bag_loader import *
+from data.GenSCL_loader import *
 from archs.model_GenSCL import *
 from loss.genSCL import GenSupConLossv2_Queue
 env = os.path.dirname(os.path.abspath(__file__))

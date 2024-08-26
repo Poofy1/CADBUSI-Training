@@ -6,6 +6,7 @@ from torch import nn
 from archs.save_arch import *
 from torch.optim import Adam
 from util.format_data import *
+from data.bag_loader import *
 from archs.model_ABMIL import *
 from archs.backbone import create_timm_body
 env = os.path.dirname(os.path.abspath(__file__))
