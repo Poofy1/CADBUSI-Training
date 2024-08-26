@@ -7,7 +7,7 @@ from archs.save_arch import *
 from torch.optim import Adam
 from util.format_data import *
 from archs.model_ABMIL import *
-from archs.backbone import create_timm_body
+from data.bag_loader import *
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
