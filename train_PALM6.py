@@ -397,7 +397,7 @@ if __name__ == '__main__':
             print(f'Warmup Mode: {state["warmup"]}')
             
             
-            for i in range(target_count): 
+            for iteration in range(target_count): 
                 losses = AverageMeter()
                 palm_total_correct = 0
                 instance_total_correct = 0
@@ -505,8 +505,8 @@ if __name__ == '__main__':
                 palm_val_acc = palm_total_correct / total_samples
                 instance_val_acc = instance_total_correct / total_samples
                 
-                print(f'[{i+1}/{target_count}] Train Loss: {losses.avg:.5f}, Train Palm Acc: {palm_train_acc:.5f}, Train FC Acc: {instance_train_acc:.5f}')
-                print(f'[{i+1}/{target_count}] Val Loss:   {val_losses.avg:.5f}, Val Palm Acc: {palm_val_acc:.5f}, Val FC Acc: {instance_val_acc:.5f}')
+                print(f'[{iteration+1}/{target_count}] Train Loss: {losses.avg:.5f}, Train Palm Acc: {palm_train_acc:.5f}, Train FC Acc: {instance_train_acc:.5f}')
+                print(f'[{iteration+1}/{target_count}] Val Loss:   {val_losses.avg:.5f}, Val Palm Acc: {palm_val_acc:.5f}, Val FC Acc: {instance_val_acc:.5f}')
                 
                 # Save the model
                 if val_losses.avg < state['val_loss_instance']:
@@ -540,7 +540,7 @@ if __name__ == '__main__':
         
             
         print('\nTraining Bag Aggregator')
-        for a in range(MIL_train_count):
+        for iteration in range(MIL_train_count):
             model.train()
             train_bag_logits = {}
             total_loss = 0.0
@@ -616,7 +616,7 @@ if __name__ == '__main__':
             state['train_losses'].append(train_loss)
             state['valid_losses'].append(val_loss)    
             
-            print(f"[{a+1}/{MIL_train_count}] | Acc | Loss")
+            print(f"[{iteration+1}/{MIL_train_count}] | Acc | Loss")
             print(f"Train | {train_acc:.4f} | {train_loss:.4f}")
             print(f"Val | {val_acc:.4f} | {val_loss:.4f}")
 

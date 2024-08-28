@@ -159,7 +159,7 @@ if __name__ == '__main__':
 
             
             
-            for i in range(target_count): 
+            for iteration in range(target_count): 
                 losses = AverageMeter()
                 total_correct = 0
                 total_samples = 0
@@ -232,8 +232,8 @@ if __name__ == '__main__':
 
                 instance_val_acc = val_total_correct / val_total_samples
                 
-                print(f'[{i+1}/{target_count}] Train Loss: {losses.avg:.5f}, Train Acc: {instance_train_acc:.5f}')
-                print(f'[{i+1}/{target_count}] Val Loss:   {val_losses.avg:.5f}, Val Acc:   {instance_val_acc:.5f}')
+                print(f'[{iteration+1}/{target_count}] Train Loss: {losses.avg:.5f}, Train Acc: {instance_train_acc:.5f}')
+                print(f'[{iteration+1}/{target_count}] Val Loss:   {val_losses.avg:.5f}, Val Acc:   {instance_val_acc:.5f}')
 
                 # Save the model
                 if val_losses.avg < state['val_loss_instance']:
@@ -262,7 +262,7 @@ if __name__ == '__main__':
         
         
         print('\nTraining Bag Aggregator')
-        for i in range(MIL_train_count):
+        for iteration in range(MIL_train_count):
             
             model.train()
             total_loss = 0.0
@@ -332,7 +332,7 @@ if __name__ == '__main__':
             state['train_losses'].append(train_loss)
             state['valid_losses'].append(val_loss) 
 
-            print(f"[{i+1}/{MIL_train_count}] | Acc | Loss")
+            print(f"[{iteration+1}/{MIL_train_count}] | Acc | Loss")
             print(f"Train | {train_acc:.4f} | {train_loss:.4f}")
             print(f"Val | {val_acc:.4f} | {val_loss:.4f}")
             
