@@ -137,6 +137,8 @@ if __name__ == '__main__':
     unknown_labels = {}
     unknown_label_momentum = 0.9
     
+    state['pickup_warmup']
+    
     # Training loop
     while state['epoch'] < total_epochs:
         
