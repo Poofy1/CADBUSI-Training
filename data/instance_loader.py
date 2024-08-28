@@ -119,7 +119,9 @@ class InstanceSampler(Sampler):
         self.batch_size = batch_size
         self.strategy = strategy
         self.indices_positive = [i for i, label in enumerate(self.dataset.final_labels) if label == 1]
-        self.indices_negative = [i for i, label in enumerate(self.dataset.final_labels) if label in [0, -1]]
+        self.indices_negative = [i for i, label in enumerate(self.dataset.final_labels) if label == 0]
+        self.indices_unknown = [i for i, label in enumerate(self.dataset.final_labels) if label == -1]
+        self.indices_non_positive = self.indices_negative + self.indices_unknown
 
     def __iter__(self):
         total_batches = len(self.dataset) // self.batch_size
@@ -128,23 +130,27 @@ class InstanceSampler(Sampler):
             if self.strategy == 1:
                 # Ensure at least one positive sample
                 num_positives = random.randint(1, max(1, min(len(self.indices_positive), self.batch_size - 1)))
-                num_negatives = self.batch_size - num_positives
+                num_others = self.batch_size - num_positives
+
+                batch_positives = random.sample(self.indices_positive, num_positives)
+                batch_others = random.sample(self.indices_non_positive, num_others)
+
+                batch = batch_positives + batch_others
             elif self.strategy == 2:
-                # Aim for 50/50 balance
+                # Aim for 50/50 balance between positive and non-positive (including unknown)
                 num_positives = self.batch_size // 2
-                num_negatives = self.batch_size - num_positives
+                num_others = self.batch_size - num_positives
+
+                batch_positives = random.sample(self.indices_positive, num_positives)
+                batch_others = random.sample(self.indices_non_positive, num_others)
+
+                batch = batch_positives + batch_others
             else:
                 raise ValueError("Invalid strategy. Choose 1 or 2")
 
-            batch_positives = random.sample(self.indices_positive, num_positives)
-            batch_negatives = random.sample(self.indices_negative, num_negatives)
-
-            batch = batch_positives + batch_negatives
             random.shuffle(batch)
             yield batch
-            
+
     def __len__(self):
         return len(self.dataset) // self.batch_size
-    
-    
     

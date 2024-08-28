@@ -261,7 +261,7 @@ if __name__ == '__main__':
             state['warmup'] = False
         
         
-        print('Predicting Missing Instances') 
+        print('\nTraining Bag Aggregator')
         for i in range(MIL_train_count):
             
             model.train()

@@ -205,8 +205,6 @@ if __name__ == '__main__':
             
         
         
-        print('Training Aggregator')
-        
         if reset_aggregator:
             model.aggregator.reset_parameters() # Reset the model.aggregator weights before training
         
@@ -215,6 +213,7 @@ if __name__ == '__main__':
             param.requires_grad = False
         
         # Training phase
+        print('\nTraining Bag Aggregator')
         for i in range(MIL_train_count):
             
             model.train()
