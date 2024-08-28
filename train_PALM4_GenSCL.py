@@ -331,7 +331,7 @@ if __name__ == '__main__':
             model.aggregator.reset_parameters()
         
             
-        print('Predicting Missing Instances')
+        print('\nTraining Bag Aggregator')
         for a in range(MIL_train_count):
             model.train()
             train_bag_logits = {}
