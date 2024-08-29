@@ -3,12 +3,14 @@ import os
 import sys
 import torch.utils.data as TUD
 from torchvision import transforms as T
-from sklearn.metrics import confusion_matrix
 from tqdm import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 from sklearn.preprocessing import label_binarize
+from sklearn.manifold import TSNE
+import plotly.graph_objects as go
+import plotly.io as pio
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
@@ -22,8 +24,79 @@ from archs.model_PALM2_solo import *
 from data.bag_loader import *
 from data.instance_loader import *
 
+    
+def visualize_prototypes_and_instances(palm, instance_features, instance_labels):
+    # Extract prototypes
+    prototypes = palm.protos.cpu().numpy()
 
+    # Calculate prototype labels based on class counts
+    prototype_labels = palm.proto_class_counts.cpu().numpy().argmax(axis=1)
 
+    # Combine prototypes and instances
+    combined_features = np.vstack((prototypes, instance_features))
+
+    # Apply t-SNE to the combined features
+    tsne = TSNE(n_components=3, random_state=42)
+    combined_tsne = tsne.fit_transform(combined_features)
+
+    # Split the results back into prototypes and instances
+    num_prototypes = prototypes.shape[0]
+    prototypes_tsne = combined_tsne[:num_prototypes]
+    instances_tsne = combined_tsne[num_prototypes:]
+
+    # Create 3D scatter plot
+    fig = go.Figure()
+
+    # Add prototypes
+    fig.add_trace(go.Scatter3d(
+        x=prototypes_tsne[:, 0],
+        y=prototypes_tsne[:, 1],
+        z=prototypes_tsne[:, 2],
+        mode='markers',
+        marker=dict(
+            size=5,
+            color=prototype_labels,
+            colorscale='Viridis',
+            opacity=0.8
+        ),
+        text=[f"Prototype {i}, Label: {label}" for i, label in enumerate(prototype_labels)],
+        hoverinfo='text',
+        name='Prototypes'
+    ))
+
+    # Add instances with color based on label
+    for label, color in [(0, 'blue'), (1, 'red')]:
+        mask = instance_labels == label
+        fig.add_trace(go.Scatter3d(
+            x=instances_tsne[mask, 0],
+            y=instances_tsne[mask, 1],
+            z=instances_tsne[mask, 2],
+            mode='markers',
+            marker=dict(
+                size=3,
+                color=color,
+                opacity=0.5
+            ),
+            name=f'Instances (Label {label})'
+        ))
+
+    # Update layout
+    fig.update_layout(
+        title='3D Visualization of Prototypes and Instances using t-SNE',
+        scene=dict(
+            xaxis_title='t-SNE 1',
+            yaxis_title='t-SNE 2',
+            zaxis_title='t-SNE 3'
+        ),
+        width=800,
+        height=800,
+        margin=dict(r=20, b=10, l=10, t=40)
+    )
+
+    # Save the plot as an interactive HTML file
+    pio.write_html(fig, file=f'{current_dir}/TSNE.html')
+    print("Prototype and instances visualization saved as 'prototype_and_instances_visualization_tsne.html'")
+    
 def test_model_and_collect_distances(model, palm, bag_dataloader, instance_dataloader, device):
     model.eval()
     
@@ -33,6 +106,7 @@ def test_model_and_collect_distances(model, palm, bag_dataloader, instance_datal
     # Instance-level metrics
     instance_targets, fc_predictions, palm_predictions = [], [], []
     instance_info = []
+    instance_features = []
     distances = []
     
     with torch.no_grad():
@@ -42,21 +116,22 @@ def test_model_and_collect_distances(model, palm, bag_dataloader, instance_datal
             bag_targets.extend(yb.cpu().numpy())
             bag_predictions.extend((bag_pred > 0.5).float().cpu().numpy())
         
-        for images, instance_labels, bag_ids, image_indices in tqdm(instance_dataloader, desc="Testing instances"):
+        for images, instance_labels, unique_ids in tqdm(instance_dataloader, desc="Testing instances"):
             images = images.to(device)
             _, _, fc_pred, features = model(images, projector=True)
             palm_pred, dist = palm.predict(features)
             
             distances.extend(dist.cpu().numpy())
-            instance_info.extend(list(zip(bag_ids, image_indices)))
+            instance_info.extend(unique_ids) 
+            instance_features.extend(features.cpu().numpy())
             
             instance_targets.extend(instance_labels.cpu().numpy())
             fc_predictions.extend((fc_pred > 0.5).float().cpu().numpy())
             palm_predictions.extend(palm_pred.cpu().numpy())
-        
+                
     return (np.array(bag_targets), np.array(bag_predictions), 
             np.array(instance_targets), np.array(fc_predictions), np.array(palm_predictions),
-            np.array(distances), instance_info)
+            np.array(distances), instance_info, np.array(instance_features))
 
 def calculate_metrics(targets, predictions):
     accuracy = accuracy_score(targets, predictions)
@@ -128,8 +203,12 @@ def run_test(dataset_name, label_columns, instance_columns, config):
 
     # Test the model
     results = test_model_and_collect_distances(model, palm, bag_dataloader_test, instance_dataloader_test, device)
-    bag_targets, bag_predictions, instance_targets, fc_predictions, palm_predictions, distances, instance_info = results
-        
+    bag_targets, bag_predictions, instance_targets, fc_predictions, palm_predictions, distances, instance_info, instance_features = results
+    
+    # Visualize prototypes and instances
+    visualize_prototypes_and_instances(palm, instance_features, instance_targets)
+    
+     
     # Calculate and print metrics
     print(f"\nResults for dataset: {dataset_name}")
     print("Bag-level Metrics:")
@@ -156,7 +235,7 @@ if __name__ == '__main__':
     model_folder = os.path.join(parent_dir, "models")  
 
     # Load the model configuration
-    head_name = "Head_Palm4_CASBUSI_2_efficientnet_b0"
+    head_name = "Head_Palm2_OFFICIAL_efficientnet_b0"
     model_version = "1" #Leave "" to read HEAD
     
     # loaded configuration
@@ -183,7 +262,7 @@ if __name__ == '__main__':
     plt.ylabel('Frequency')
     plt.title('Distribution of Distances to Prototypes')
     plt.legend()
-    plt.savefig('prototype_distances_distribution.png')
+    plt.savefig(f'{current_dir}/prototype_distances_distribution.png')
     plt.show()
 
     # Identify worst-performing instances (5% with furthest distance) for Test 1
