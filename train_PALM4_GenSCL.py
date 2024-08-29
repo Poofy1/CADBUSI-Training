@@ -23,7 +23,7 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "test"
+    head_name = "Palm4_OFFICIAL"
     
     """dataset_name = 'export_oneLesions' #'export_03_18_2024'
     label_columns = ['Has_Malignant']
@@ -98,7 +98,7 @@ if __name__ == '__main__':
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
     
     
-    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 90, lambda_pcon=0).cuda() #lambda_pcon = 0 means prototypes are not moved
+    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 90, lambda_pcon=1).cuda() #lambda_pcon = 0 means prototypes are not moved
     genscl = GenSupConLossv2(temperature=0.07, base_temperature=0.07)
     BCE_loss = nn.BCELoss()
     

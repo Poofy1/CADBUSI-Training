@@ -13,6 +13,7 @@ __pycache__/
 *.json
 *.ini
 *.zip
+*.html
 
 # Ignore everything in models folder
 /models/*
