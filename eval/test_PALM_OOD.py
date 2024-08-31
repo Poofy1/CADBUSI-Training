@@ -25,12 +25,19 @@ from data.bag_loader import *
 from data.instance_loader import *
 
     
-def visualize_prototypes_and_instances(palm, instance_features, instance_labels):
+def visualize_prototypes_and_instances(palm, instance_features, instance_labels, dataset_name, head_name):
     # Extract prototypes
     prototypes = palm.protos.cpu().numpy()
 
     # Calculate prototype labels based on class counts
     prototype_labels = palm.proto_class_counts.cpu().numpy().argmax(axis=1)
+
+    # Randomly sample 1000 instances if there are more than 1000
+    num_instances = instance_features.shape[0]
+    if num_instances > 1000:
+        sample_indices = np.random.choice(num_instances, 1000, replace=False)
+        instance_features = instance_features[sample_indices]
+        instance_labels = instance_labels[sample_indices]
 
     # Combine prototypes and instances
     combined_features = np.vstack((prototypes, instance_features))
@@ -82,7 +89,7 @@ def visualize_prototypes_and_instances(palm, instance_features, instance_labels)
 
     # Update layout
     fig.update_layout(
-        title='3D Visualization of Prototypes and Instances using t-SNE',
+        title=f'Prototypes/Instances {head_name} {dataset_name}',
         scene=dict(
             xaxis_title='t-SNE 1',
             yaxis_title='t-SNE 2',
@@ -94,8 +101,10 @@ def visualize_prototypes_and_instances(palm, instance_features, instance_labels)
     )
 
     # Save the plot as an interactive HTML file
-    pio.write_html(fig, file=f'{current_dir}/TSNE.html')
-    print("Prototype and instances visualization saved as 'prototype_and_instances_visualization_tsne.html'")
+    pio.write_html(fig, file=f'{current_dir}/results/PALM_OOD/{head_name}_{dataset_name}_TSNE.html')
+    print("Prototype and instances visualization saved as 'TSNE.html'")
+    
+
     
 def test_model_and_collect_distances(model, palm, bag_dataloader, instance_dataloader, device):
     model.eval()
@@ -157,7 +166,7 @@ def calculate_metrics(targets, predictions):
         'auc': auc
     }
 
-def run_test(dataset_name, label_columns, instance_columns, config):
+def run_test(dataset_name, label_columns, instance_columns, config, head_name):
     img_size = config['img_size']
     bag_batch_size = config['bag_batch_size']
     min_bag_size = config['min_bag_size']
@@ -206,7 +215,7 @@ def run_test(dataset_name, label_columns, instance_columns, config):
     bag_targets, bag_predictions, instance_targets, fc_predictions, palm_predictions, distances, instance_info, instance_features = results
     
     # Visualize prototypes and instances
-    visualize_prototypes_and_instances(palm, instance_features, instance_targets)
+    visualize_prototypes_and_instances(palm, instance_features, instance_targets, dataset_name, head_name)
     
      
     # Calculate and print metrics
@@ -233,7 +242,8 @@ if __name__ == '__main__':
     current_dir = os.path.dirname(os.path.abspath(__file__))
     parent_dir = os.path.dirname(current_dir)
     model_folder = os.path.join(parent_dir, "models")  
-
+    os.makedirs(f'{current_dir}/results/PALM_OOD/', exist_ok=True)
+    
     # Load the model configuration
     head_name = "Head_Palm2_OFFICIAL_efficientnet_b0"
     model_version = "1" #Leave "" to read HEAD
@@ -244,7 +254,7 @@ if __name__ == '__main__':
     palm_path = os.path.join(model_folder, head_name, model_version, "palm_state.pkl")
 
     # Test 1: Original dataset
-    distances_1, instance_info_1 = run_test(config['dataset_name'], config['label_columns'], config['instance_columns'], config)
+    distances_1, instance_info_1 = run_test(config['dataset_name'], config['label_columns'], config['instance_columns'], config, head_name)
     
     dataset_name = 'export_oneLesions'
     label_columns = ['Has_Malignant']
@@ -252,7 +262,7 @@ if __name__ == '__main__':
     
     
     # Test 2: Imagenette dataset
-    distances_2, _ = run_test(dataset_name, label_columns, instance_columns, config)
+    distances_2, _ = run_test(dataset_name, label_columns, instance_columns, config, head_name)
     
     # Create distribution graph
     plt.figure(figsize=(10, 6))
@@ -260,29 +270,16 @@ if __name__ == '__main__':
     plt.hist(distances_2, bins=50, alpha=0.5, label=dataset_name)
     plt.xlabel('Distance to Prototypes')
     plt.ylabel('Frequency')
-    plt.title('Distribution of Distances to Prototypes')
+    plt.title(f'Distances to Prototypes ({head_name})')
     plt.legend()
-    plt.savefig(f'{current_dir}/prototype_distances_distribution.png')
+    plt.savefig(f'{current_dir}/results/PALM_OOD/{head_name}_prototype_distribution.png')
     plt.show()
 
-    # Identify worst-performing instances (5% with furthest distance) for Test 1
+    """# Identify worst-performing instances (5% with furthest distance) for Test 1
     num_worst = int(0.05 * len(distances_1))
     worst_indices = np.argsort(distances_1)[-num_worst:]
     worst_instances = [instance_info_1[i] for i in worst_indices]
 
     # Create a directory for the worst-performing instances
     worst_instances_dir = os.path.join(current_dir, "worst_instances")
-    os.makedirs(worst_instances_dir, exist_ok=True)
-
-    # Use locate_images to copy the worst-performing instances
-    export_location = f'D:/DATA/CASBUSI/exports/{config["dataset_name"]}/'
-    locate_images(export_location, worst_instances, worst_instances_dir)
-
-    # Save the worst-performing instances information to a file
-    with open(os.path.join(worst_instances_dir, 'worst_performing_instances.txt'), 'w') as f:
-        for i, (bag_id, image_index) in enumerate(worst_instances):
-            distance = distances_1[worst_indices[i]]
-            f.write(f"Bag ID: {bag_id}, Image Index: {image_index}, Distance: {distance}\n")
-
-    print(f"\nWorst-performing instances have been copied to: {worst_instances_dir}")
-    print(f"Details saved in: {os.path.join(worst_instances_dir, 'worst_performing_instances.txt')}")
+    os.makedirs(worst_instances_dir, exist_ok=True)"""
