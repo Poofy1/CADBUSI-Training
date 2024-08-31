@@ -18,17 +18,18 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 
 
 class PALM(nn.Module):
-    def __init__(self, nviews, num_classes=2, n_protos=50, proto_m=0.99, temp=0.1, lambda_pcon=1, k=5, feat_dim=128, epsilon=0.05, unlabeled_weight=0.5):
+    def __init__(self, nviews, num_classes=2, n_protos=50, proto_m=0.99, temp=0.1, lambda_pcon=1, k=5, feat_dim=128, epsilon=0.05):
         super(PALM, self).__init__()
         self.num_classes = num_classes
         self.temp = temp  # temperature scaling
         self.nviews = nviews
         self.cache_size = int(n_protos / num_classes)
-        self.unlabeled_weight = unlabeled_weight
         
         self.lambda_pcon = lambda_pcon
         
         self.feat_dim = feat_dim
+        
+        self.unlabeled_weight = .5
         
         self.epsilon = epsilon
         self.sinkhorn_iterations = 3
@@ -39,10 +40,11 @@ class PALM(nn.Module):
         self.register_buffer("protos", torch.rand(self.n_protos,feat_dim))
         self.protos = F.normalize(self.protos, dim=-1)
         
-        
-        
         # Initialize class counts for each prototype
         self.proto_class_counts = torch.zeros(self.n_protos, self.num_classes).cuda() # ADDED
+        
+        self.distribution_limit = 0
+        
         
     def sinkhorn(self, features):
         out = torch.matmul(features, self.protos.detach().T)
@@ -72,7 +74,7 @@ class PALM(nn.Module):
         Q *= B
         return Q.t()
         
-    def mle_loss(self, features, targets):
+    def mle_loss(self, features, targets, update_prototypes=True):
         # update prototypes by EMA
         #features = torch.cat(torch.unbind(features, dim=1), dim=0)
         # Disabled becuase features are already correct shape?
@@ -99,12 +101,11 @@ class PALM(nn.Module):
             update_mask = F.normalize(F.normalize(mask * Q, dim=1, p=1),dim=0, p=1)
         update_features = torch.matmul(update_mask.T, features)
         
-        self.proto_class_counts += torch.matmul(update_mask.T, F.one_hot(targets, num_classes=self.num_classes).float()) # ADDED
-        
-        protos = self.protos
-        protos = self.proto_m * protos + (1-self.proto_m) * update_features
-
-        self.protos = F.normalize(protos, dim=1, p=2)
+        if update_prototypes:
+            self.proto_class_counts += torch.matmul(update_mask.T, F.one_hot(targets, num_classes=self.num_classes).float()) # ADDED
+            protos = self.protos
+            protos = self.proto_m * protos + (1-self.proto_m) * update_features
+            self.protos = F.normalize(protos, dim=1, p=2)
         
         Q = self.sinkhorn(features)
         
@@ -131,7 +132,7 @@ class PALM(nn.Module):
         log_prob=pos-neg
         
         loss = -torch.mean(log_prob)
-        return loss   
+        return loss     
     
     def proto_contra(self):
         
@@ -200,12 +201,12 @@ class PALM(nn.Module):
             mask = max_similarities > confidence_threshold
         return pseudo_labels[mask], features[mask]
 
-    def forward(self, features, targets, unlabeled_features=None):
+    def forward(self, features, targets, unlabeled_features=None, update_prototypes=True):
         loss = 0
         loss_dict = {}
 
         # Labeled data loss
-        g_con = self.mle_loss(features, targets)
+        g_con = self.mle_loss(features, targets, update_prototypes)
         loss += g_con
         loss_dict['mle'] = g_con.cpu().item()
 
@@ -218,7 +219,7 @@ class PALM(nn.Module):
         if unlabeled_features is not None and unlabeled_features.numel() > 0:
             pseudo_labels, pseudo_features = self.pseudo_label(unlabeled_features)
             if pseudo_features.numel() > 0:
-                pseudo_loss = self.mle_loss(pseudo_features, pseudo_labels)
+                pseudo_loss = self.mle_loss(pseudo_features, pseudo_labels, update_prototypes)
                 loss += self.unlabeled_weight * pseudo_loss
                 loss_dict['pseudo_labeled'] = pseudo_loss.cpu().item()
 
@@ -266,7 +267,7 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "Palm6_deleteme"
+    head_name = "Palm6_OFFICAL"
     
     """dataset_name = 'export_oneLesions' #'export_03_18_2024'
     label_columns = ['Has_Malignant']
@@ -288,26 +289,27 @@ if __name__ == '__main__':
     min_bag_size = 2
     max_bag_size = 25
     instance_batch_size =  25
-    arch = 'resnet18'
+    arch = 'efficientnet_b0'
     pretrained_arch = False
 
     #ITS2CLR Config
-    feature_extractor_train_count = 6 # 6
-    MIL_train_count = 6
-    total_epochs = 50
+    feature_extractor_train_count = 8 # 6
+    MIL_train_count = 5
+    initial_ratio = .3 #0.3 # --% preditions included
+    final_ratio = .8 #0.85 # --% preditions included
+    total_epochs = 100
     warmup_epochs = 10
     learning_rate=0.001
-    reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
+    reset_aggregator = False # Reset the model.aggregator weights after contrastive learning
+
     
     
     train_transform = T.Compose([
-                ###T.RandomVerticalFlip(),
                 T.RandomHorizontalFlip(),
                 T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
-                T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), scale=(1, 1.2),),
+                T.RandomAffine(degrees=(-90, 90), translate=(0.05, 0.05), scale=(1, 1.2),),
                 CLAHETransform(),
                 T.ToTensor(),
-                ###GaussianNoise(mean=0, std=0.015), 
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
     
@@ -316,6 +318,7 @@ if __name__ == '__main__':
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
+
     
     # Get Training Data
     export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
@@ -371,6 +374,8 @@ if __name__ == '__main__':
     model, optimizer, state = setup_model(model, optimizer, config)
     palm.load_state(state['palm_path'])
     
+    state['pickup_warmup'] = True
+
     # Training loop
     while state['epoch'] < total_epochs:
         
@@ -632,7 +637,7 @@ if __name__ == '__main__':
                     target_name = state['model_name']
                 
                 save_state(state['epoch'], label_columns, train_acc, val_loss, val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
-                palm.save_state(os.path.join(target_folder, "palm_state.pkl"), max_dist)
+                palm.save_state(os.path.join(target_folder, "palm_state.pkl"), 0)
                 print("Saved checkpoint due to improved val_loss_bag")
 
                 
