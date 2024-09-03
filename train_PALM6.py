@@ -197,7 +197,7 @@ class PALM(nn.Module):
         with torch.no_grad():
             similarities = torch.matmul(features, self.protos.T)
             max_similarities, closest_proto_idx = torch.max(similarities, dim=1)
-            pseudo_labels = self.predict(features)
+            pseudo_labels, _ = self.predict(features)
             mask = max_similarities > confidence_threshold
         return pseudo_labels[mask], features[mask]
 

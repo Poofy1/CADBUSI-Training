@@ -6,7 +6,7 @@ from torchvision import transforms as T
 from tqdm import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, balanced_accuracy_score
 from sklearn.preprocessing import label_binarize
 from sklearn.manifold import TSNE
 import plotly.graph_objects as go
@@ -143,10 +143,10 @@ def test_model_and_collect_distances(model, palm, bag_dataloader, instance_datal
             np.array(distances), instance_info, np.array(instance_features))
 
 def calculate_metrics(targets, predictions):
-    accuracy = accuracy_score(targets, predictions)
-    precision = precision_score(targets, predictions, average='macro')
-    recall = recall_score(targets, predictions, average='macro')
-    f1 = f1_score(targets, predictions, average='macro')
+    accuracy = balanced_accuracy_score(targets, predictions)
+    precision = precision_score(targets, predictions, average='binary')
+    recall = recall_score(targets, predictions, average='binary')
+    f1 = f1_score(targets, predictions, average='binary')
     
     # Check if it's binary or multi-class
     unique_classes = np.unique(targets)
@@ -213,7 +213,7 @@ def run_test(dataset_name, label_columns, instance_columns, config, head_name):
     # Test the model
     results = test_model_and_collect_distances(model, palm, bag_dataloader_test, instance_dataloader_test, device)
     bag_targets, bag_predictions, instance_targets, fc_predictions, palm_predictions, distances, instance_info, instance_features = results
-    
+
     # Visualize prototypes and instances
     visualize_prototypes_and_instances(palm, instance_features, instance_targets, dataset_name, head_name)
     
