@@ -237,6 +237,16 @@ def run_test(dataset_name, label_columns, instance_columns, config, head_name):
 
     return distances, instance_info
 
+
+def calculate_ood_stats(distances_1, distances_2):
+    # Calculate threshold (95th percentile of distances_1)
+    threshold = np.percentile(distances_1, 95)
+    
+    # Calculate percentage of OOD samples in distances_2
+    ood_percentage = (distances_2 > threshold).mean() * 100
+    
+    return threshold, ood_percentage
+
 if __name__ == '__main__':
     # Get the parent directory
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -245,7 +255,7 @@ if __name__ == '__main__':
     os.makedirs(f'{current_dir}/results/PALM_OOD/', exist_ok=True)
     
     # Load the model configuration
-    head_name = "Head_Palm2_OFFICIAL_efficientnet_b0"
+    head_name = "Palm2_OFFICIAL_2_efficientnet_b0"
     model_version = "1" #Leave "" to read HEAD
     
     # loaded configuration
@@ -264,6 +274,14 @@ if __name__ == '__main__':
     # Test 2: Imagenette dataset
     distances_2, _ = run_test(dataset_name, label_columns, instance_columns, config, head_name)
     
+    
+    # Calculate OOD statistics
+    threshold, ood_percentage = calculate_ood_stats(distances_1, distances_2)
+    
+    print(f"\nOOD Statistics:")
+    print(f"Threshold (95th percentile of {config['dataset_name']}): {threshold:.4f}")
+    print(f"Percentage of OOD samples in {dataset_name}: {ood_percentage:.2f}%")
+    
     # Create distribution graph
     plt.figure(figsize=(10, 6))
     plt.hist(distances_1, bins=50, alpha=0.5, label=config['dataset_name'])
@@ -274,12 +292,3 @@ if __name__ == '__main__':
     plt.legend()
     plt.savefig(f'{current_dir}/results/PALM_OOD/{head_name}_prototype_distribution.png')
     plt.show()
-
-    """# Identify worst-performing instances (5% with furthest distance) for Test 1
-    num_worst = int(0.05 * len(distances_1))
-    worst_indices = np.argsort(distances_1)[-num_worst:]
-    worst_instances = [instance_info_1[i] for i in worst_indices]
-
-    # Create a directory for the worst-performing instances
-    worst_instances_dir = os.path.join(current_dir, "worst_instances")
-    os.makedirs(worst_instances_dir, exist_ok=True)"""

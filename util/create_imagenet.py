@@ -2,13 +2,16 @@ import os
 import requests
 import tarfile
 import csv
+from tqdm import tqdm
 import random
 import shutil
 import pandas as pd
 
 output_dir = "D:\DATA\CASBUSI\exports"
-export_name = "imagenette2_hard3"
+export_name = "imagenette2_hard2"
 positive_percentage = 0.2  # Percentage of positive instances to include 
+min_bag_size = 2
+max_bag_size = 5 # Was 10 previously
 target_label = 'n01440764'
 
 
@@ -36,16 +39,21 @@ with open(f'{output_dir}/{export_name}/image_labels.csv', 'w', newline='') as fi
     writer = csv.writer(file)
     writer.writerow(['Image', 'Label'])
     
+    # Get total number of files for the progress bar
+    total_files = sum([len(files) for r, d, files in os.walk(f'{output_dir}/{export_name}/imagenette2/train') if any(f.endswith('.JPEG') for f in files)])
+    
     # Move all images to the images directory and write image labels to the CSV file
-    for label_dir in os.listdir(f'{output_dir}/{export_name}/imagenette2/train'):
-        label_path = os.path.join(f'{output_dir}/{export_name}/imagenette2/train', label_dir)
-        if os.path.isdir(label_path):
-            for file in os.listdir(label_path):
-                if file.endswith('.JPEG'):
-                    src_path = os.path.join(label_path, file)
-                    dst_path = os.path.join(images_dir, file)
-                    shutil.move(src_path, dst_path)
-                    writer.writerow([file, label_dir])
+    with tqdm(total=total_files, desc="Processing images") as pbar:
+        for label_dir in os.listdir(f'{output_dir}/{export_name}/imagenette2/train'):
+            label_path = os.path.join(f'{output_dir}/{export_name}/imagenette2/train', label_dir)
+            if os.path.isdir(label_path):
+                for file in os.listdir(label_path):
+                    if file.endswith('.JPEG'):
+                        src_path = os.path.join(label_path, file)
+                        dst_path = os.path.join(images_dir, file)
+                        shutil.move(src_path, dst_path)
+                        writer.writerow([file, label_dir])
+                        pbar.update(1)
 
 
 shutil.rmtree(f'{output_dir}/{export_name}/imagenette2/')
@@ -60,18 +68,20 @@ bag_info = {}
 bag_id = 0
 all_images = list(image_labels.keys())
 random.shuffle(all_images)
-while all_images:
-    bag_size = random.randint(2, 10)
-    bag_images = all_images[:bag_size]
-    all_images = all_images[bag_size:]
-    has_fish = target_label in [image_labels[image_name] for image_name in bag_images]
-    is_valid = random.random() < 0.2  # 20% probability of being in the validation set
-    train_data.append([int(is_valid), bag_images, bag_id, has_fish, bag_id])
-    
-    for image_name in bag_images:
-        bag_info[image_name] = bag_id
-    
-    bag_id += 1
+with tqdm(total=len(all_images), desc="Creating train.csv") as pbar:
+    while all_images:
+        bag_size = random.randint(min_bag_size, max_bag_size)
+        bag_images = all_images[:bag_size]
+        all_images = all_images[bag_size:]
+        has_fish = target_label in [image_labels[image_name] for image_name in bag_images]
+        is_valid = random.random() < 0.2  # 20% probability of being in the validation set
+        train_data.append([int(is_valid), bag_images, bag_id, has_fish, bag_id])
+        
+        for image_name in bag_images:
+            bag_info[image_name] = bag_id
+        
+        bag_id += 1
+        pbar.update(bag_size)
 
 # Create the InstanceData.csv file
 instance_data = []
