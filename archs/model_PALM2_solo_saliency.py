@@ -14,14 +14,9 @@ class Embeddingmodel(nn.Module):
         
         if self.is_efficientnet:
             self.encoder = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
-            nf = 512
-            # Replace the last fully connected layer with a new one
-            num_features = self.encoder.classifier[1].in_features
-            #self.encoder.classifier[1] = nn.Linear(num_features, nf)
-            self.encoder.classifier[1] = nn.Sequential(
-                nn.Dropout(0.5),
-                nn.Linear(num_features, nf)
-            )
+            nf = 1536  # EfficientNet-B3's feature map has 1536 channels
+            # Remove the classifier to keep spatial dimensions
+            self.encoder = nn.Sequential(*list(self.encoder.children())[:-2])
         else:
             self.encoder = create_timm_body(arch, pretrained=pretrained_arch)
             nf = num_features_model(nn.Sequential(*self.encoder.children()))
@@ -62,10 +57,8 @@ class Embeddingmodel(nn.Module):
         selected_area = map_flatten.topk(3, dim=2)[0]
         instance_predictions = selected_area.mean(dim=2).squeeze()  # Calculate the mean of the selected patches for instance predictions
 
-        if not self.is_efficientnet:
-            feat = self.adaptive_avg_pool(feat).squeeze()
-        # INSTANCE CLASS
-        #instance_predictions = self.ins_classifier(feat)
+        feat = self.adaptive_avg_pool(feat).squeeze()
+    
 
         bag_pred = None
         bag_instance_predictions = None
@@ -89,7 +82,7 @@ class Embeddingmodel(nn.Module):
             proj = F.normalize(proj, dim=1)
             
 
-        return bag_pred, bag_instance_predictions, instance_predictions.squeeze(), proj
+        return bag_pred, bag_instance_predictions, instance_predictions.squeeze(), proj, saliency_maps
 
 
 class Linear_Classifier(nn.Module):

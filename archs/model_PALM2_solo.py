@@ -47,10 +47,6 @@ class Embeddingmodel(nn.Module):
             nn.Sigmoid()
         )
         
-        """self.saliency_layer = nn.Sequential(        
-            nn.Conv2d(nf, num_classes, (1,1), bias = False),
-            nn.Sigmoid()
-        )"""
         
         self.adaptive_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         print(f'Feature Map Size: {nf}')
@@ -66,13 +62,6 @@ class Embeddingmodel(nn.Module):
         feat = self.encoder(all_images)
         if not self.is_efficientnet:
             feat = self.adaptive_avg_pool(feat).squeeze()
-        
-        # SALIENCY CLASS
-        """saliency_maps = self.saliency_layer(feat)  # Generate saliency maps using a convolutional layer
-        map_flatten = saliency_maps.flatten(start_dim=-2, end_dim=-1) 
-        selected_area = map_flatten.topk(3, dim=2)[0]
-        instance_predictions = selected_area.mean(dim=2).squeeze()  # Calculate the mean of the selected patches for instance predictions
-        """
         
         
         # INSTANCE CLASS
