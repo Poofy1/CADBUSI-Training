@@ -15,27 +15,7 @@ from data.bag_loader import *
 from data.instance_loader import *
 from PIL import ImageDraw, ImageFont
 
-def draw_legend(image, label_columns, true_labels, pred_labels):
-    draw = ImageDraw.Draw(image)
-    font = ImageFont.load_default()  # You can choose a different font or size
 
-    legend_height = 20  # Adjust as needed
-    text_start = 10 + len(label_columns) * legend_height
-
-    # Draw color boxes and label text
-    for i, label in enumerate(label_columns):
-        color = (255, 0, 0) if i == 0 else (0, 255, 0)
-        draw.rectangle([(10, i * legend_height + 10), (30, i * legend_height + 30)], fill=color)
-        draw.text((35, i * legend_height + 10), label, fill=(255, 255, 255), font=font)
-
-    # Format and draw true labels
-    true_labels_str = '\n'.join([f"{label_columns[i]}: {true_labels[i].item()}" for i in range(len(label_columns))])
-    draw.multiline_text((10, text_start + 10), f"True Labels:\n{true_labels_str}", fill=(255, 255, 255), font=font)
-
-    # Format and draw predicted labels (rounded to 2 decimal places)
-    pred_labels_str = '\n'.join([f"{label_columns[i]}: {pred_labels[i].item():.2f}" for i in range(len(label_columns))])
-    draw.multiline_text((10, text_start + 20 + 20 * len(label_columns)), f"Predicted Labels:\n{pred_labels_str}", fill=(255, 255, 255), font=font)
-    
 
 def unnormalize(tensor, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]):
     for t, m, s in zip(tensor, mean, std):
@@ -48,6 +28,7 @@ if __name__ == '__main__':
     current_dir = os.path.dirname(os.path.abspath(__file__))
     parent_dir = os.path.dirname(current_dir)
     model_folder = os.path.join(parent_dir, "models")  
+    
     # Load the model configuration
     head_name = "Palm2_OFFICIAL_SAL_efficientnet_b0"
     model_version = "1" #Leave "" to read HEAD
@@ -55,27 +36,14 @@ if __name__ == '__main__':
     # loaded configuration
     model_path = os.path.join(model_folder, head_name, model_version)
     config = load_model_config(model_path)
-    palm_path = os.path.join(model_folder, head_name, model_version, "palm_state.pkl")
-    img_size = config['img_size']
-    bag_batch_size = config['bag_batch_size']
-    min_bag_size = config['min_bag_size']
-    max_bag_size = config['max_bag_size']
-    instance_batch_size = config['instance_batch_size']
-    arch = config['arch']
-    pretrained_arch = config['pretrained_arch']
-    label_columns = config['label_columns']
-    instance_columns = config['instance_columns']
-    num_labels = len(label_columns)
 
     # Paths
-    export_location = f'D:/DATA/CASBUSI/exports/{config["dataset_name"]}/'
-    cropped_images = f'F:/Temp_SSD_Data/{config["dataset_name"]}_{img_size}_images/'
     output_path = f"{current_dir}/results/{head_name}_Map/"
     mkdir(output_path, exist_ok=True)
 
     # Get Training Data
-    bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
-    num_labels = len(label_columns)
+    bags_train, bags_val = prepare_all_data(config)
+    num_labels = len(config['label_columns'])
     
     val_transform = T.Compose([
                 CLAHETransform(),
@@ -90,7 +58,7 @@ if __name__ == '__main__':
     
     # Load the trained model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = Embeddingmodel(arch, pretrained_arch, num_classes=num_labels).to(device)
+    model = Embeddingmodel(config['arch'], config['pretrained_arch'], num_classes=num_labels).to(device)
     
     # Load the saved model state
     if model_version:
@@ -98,9 +66,6 @@ if __name__ == '__main__':
     else:
         model_path = f"{model_folder}/{head_name}/model.pth"
     model.load_state_dict(torch.load(model_path))
-    
-
-    
     model.eval()
     
     
@@ -123,7 +88,7 @@ if __name__ == '__main__':
         with torch.no_grad():
             for (data, yb, instance_yb, bag_id) in tqdm(val_dl, total=len(val_dl)):
                 xb, yb = data, yb.cuda()
-                bag_pred, bag_instance_predictions, instance_predictions, _, saliency_maps = model(xb, pred_on=True)
+                bag_pred, bag_instance_predictions, instance_predictions, saliency_maps = model(xb, pred_on=True)
                 
                 print(f"Saliency maps shape: {saliency_maps.shape}")
                 
