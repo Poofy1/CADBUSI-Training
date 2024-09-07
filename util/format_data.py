@@ -7,11 +7,14 @@ import numpy as np
 import torchvision.transforms as T
 import cv2
 import ast
+import json
 from PIL import ImageOps
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from sklearn.utils import resample
 
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
 
 class GaussianNoise(object):
     def __init__(self, mean=0., std=0.1):
@@ -297,8 +300,23 @@ def save_bags_to_csv(bags_dict, file_path):
             # Write row
             writer.writerow([bag_id, labels_str, images_str, image_labels_str])
 
-
-def prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size):
+def load_data_config(config_path):
+    with open(config_path, 'r') as f:
+        return json.load(f)
+    
+def prepare_all_data(config):
+    
+    label_columns = config['label_columns']
+    instance_columns = config['instance_columns']
+    img_size = config['img_size']
+    min_bag_size = config['min_bag_size']
+    max_bag_size = config['max_bag_size']
+    
+    # Path to the config file
+    config_path = os.path.join(parent_dir, 'config.json')
+    json_config = load_data_config(config_path)
+    export_location = f"{json_config['export_location']}/{config['dataset_name']}"
+    cropped_images = f"{json_config['cropped_images']}/{config['dataset_name']}_{config['img_size']}_images"
     
     print("Preprocessing Data...")
     data = pd.read_csv(f'{export_location}/TrainData.csv')

@@ -321,9 +321,29 @@ if __name__ == '__main__':
 
     
     # Get Training Data
-    export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
-    cropped_images = f"F:/Temp_SSD_Data/{dataset_name}_{img_size}_images/"
-    bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
+    config = {
+        "head_name": head_name,
+        "model_version": model_version,
+        "dataset_name": dataset_name,
+        "arch": arch,
+        "pretrained_arch": pretrained_arch,
+        "label_columns": label_columns,
+        "instance_columns": instance_columns,
+        "img_size": img_size,
+        "bag_batch_size": bag_batch_size,
+        "min_bag_size": min_bag_size,
+        "max_bag_size": max_bag_size,
+        "instance_batch_size": instance_batch_size,
+        "feature_extractor_train_count": feature_extractor_train_count,
+        "MIL_train_count": MIL_train_count,
+        "initial_ratio": initial_ratio,
+        "final_ratio": final_ratio,
+        "total_epochs": total_epochs,
+        "reset_aggregator": reset_aggregator,
+        "warmup_epochs": warmup_epochs,
+        "learning_rate": learning_rate,
+    }
+    bags_train, bags_val = prepare_all_data(config)
     num_classes = len(label_columns) + 1
     num_labels = len(label_columns)
 
@@ -350,27 +370,6 @@ if __name__ == '__main__':
     
     
     # MODEL INIT
-    config = {
-        "head_name": head_name,
-        "model_version": model_version,
-        "dataset_name": dataset_name,
-        "arch": arch,
-        "pretrained_arch": pretrained_arch,
-        "label_columns": label_columns,
-        "instance_columns": instance_columns,
-        "img_size": img_size,
-        "bag_batch_size": bag_batch_size,
-        "min_bag_size": min_bag_size,
-        "max_bag_size": max_bag_size,
-        "instance_batch_size": instance_batch_size,
-        "feature_extractor_train_count": feature_extractor_train_count,
-        "MIL_train_count": MIL_train_count,
-        "total_epochs": total_epochs,
-        "reset_aggregator": reset_aggregator,
-        "warmup_epochs": warmup_epochs,
-        "learning_rate": learning_rate,
-    }
-    
     model, optimizer, state = setup_model(model, optimizer, config)
     palm.load_state(state['palm_path'])
     

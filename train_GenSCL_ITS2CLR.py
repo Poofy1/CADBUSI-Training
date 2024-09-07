@@ -79,27 +79,6 @@ if __name__ == '__main__':
 
     
     # Get Training Data
-    export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
-    cropped_images = f"F:/Temp_SSD_Data/{dataset_name}_{img_size}_images/"
-    bags_train, bags_val = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
-    num_classes = len(label_columns) + 1
-    num_labels = len(label_columns)
-
-    # Create bag datasets
-    bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
-    bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
-    bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
-    bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True)
-
-
-    # Create Model
-    model = Embeddingmodel(arch, pretrained_arch, num_classes = num_labels).cuda()
-    print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")    
-        
-    optimizer = Adam(model.parameters(), lr=learning_rate)
-    BCE_loss = nn.BCELoss()
-    genscl = GenSupConLossv2(temperature=0.07, base_temperature=0.07)
-    
     config = {
         "head_name": head_name,
         "model_version": model_version,
@@ -122,6 +101,25 @@ if __name__ == '__main__':
         "warmup_epochs": warmup_epochs,
         "learning_rate": learning_rate,
     }
+    bags_train, bags_val = prepare_all_data(config)
+    num_classes = len(label_columns) + 1
+    num_labels = len(label_columns)
+
+    # Create bag datasets
+    bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
+    bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
+    bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
+    bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True)
+
+
+    # Create Model
+    model = Embeddingmodel(arch, pretrained_arch, num_classes = num_labels).cuda()
+    print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")    
+        
+    optimizer = Adam(model.parameters(), lr=learning_rate)
+    BCE_loss = nn.BCELoss()
+    genscl = GenSupConLossv2(temperature=0.07, base_temperature=0.07)
+
 
     model, optimizer, state = setup_model(model, optimizer, config)
 
