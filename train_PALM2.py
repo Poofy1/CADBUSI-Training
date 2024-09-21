@@ -7,7 +7,7 @@ from util.Gen_ITS2CLR_util import *
 import torch.optim as optim
 from util.format_data import *
 from util.sudo_labels import *
-from archs.model_PALM2_solo_saliency import *
+from archs.model_PALM2_solo import *
 from data.bag_loader import *
 from data.instance_loader import *
 from loss.palm import PALM
@@ -21,7 +21,7 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "Palm2_OFFICIAL_SAL"
+    head_name = "Palm2_OFFICIAL_4"
     
     """dataset_name = 'export_oneLesions' #'export_03_18_2024'
     label_columns = ['Has_Malignant']
@@ -113,7 +113,7 @@ if __name__ == '__main__':
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
     
     # LOSS INIT
-    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 90, lambda_pcon=1).cuda()
+    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 90, lambda_pcon=3).cuda()
     BCE_loss = nn.BCELoss()
     
     optimizer = optim.SGD(model.parameters(),
@@ -305,14 +305,33 @@ if __name__ == '__main__':
                 optimizer.zero_grad()
 
                 # Forward pass
-                bag_pred, _, instance_pred, features = model(images, pred_on=True)
+                bag_pred, _, instance_pred, features = model(images, pred_on=True, projector=True)
                 
-
-                # Split the embeddings back into per-bag embeddings
+                # Get predictions from PALM
+                with torch.no_grad():
+                    palm_predicted_classes, dist = palm.predict(features.to(device))
+                    
+                    # Convert distance to confidence score
+                    confidence = 1 / (1 + torch.exp(-dist))  # Sigmoid of distance
+                    
+                    # Reverse the confidence (smaller distance = higher confidence)
+                    reversed_confidence = 1 - confidence
+                    
+                    # Adjust confidence based on predicted class
+                    adjusted_confidence = torch.where(palm_predicted_classes == 1, 0.5 + reversed_confidence, 0.5 - reversed_confidence)
+                    
+                    # Split the embeddings back into per-bag embeddings
+                    split_sizes = [bag.size(0) for bag in images]
+                    y_hat_per_bag = torch.split(adjusted_confidence, split_sizes, dim=0)
+                    for i, y_h in enumerate(y_hat_per_bag):
+                        train_bag_logits[id[i].item()] = y_h.detach().cpu().numpy()
+                        
+                        
+                """# Split the embeddings back into per-bag embeddings
                 split_sizes = [bag.size(0) for bag in images]
                 y_hat_per_bag = torch.split(instance_pred, split_sizes, dim=0)
                 for i, y_h in enumerate(y_hat_per_bag):
-                    train_bag_logits[id[i].item()] = y_h.detach().cpu().numpy()
+                    train_bag_logits[id[i].item()] = y_h.detach().cpu().numpy()"""
                 
                 bag_loss = BCE_loss(bag_pred, yb)
                 bag_loss.backward()
