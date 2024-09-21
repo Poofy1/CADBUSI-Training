@@ -166,16 +166,7 @@ def calculate_metrics(targets, predictions):
         'auc': auc
     }
 
-def run_test(dataset_name, label_columns, instance_columns, config, head_name):
-    img_size = config['img_size']
-    bag_batch_size = config['bag_batch_size']
-    min_bag_size = config['min_bag_size']
-    max_bag_size = config['max_bag_size']
-    instance_batch_size = config['instance_batch_size']
-    arch = config['arch']
-    pretrained_arch = config['pretrained_arch']
-    num_labels = len(label_columns)
-
+def run_test(config):
     # Define transforms
     test_transform = T.Compose([
         CLAHETransform(),
@@ -188,26 +179,28 @@ def run_test(dataset_name, label_columns, instance_columns, config, head_name):
     palm.load_state(palm_path)
 
     # Prepare test data
-    export_location = f'D:/DATA/CASBUSI/exports/{dataset_name}/'
-    cropped_images = f"F:/Temp_SSD_Data/{dataset_name}_{img_size}_images/"
-    bags_train, bags_test = prepare_all_data(export_location, label_columns, instance_columns, cropped_images, img_size, min_bag_size, max_bag_size)
+    export_location = f"D:/DATA/CASBUSI/exports/{config['dataset_name']}/"
+    cropped_images = f"F:/Temp_SSD_Data/{config['dataset_name']}_{config['img_size']}_images/"
+    bags_train, bags_test = prepare_all_data(config)
+    num_classes = len(config['label_columns']) + 1
+    num_labels = len(config['label_columns'])
 
     # Create test datasets and dataloaders
     bag_dataset_test = BagOfImagesDataset(bags_test, transform=test_transform, save_processed=False)
-    bag_dataloader_test = TUD.DataLoader(bag_dataset_test, batch_size=bag_batch_size, collate_fn=collate_bag, shuffle=False)
+    bag_dataloader_test = TUD.DataLoader(bag_dataset_test, batch_size=config['bag_batch_size'], collate_fn=collate_bag, shuffle=False)
 
     instance_dataset_test = Instance_Dataset(bags_test, [], transform=test_transform, warmup=True)
-    instance_dataloader_test = TUD.DataLoader(instance_dataset_test, batch_size=instance_batch_size, collate_fn=collate_instance, shuffle=False)
+    instance_dataloader_test = TUD.DataLoader(instance_dataset_test, batch_size=config['instance_batch_size'], collate_fn=collate_instance, shuffle=False)
 
     # Load the trained model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = Embeddingmodel(arch, pretrained_arch, num_classes=num_labels).to(device)
+    model = Embeddingmodel(config['arch'], config['pretrained_arch'], num_classes=num_labels).to(device)
     
     # Load the saved model state
     if model_version:
-        model_path = f"{model_folder}/{head_name}/{model_version}/model.pth"
+        model_path = f"{model_folder}/{config['head_name']}/{model_version}/model.pth"
     else:
-        model_path = f"{model_folder}/{head_name}/model.pth"
+        model_path = f"{model_folder}/{config['head_name']}/model.pth"
     model.load_state_dict(torch.load(model_path))
 
     # Test the model
@@ -215,11 +208,11 @@ def run_test(dataset_name, label_columns, instance_columns, config, head_name):
     bag_targets, bag_predictions, instance_targets, fc_predictions, palm_predictions, distances, instance_info, instance_features = results
 
     # Visualize prototypes and instances
-    visualize_prototypes_and_instances(palm, instance_features, instance_targets, dataset_name, head_name)
+    visualize_prototypes_and_instances(palm, instance_features, instance_targets, config['dataset_name'], config['head_name'])
     
      
     # Calculate and print metrics
-    print(f"\nResults for dataset: {dataset_name}")
+    print(f"\nResults for dataset: {config['dataset_name']}")
     print("Bag-level Metrics:")
     bag_metrics = calculate_metrics(bag_targets, bag_predictions)
     for metric, value in bag_metrics.items():
@@ -255,24 +248,26 @@ if __name__ == '__main__':
     os.makedirs(f'{current_dir}/results/PALM_OOD/', exist_ok=True)
     
     # Load the model configuration
-    head_name = "Palm2_OFFICIAL_2_efficientnet_b0"
+    head_name = "Palm2_OFFICIAL_4_efficientnet_b0"
     model_version = "1" #Leave "" to read HEAD
     
     # loaded configuration
     model_path = os.path.join(model_folder, head_name, model_version)
     config = load_model_config(model_path)
+    config['head_name'] = head_name
     palm_path = os.path.join(model_folder, head_name, model_version, "palm_state.pkl")
 
     # Test 1: Original dataset
-    distances_1, instance_info_1 = run_test(config['dataset_name'], config['label_columns'], config['instance_columns'], config, head_name)
+    distances_1, _ = run_test(config)
     
-    dataset_name = 'export_oneLesions'
-    label_columns = ['Has_Malignant']
-    instance_columns = ['Malignant Lesion Present'] 
+    
+    config['dataset_name'] = 'export_oneLesions'
+    config['label_columns'] = ['Has_Malignant']
+    config['instance_columns'] = ['Malignant Lesion Present'] 
     
     
     # Test 2: Imagenette dataset
-    distances_2, _ = run_test(dataset_name, label_columns, instance_columns, config, head_name)
+    distances_2, _ = run_test(config)
     
     
     # Calculate OOD statistics
@@ -280,12 +275,12 @@ if __name__ == '__main__':
     
     print(f"\nOOD Statistics:")
     print(f"Threshold (95th percentile of {config['dataset_name']}): {threshold:.4f}")
-    print(f"Percentage of OOD samples in {dataset_name}: {ood_percentage:.2f}%")
+    print(f"Percentage of OOD samples in {config['dataset_name']}: {ood_percentage:.2f}%")
     
     # Create distribution graph
     plt.figure(figsize=(10, 6))
     plt.hist(distances_1, bins=50, alpha=0.5, label=config['dataset_name'])
-    plt.hist(distances_2, bins=50, alpha=0.5, label=dataset_name)
+    plt.hist(distances_2, bins=50, alpha=0.5, label=config['dataset_name'])
     plt.xlabel('Distance to Prototypes')
     plt.ylabel('Frequency')
     plt.title(f'Distances to Prototypes ({head_name})')

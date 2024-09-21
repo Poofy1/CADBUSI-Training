@@ -22,7 +22,7 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 if __name__ == '__main__':
 
     # Config
-    model_version = '1'
+    model_version = '2'
     head_name = "Palm4_OFFICIAL"
     
     """dataset_name = 'export_oneLesions' #'export_03_18_2024'
@@ -49,7 +49,7 @@ if __name__ == '__main__':
     pretrained_arch = False
 
     #ITS2CLR Config
-    feature_extractor_train_count = 8 # 6
+    feature_extractor_train_count = 8
     MIL_train_count = 8
     initial_ratio = .3 #0.3 # --% preditions included
     final_ratio = .8 #0.85 # --% preditions included
@@ -342,14 +342,31 @@ if __name__ == '__main__':
                 optimizer.zero_grad()
 
                 # Forward pass
-                bag_pred, _, instance_pred, features = model(images, pred_on=True)
+                bag_pred, _, instance_pred, features = model(images, pred_on=True, projector=True)
                 
 
-                # Split the embeddings back into per-bag embeddings
-                split_sizes = [bag.size(0) for bag in images]
-                y_hat_per_bag = torch.split(instance_pred, split_sizes, dim=0)
-                for i, y_h in enumerate(y_hat_per_bag):
-                    train_bag_logits[id[i].item()] = y_h.detach().cpu().numpy()
+                # Get predictions from PALM
+                with torch.no_grad():
+                    palm_predicted_classes, dist = palm.predict(features.to(device))
+                    
+                    # Convert distance to confidence score
+                    confidence = 1 / (1 + torch.exp(-dist))  # Sigmoid of distance
+                    
+                    # Reverse the confidence (smaller distance = higher confidence)
+                    reversed_confidence = 1 - confidence
+                    
+                    # Adjust confidence based on predicted class
+                    adjusted_confidence = torch.where(palm_predicted_classes == 1, 0.5 + reversed_confidence, 0.5 - reversed_confidence)
+                    
+                    # Split the embeddings back into per-bag embeddings
+                    split_sizes = [bag.size(0) for bag in images]
+                    y_hat_per_bag = torch.split(adjusted_confidence, split_sizes, dim=0)
+                    for i, y_h in enumerate(y_hat_per_bag):
+                        train_bag_logits[id[i].item()] = y_h.detach().cpu().numpy()
+
+                                
+                        
+                
                 
                 bag_loss = BCE_loss(bag_pred, yb)
                 bag_loss.backward()
