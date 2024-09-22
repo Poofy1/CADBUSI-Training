@@ -160,7 +160,6 @@ if __name__ == '__main__':
                 losses = AverageMeter()
                 total_correct = 0
                 total_samples = 0
-                max_dist = 0
                 model.train()
                 
                 # Iterate over the training data
@@ -186,10 +185,6 @@ if __name__ == '__main__':
                     # Get predictions from PALM
                     with torch.no_grad():
                         predicted_classes, dist = palm.predict(features)
-                        
-                        # Update max distance for this epoch
-                        max_dist_batch = dist.max().item()
-                        max_dist = max(max_dist, max_dist_batch)
 
                     # Calculate accuracy
                     correct = (predicted_classes == instance_labels).sum().item()
@@ -246,7 +241,7 @@ if __name__ == '__main__':
                     
                     if state['warmup']:
                         save_state(state['epoch'], label_columns, instance_train_acc, val_losses.avg, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
-                        palm.save_state(os.path.join(target_folder, "palm_state.pkl"), max_dist)
+                        palm.save_state(os.path.join(target_folder, "palm_state.pkl"))
                         print("Saved checkpoint due to improved val_loss_instance")
 
 
@@ -350,7 +345,7 @@ if __name__ == '__main__':
                     target_name = state['model_name']
                 
                 save_state(state['epoch'], label_columns, train_acc, val_loss, val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
-                palm.save_state(os.path.join(target_folder, "palm_state.pkl"), max_dist)
+                palm.save_state(os.path.join(target_folder, "palm_state.pkl"))
                 print("Saved checkpoint due to improved val_loss_bag")
                 
                 # Create selection mask

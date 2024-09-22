@@ -248,8 +248,8 @@ if __name__ == '__main__':
     os.makedirs(f'{current_dir}/results/PALM_OOD/', exist_ok=True)
     
     # Load the model configuration
-    head_name = "Palm2_OFFICIAL_4_efficientnet_b0"
-    model_version = "1" #Leave "" to read HEAD
+    head_name = "Palm4_TESTING_efficientnet_b0"
+    model_version = "2" #Leave "" to read HEAD
     
     # loaded configuration
     model_path = os.path.join(model_folder, head_name, model_version)
