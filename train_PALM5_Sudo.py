@@ -165,7 +165,6 @@ if __name__ == '__main__':
                 palm_total_correct = 0
                 instance_total_correct = 0
                 total_samples = 0
-                max_dist = 0
                 
                 # Iterate over the training data
                 for idx, (images, instance_labels, unique_ids) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
@@ -270,10 +269,6 @@ if __name__ == '__main__':
                         instance_total_correct += instance_correct
                         
                         total_samples += instance_labels.size(0)
-                        
-                        # Update max distance for this epoch
-                        max_dist_batch = dist.max().item()
-                        max_dist = max(max_dist, max_dist_batch)
 
                 # Calculate accuracies
                 palm_train_acc = palm_total_correct / total_samples
@@ -365,7 +360,7 @@ if __name__ == '__main__':
                     
                     if state['warmup']:
                         save_state(state['epoch'], label_columns, instance_train_acc, val_losses.avg, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
-                        palm.save_state(os.path.join(target_folder, "palm_state.pkl"), max_dist)
+                        palm.save_state(os.path.join(target_folder, "palm_state.pkl"))
                         print("Saved checkpoint due to improved val_loss_instance")
 
 
@@ -468,7 +463,7 @@ if __name__ == '__main__':
                     target_name = state['model_name']
                 
                 save_state(state['epoch'], label_columns, train_acc, val_loss, val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
-                palm.save_state(os.path.join(target_folder, "palm_state.pkl"), max_dist)
+                palm.save_state(os.path.join(target_folder, "palm_state.pkl"))
                 print("Saved checkpoint due to improved val_loss_bag")
 
                 

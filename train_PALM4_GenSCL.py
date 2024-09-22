@@ -23,7 +23,7 @@ if __name__ == '__main__':
 
     # Config
     model_version = '2'
-    head_name = "Palm4_OFFICIAL"
+    head_name = "Palm4_TESTING"
     
     """dataset_name = 'export_oneLesions' #'export_03_18_2024'
     label_columns = ['Has_Malignant']
@@ -118,7 +118,7 @@ if __name__ == '__main__':
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
     
     
-    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 90, lambda_pcon=1).cuda() #lambda_pcon = 0 means prototypes are not moved
+    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 90, lambda_pcon=3).cuda() #lambda_pcon = 0 means prototypes are not moved
     genscl = GenSupConLossv2(temperature=0.07, base_temperature=0.07)
     BCE_loss = nn.BCELoss()
     
@@ -128,9 +128,6 @@ if __name__ == '__main__':
                         nesterov=True,
                         weight_decay=0.001)
     
-    
-    
-
 
     model, optimizer, state = setup_model(model, optimizer, config)
     palm.load_state(state['palm_path'])
@@ -172,7 +169,6 @@ if __name__ == '__main__':
                 palm_total_correct = 0
                 instance_total_correct = 0
                 total_samples = 0
-                max_dist = 0
                 
                 # Iterate over the training data
                 for idx, (images, instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
@@ -206,7 +202,7 @@ if __name__ == '__main__':
                     bce_loss_value = BCE_loss(instance_predictions[:bsz], instance_labels.float())
 
                     # Backward pass and optimization step
-                    total_loss = palm_loss + bce_loss_value + genscl_loss
+                    total_loss = palm_loss + bce_loss_value + (genscl_loss * .5)
                     total_loss.backward()
                     optimizer.step()
         
@@ -227,15 +223,11 @@ if __name__ == '__main__':
                         instance_total_correct += instance_correct
                         
                         total_samples += instance_labels.size(0)
-                        
-                        # Update max distance for this epoch
-                        max_dist_batch = dist.max().item()
-                        max_dist = max(max_dist, max_dist_batch)
+                    
 
                 # Calculate accuracies
                 palm_train_acc = palm_total_correct / total_samples
-                instance_train_acc = instance_total_correct / total_samples
-                print(f"Max Distance: {max_dist}")                
+                instance_train_acc = instance_total_correct / total_samples              
                 
                 
                 # Validation loop
@@ -312,7 +304,7 @@ if __name__ == '__main__':
                     
                     if state['warmup']:
                         save_state(state['epoch'], label_columns, instance_train_acc, val_losses.avg, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
-                        palm.save_state(os.path.join(target_folder, "palm_state.pkl"), max_dist)
+                        palm.save_state(os.path.join(target_folder, "palm_state.pkl"))
                         print("Saved checkpoint due to improved val_loss_instance")
 
 
@@ -433,7 +425,7 @@ if __name__ == '__main__':
                     target_name = state['model_name']
                 
                 save_state(state['epoch'], label_columns, train_acc, val_loss, val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
-                palm.save_state(os.path.join(target_folder, "palm_state.pkl"), max_dist)
+                palm.save_state(os.path.join(target_folder, "palm_state.pkl"))
                 print("Saved checkpoint due to improved val_loss_bag")
 
                 
