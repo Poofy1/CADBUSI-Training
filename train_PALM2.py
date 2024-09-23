@@ -21,11 +21,11 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "Palm2_OFFICIAL_4"
+    head_name = "Palm2_testing"
     
-    """dataset_name = 'export_oneLesions' #'export_03_18_2024'
+    """dataset_name = 'export_09_22_2024' #'export_03_18_2024' or 'export_oneLesions'
     label_columns = ['Has_Malignant']
-    instance_columns = ['Malignant Lesion Present']  
+    instance_columns = ['Malignant Lesion Present', 'Reject Image']  
     img_size = 224
     bag_batch_size = 3
     min_bag_size = 2
@@ -169,7 +169,7 @@ if __name__ == '__main__':
                 for idx, (images, instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
                     images = images.cuda(non_blocking=True)
                     instance_labels = instance_labels.cuda(non_blocking=True)
-  
+
                     # forward
                     optimizer.zero_grad()
                     _, _, instance_predictions, features = model(images, projector=True)
@@ -177,6 +177,7 @@ if __name__ == '__main__':
                     
                     # Get loss from PALM
                     palm_loss, loss_dict = palm(features, instance_labels)
+                    
                     
                     # Calculate BCE loss
                     bce_loss_value = BCE_loss(instance_predictions, instance_labels.float())

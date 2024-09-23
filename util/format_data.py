@@ -149,8 +149,6 @@ def create_bags(data, min_size, max_size, root_dir, label_columns, instance_colu
     
     image_label_map = {}
     
-    
-    
     # Check if instance_data and instance_columns are provided and valid
     if instance_data is not None and instance_columns is not None:
         # Process instance_data only if it's a valid DataFrame
@@ -187,7 +185,7 @@ def create_bags(data, min_size, max_size, root_dir, label_columns, instance_colu
     
             # Append [None] or the labels based on content
             image_labels.append(labels if any(label is not None for label in labels) else [None])
-    
+
         # Skip bags outside the size range
         if not (min_size <= len(bag_files) <= max_size):
             continue
@@ -200,7 +198,7 @@ def create_bags(data, min_size, max_size, root_dir, label_columns, instance_colu
             'images': bag_files,
             'image_labels': image_labels
         }
-    
+
     return bags_dict  # ID : {'bag_labels': [...], 'images': [...], 'image_labels': [...]}
 
 
@@ -224,7 +222,7 @@ def count_bag_labels(bags_dict):
 
 def process_single_image(img_name, root_dir, output_dir, resize_and_pad):
     try:
-        input_path = os.path.join(f'{root_dir}images/', img_name)
+        input_path = os.path.join(f'{root_dir}/images/', img_name)
         output_path = os.path.join(output_dir, img_name)
 
         if os.path.exists(output_path):  # Skip images that are already processed
