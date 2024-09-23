@@ -26,21 +26,21 @@ class Instance_Dataset(TUD.Dataset):
             else: 
                 selection_mask_labels = None
 
-            for idx, (img, label) in enumerate(zip(images, image_labels)):
+            for idx, (img, labels) in enumerate(zip(images, image_labels)):
                 image_label = None
                 
                 if self.warmup:
                     # Only include confident instances (selection_mask) or negative bags or instance labels
-                    if label[0] is not None:
-                        image_label = label[0]
+                    if labels[0] is not None:
+                        image_label = labels[0]
                     elif bag_label == 0:
                         image_label = 0
                     elif selection_mask_labels is not None and selection_mask_labels[idx] != -1:
                         image_label = selection_mask_labels[idx]
                 else:
                     # Return all images with unknown possiblity 
-                    if label[0] is not None:
-                        image_label = label[0]
+                    if labels[0] is not None:
+                        image_label = labels[0]
                     elif bag_label == 0:
                         image_label = 0
                     elif selection_mask_labels is not None and selection_mask_labels[idx] != -1:
