@@ -23,7 +23,7 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "Palm5_OFFICIAL_2"
+    head_name = "Palm5_OFFICIAL_3"
     
     """dataset_name = 'export_oneLesions' #'export_03_18_2024'
     label_columns = ['Has_Malignant']
@@ -54,12 +54,13 @@ if __name__ == '__main__':
     initial_ratio = .3 #0.3 # --% preditions included
     final_ratio = .8 #0.85 # --% preditions included
     total_epochs = 100
-    warmup_epochs = 10
+    warmup_epochs = 1
     learning_rate=0.001
     reset_aggregator = False # Reset the model.aggregator weights after contrastive learning
     
     mix_alpha=0.2  #0.2
     mix='mixup'
+    
     
     train_transform = T.Compose([
                 T.RandomHorizontalFlip(),
@@ -113,10 +114,10 @@ if __name__ == '__main__':
 
     # Create Model
     model = Embeddingmodel(arch, pretrained_arch, num_classes = num_labels).cuda()
-    print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")  
+    print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
     
-    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 90, lambda_pcon=1).cuda()
-    genscl = GenSupConLossv2(temperature=0.07, base_temperature=0.07)
+    # LOSS INIT
+    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 90, lambda_pcon=3).cuda()
     BCE_loss = nn.BCELoss()
     CE_loss = nn.CrossEntropyLoss()
     
@@ -124,7 +125,8 @@ if __name__ == '__main__':
                         lr=learning_rate,
                         momentum=0.9,
                         nesterov=True,
-                        weight_decay=0.001)
+                        weight_decay=0.001) # original .001
+    
     
     # MODEL INIT
     model, optimizer, state = setup_model(model, optimizer, config)
@@ -134,8 +136,6 @@ if __name__ == '__main__':
     unknown_labels = {}
     unknown_label_momentum = 0.9
     
-    state['pickup_warmup']
-    
     # Training loop
     while state['epoch'] < total_epochs:
         
@@ -143,8 +143,8 @@ if __name__ == '__main__':
         if not state['pickup_warmup']: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
-            instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=state['warmup'], dual_output=True)
-            instance_dataset_val = Instance_Dataset(bags_val, state['selection_mask'], transform=val_transform, warmup=True, dual_output=True)
+            instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=state['warmup'], dual_output=False)
+            instance_dataset_val = Instance_Dataset(bags_val, state['selection_mask'], transform=val_transform, warmup=True)
             train_sampler = InstanceSampler(instance_dataset_train, instance_batch_size, strategy=1)
             val_sampler = InstanceSampler(instance_dataset_val, instance_batch_size, strategy=1)
             instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, num_workers=4, collate_fn = collate_instance, pin_memory=True)
@@ -168,51 +168,34 @@ if __name__ == '__main__':
                 
                 # Iterate over the training data
                 for idx, (images, instance_labels, unique_ids) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
-                    im_q, im_k = images
-                    im_q = im_q.cuda(non_blocking=True)
-                    im_k = im_k.cuda(non_blocking=True)
+                    images = images.cuda(non_blocking=True)
                     instance_labels = instance_labels.cuda(non_blocking=True)
-                    bsz = instance_labels.shape[0]
 
                     # forward
                     optimizer.zero_grad()
-                    _, _, instance_predictions, features = model(images, pred_on=True, projector=True)
+                    _, _, instance_predictions, features = model(images, projector=True)
                     features.to(device)
                     
-                    # Split features
-                    feat_q, feat_k = torch.split(features, [bsz, bsz], dim=0)
-                    instance_predictions, _ = torch.split(instance_predictions, [bsz, bsz], dim=0)
-        
                     # Create masks for labeled and unlabeled data
                     unlabeled_mask = (instance_labels == -1)
                     labeled_mask = ~unlabeled_mask  # This includes both 0 and 1 labels
 
                     # Handle labeled instances (0 and 1)
                     if labeled_mask.any():
-                        labeled_im_q = im_q[labeled_mask]
-                        labeled_im_k = im_k[labeled_mask]
-                        labeled_feature_q = feat_q[labeled_mask]
-                        labeled_feature_k = feat_k[labeled_mask]
+                        img = images[labeled_mask]
+                        feat = features[labeled_mask]
                         labeled_instance_labels = instance_labels[labeled_mask]
-                        
-                        # GenSCL Loss
-                        labeled_im_q, y0a, y0b, lam0 = mix_fn(labeled_im_q, labeled_instance_labels, mix_alpha, mix)
-                        labeled_im_k, y1a, y1b, lam1 = mix_fn(labeled_im_k, labeled_instance_labels, mix_alpha, mix)
-                        l_q = mix_target(y0a, y0b, lam0, num_classes)
-                        l_k = mix_target(y1a, y1b, lam1, num_classes)
-                        genscl_loss = genscl([labeled_feature_k, labeled_feature_q], [l_q, l_k], None)
                                         
                         # PALM Loss
-                        palm_loss, loss_dict = palm(labeled_feature_k, labeled_instance_labels)
+                        palm_loss, loss_dict = palm(feat, labeled_instance_labels)
                     else:
                         palm_loss = torch.tensor(0.0).to(device)
-                        genscl_loss = torch.tensor(0.0).to(device)
 
                     combined_labels = instance_labels.clone().float()
     
                     # Handle unlabeled instances (-1)
                     if unlabeled_mask.any():
-                        unlabeled_features = feat_q[unlabeled_mask]
+                        unlabeled_features = features[unlabeled_mask]
                         unlabeled_indices = torch.where(unlabeled_mask)[0]
                         
                         with torch.no_grad():
@@ -234,6 +217,7 @@ if __name__ == '__main__':
                             # Update the combined_labels tensor with the new pseudo-label
                             combined_labels[idx] = updated_label
                     
+                    print(combined_labels)
                     # Convert confident combined labels to one-hot vectors [Neg class, Pos class]
                     combined_labels_one_hot = torch.zeros(combined_labels.size(0), 2, device=device)
                     combined_labels_one_hot[:, 0] = 1 - combined_labels
@@ -248,7 +232,7 @@ if __name__ == '__main__':
                     ce_loss_value = CE_loss(instance_predictions_vector, combined_labels_one_hot)
 
                     # Backward pass and optimization step
-                    total_loss = palm_loss + ce_loss_value + genscl_loss
+                    total_loss = palm_loss + ce_loss_value
                     total_loss.backward()
                     optimizer.step()
         
@@ -257,18 +241,17 @@ if __name__ == '__main__':
                     
                     # Get predictions from PALM
                     with torch.no_grad():
-                        palm_predicted_classes, dist = palm.predict(feat_q)
-                        instance_predicted_classes = (instance_predictions) > 0.5
-
                         # Calculate accuracy for PALM predictions
-                        palm_correct = (palm_predicted_classes == instance_labels).sum().item()
+                        palm_predicted_classes, dist = palm.predict(features[labeled_mask])
+                        palm_correct = (palm_predicted_classes == instance_labels[labeled_mask]).sum().item()
                         palm_total_correct += palm_correct
                         
                         # Calculate accuracy for instance predictions
-                        instance_correct = (instance_predicted_classes == instance_labels).sum().item()
+                        instance_predicted_classes = (instance_predictions[labeled_mask]) > 0.5
+                        instance_correct = (instance_predicted_classes == instance_labels[labeled_mask]).sum().item()
                         instance_total_correct += instance_correct
                         
-                        total_samples += instance_labels.size(0)
+                        total_samples += instance_labels[labeled_mask].size(0)
 
                 # Calculate accuracies
                 palm_train_acc = palm_total_correct / total_samples
@@ -285,29 +268,15 @@ if __name__ == '__main__':
 
                 with torch.no_grad():
                     for idx, (images, instance_labels, _) in enumerate(tqdm(instance_dataloader_val, total=len(instance_dataloader_val))):
-                        im_q, im_k = images
-                        im_q = im_q.cuda(non_blocking=True)
-                        im_k = im_k.cuda(non_blocking=True)
+                        images = images.cuda(non_blocking=True)
                         instance_labels = instance_labels.cuda(non_blocking=True)
-                        bsz = instance_labels.shape[0]
 
                         # Forward pass
-                        _, _, instance_predictions, features = model(images, pred_on=True, projector=True)
+                        _, _, instance_predictions, features = model(images, projector=True)
                         features.to(device)
-
-                        # Split features
-                        feat_q, feat_k = torch.split(features, [bsz, bsz], dim=0)
-                        instance_predictions, _ = torch.split(instance_predictions, [bsz, bsz], dim=0)
-
-                        # GenSCL Loss
-                        im_q, y0a, y0b, lam0 = mix_fn(im_q, instance_labels, mix_alpha, mix)
-                        im_k, y1a, y1b, lam1 = mix_fn(im_k, instance_labels, mix_alpha, mix)
-                        l_q = mix_target(y0a, y0b, lam0, num_classes)
-                        l_k = mix_target(y1a, y1b, lam1, num_classes)
-                        genscl_loss = genscl([feat_k, feat_q], [l_q, l_k], None)
-
+                        
                         # PALM Loss
-                        palm_loss, _ = palm(feat_k, instance_labels, update_prototypes=False)
+                        palm_loss, _ = palm(features, instance_labels, update_prototypes=False)
 
                         # Convert instance labels to one-hot vectors [Neg class, Pos class]
                         instance_labels_one_hot = torch.zeros(instance_labels.size(0), 2, device=device)
@@ -322,11 +291,11 @@ if __name__ == '__main__':
                         ce_loss_value = CE_loss(instance_predictions_vector, instance_labels_one_hot)
 
                         # Calculate total loss
-                        total_loss = palm_loss + ce_loss_value + genscl_loss
-                        val_losses.update(total_loss.item(), im_q.size(0))
+                        total_loss = palm_loss + ce_loss_value
+                        val_losses.update(total_loss.item(), images[0].size(0))
 
                         # Get predictions
-                        palm_predicted_classes, dist = palm.predict(feat_q)
+                        palm_predicted_classes, dist = palm.predict(features)
                         instance_predicted_classes = (instance_predictions > 0.5)
 
                         # Calculate accuracy for PALM predictions
@@ -377,7 +346,6 @@ if __name__ == '__main__':
         print('\nTraining Bag Aggregator')
         for iteration in range(MIL_train_count):
             model.train()
-            train_bag_logits = {}
             total_loss = 0.0
             total_acc = 0
             total = 0
@@ -390,12 +358,6 @@ if __name__ == '__main__':
                 # Forward pass
                 bag_pred, _, instance_pred, features = model(images, pred_on=True)
                 
-
-                # Split the embeddings back into per-bag embeddings
-                split_sizes = [bag.size(0) for bag in images]
-                y_hat_per_bag = torch.split(instance_pred, split_sizes, dim=0)
-                for i, y_h in enumerate(y_hat_per_bag):
-                    train_bag_logits[id[i].item()] = y_h.detach().cpu().numpy()
                 
                 bag_loss = BCE_loss(bag_pred, yb)
                 bag_loss.backward()
