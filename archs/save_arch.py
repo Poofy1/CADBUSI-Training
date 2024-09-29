@@ -219,7 +219,7 @@ def setup_model(model, optimizer, config):
     pretrained_name = f"{config['head_name']}_{arch}"
     
     head_folder = os.path.join(parent_dir, "models", pretrained_name)
-    head_path = os.path.join(head_folder, f"{pretrained_name}.pth")
+    head_path = os.path.join(head_folder, f"model.pth")
 
     model_folder = os.path.join(parent_dir, "models", pretrained_name, model_name)
     model_path = os.path.join(model_folder, f"model.pth")
@@ -256,6 +256,7 @@ def setup_model(model, optimizer, config):
         
         if os.path.exists(head_path):
             state['pickup_warmup'] = True
+            state['warmup'] = False
             encoder_state_dict = torch.load(head_path)
             encoder_state_dict = {k.replace('encoder.', ''): v for k, v in encoder_state_dict.items() if k.startswith('encoder.')}
             model.encoder.load_state_dict(encoder_state_dict)

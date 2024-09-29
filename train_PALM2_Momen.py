@@ -23,21 +23,21 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "Palm5_OFFICIAL_3"
+    head_name = "PALM2_TEST_2_efficientnet_b0"
     
-    """dataset_name = 'export_oneLesions' #'export_03_18_2024'
+    dataset_name = 'export_oneLesions' #'export_03_18_2024'
     label_columns = ['Has_Malignant']
     instance_columns = ['Malignant Lesion Present']  
-    img_size = 300
-    bag_batch_size = 5
+    img_size = 224
+    bag_batch_size = 3
     min_bag_size = 2
     max_bag_size = 25
     instance_batch_size =  50
-    arch = 'resnet50'
+    arch = 'efficientnet_b0'
     pretrained_arch = False
-    """
+
     
-    dataset_name = 'imagenette2_hard'
+    """dataset_name = 'imagenette2_hard2'
     label_columns = ['Has_Fish']
     instance_columns = ['Has_Fish']  
     img_size = 128
@@ -46,7 +46,7 @@ if __name__ == '__main__':
     max_bag_size = 25
     instance_batch_size =  25
     arch = 'efficientnet_b0'
-    pretrained_arch = False
+    pretrained_arch = False"""
 
     #ITS2CLR Config
     feature_extractor_train_count = 8 # 6
@@ -54,13 +54,10 @@ if __name__ == '__main__':
     initial_ratio = .3 #0.3 # --% preditions included
     final_ratio = .8 #0.85 # --% preditions included
     total_epochs = 100
-    warmup_epochs = 1
+    warmup_epochs = 10
     learning_rate=0.001
     reset_aggregator = False # Reset the model.aggregator weights after contrastive learning
-    
-    mix_alpha=0.2  #0.2
-    mix='mixup'
-    
+
     
     train_transform = T.Compose([
                 T.RandomHorizontalFlip(),
@@ -199,7 +196,12 @@ if __name__ == '__main__':
                         unlabeled_indices = torch.where(unlabeled_mask)[0]
                         
                         with torch.no_grad():
-                            proto_dist, proto_class = palm.get_nearest_prototype(unlabeled_features)
+                            proto_class, proto_dist = palm.predict(unlabeled_features)
+                            
+                            # Normalize distances
+                            max_dist = torch.max(proto_dist)
+                            min_dist = torch.min(proto_dist)
+                            normalized_dist = (proto_dist - min_dist) / (max_dist - min_dist)
                         
                         for i, idx in enumerate(unlabeled_indices):
                             unique_id = unique_ids[idx]
@@ -207,32 +209,28 @@ if __name__ == '__main__':
                             if unique_id not in unknown_labels:
                                 unknown_labels[unique_id] = 0.5  # Initialize to 0.5 if not present
                             
-                            # Apply momentum update to all instances
+                            # Calculate confidence from normalized distance
+                            confidence = 1 - normalized_dist[i].item()
+
                             current_label = unknown_labels[unique_id]
                             new_label = proto_class[i].item()
-                            updated_label = unknown_label_momentum * current_label + (1 - unknown_label_momentum) * new_label
+
+                            # Adjust the momentum based on confidence
+                            adjusted_momentum = unknown_label_momentum * (1 - confidence) + confidence
+
+                            updated_label = adjusted_momentum * current_label + (1 - adjusted_momentum) * new_label
                             updated_label = max(0, min(1, updated_label))  # Clamp the updated label to [0, 1]
                             unknown_labels[unique_id] = updated_label
                             
                             # Update the combined_labels tensor with the new pseudo-label
                             combined_labels[idx] = updated_label
                     
-                    print(combined_labels)
-                    # Convert confident combined labels to one-hot vectors [Neg class, Pos class]
-                    combined_labels_one_hot = torch.zeros(combined_labels.size(0), 2, device=device)
-                    combined_labels_one_hot[:, 0] = 1 - combined_labels
-                    combined_labels_one_hot[:, 1] = combined_labels
 
-                    # Prepare confident instance predictions
-                    instance_predictions_vector = instance_predictions.unsqueeze(1)
-                    instance_predictions_vector = torch.cat([1 - instance_predictions_vector, instance_predictions_vector], dim=1)
-                    
-                    
-                    # Calculate CE loss for confident instances
-                    ce_loss_value = CE_loss(instance_predictions_vector, combined_labels_one_hot)
+                    # Calculate BCE loss for confident instances
+                    bce_loss_value = BCE_loss(instance_predictions, combined_labels)
 
                     # Backward pass and optimization step
-                    total_loss = palm_loss + ce_loss_value
+                    total_loss = palm_loss + bce_loss_value
                     total_loss.backward()
                     optimizer.step()
         
@@ -278,20 +276,11 @@ if __name__ == '__main__':
                         # PALM Loss
                         palm_loss, _ = palm(features, instance_labels, update_prototypes=False)
 
-                        # Convert instance labels to one-hot vectors [Neg class, Pos class]
-                        instance_labels_one_hot = torch.zeros(instance_labels.size(0), 2, device=device)
-                        instance_labels_one_hot[:, 0] = 1 - instance_labels
-                        instance_labels_one_hot[:, 1] = instance_labels
-
-                        # Prepare instance predictions
-                        instance_predictions_vector = instance_predictions.unsqueeze(1)
-                        instance_predictions_vector = torch.cat([1 - instance_predictions_vector, instance_predictions_vector], dim=1)
-
-                        # Calculate CE loss
-                        ce_loss_value = CE_loss(instance_predictions_vector, instance_labels_one_hot)
+                        # Calculate BCE loss
+                        bce_loss_value = BCE_loss(instance_predictions, instance_labels.float())
 
                         # Calculate total loss
-                        total_loss = palm_loss + ce_loss_value
+                        total_loss = palm_loss + bce_loss_value
                         val_losses.update(total_loss.item(), images[0].size(0))
 
                         # Get predictions

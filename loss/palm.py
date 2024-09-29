@@ -174,19 +174,6 @@ class PALM(nn.Module):
         distances = 2 - 2 * distances
         
         return predicted_classes, distances
-    
-    def get_nearest_prototype(self, features):
-        # Compute distances to all prototypes
-        distances = torch.cdist(features, self.protos)
-        
-        # Find the closest prototype for each feature
-        closest_distances, closest_indices = torch.min(distances, dim=1)
-        
-        # Get the class labels for the closest prototypes
-        _, proto_classes = torch.max(self.proto_class_counts, dim=1)
-        closest_classes = proto_classes[closest_indices]
-        
-        return closest_distances, closest_classes
 
     def forward(self, features, targets, update_prototypes=True):
         loss = 0

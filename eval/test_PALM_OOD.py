@@ -20,7 +20,7 @@ from util.format_data import *
 from util.sudo_labels import *
 from loss.palm import PALM
 from archs.save_arch import *
-from archs.model_PALM2_solo import *
+from archs.model_PALM import *
 from data.bag_loader import *
 from data.instance_loader import *
 
@@ -248,7 +248,7 @@ if __name__ == '__main__':
     os.makedirs(f'{current_dir}/results/PALM_OOD/', exist_ok=True)
     
     # Load the model configuration
-    head_name = "Palm2_CADBUSI_2_efficientnet_b0"
+    head_name = "PALM_ITS2CLR_TEST_1_efficientnet_b0"
     model_version = "1" #Leave "" to read HEAD
     
     # loaded configuration
