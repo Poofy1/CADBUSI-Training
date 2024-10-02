@@ -23,7 +23,7 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "PALM_ITS2CLR_CADBUSI_1"
+    head_name = "PALM_ITS2CLR_CADBUSI_5"
 
     dataset_name = 'export_oneLesions' #'export_03_18_2024'
     label_columns = ['Has_Malignant']
@@ -37,7 +37,7 @@ if __name__ == '__main__':
     pretrained_arch = False
 
     
-    """dataset_name = 'imagenette2_hard2'
+    """dataset_name = 'imagenette2_hard'
     label_columns = ['Has_Fish']
     instance_columns = ['Has_Fish']  
     img_size = 128
@@ -52,8 +52,8 @@ if __name__ == '__main__':
     feature_extractor_train_count = 8 # 6
     MIL_train_count = 5
     initial_ratio = .3 #0.3 # --% preditions included
-    final_ratio = .8 #0.85 # --% preditions included
-    total_epochs = 100
+    final_ratio = 1 #0.85 # --% preditions included
+    total_epochs = 10
     warmup_epochs = 10
     learning_rate=0.001
     reset_aggregator = False # Reset the model.aggregator weights after contrastive learning
@@ -115,7 +115,7 @@ if __name__ == '__main__':
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
     
     # LOSS INIT
-    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 90, lambda_pcon=1).cuda()
+    palm = PALM(nviews = 1, num_classes=2, n_protos=6, k = 5, lambda_pcon=3).cuda()
     BCE_loss = nn.BCELoss()
     
     optimizer = optim.SGD(model.parameters(),

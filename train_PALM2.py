@@ -23,7 +23,7 @@ if __name__ == '__main__':
     model_version = '2'
     head_name = "PALM2_SUDO_CADBUSI_1"
     
-    dataset_name = 'export_oneLesions' #'export_03_18_2024' or 'export_oneLesions'
+    """dataset_name = 'export_oneLesions' #'export_03_18_2024' or 'export_oneLesions'
     label_columns = ['Has_Malignant']
     instance_columns = ['Malignant Lesion Present']  
     img_size = 224
@@ -32,10 +32,10 @@ if __name__ == '__main__':
     max_bag_size = 25
     instance_batch_size =  50
     arch = 'efficientnet_b0'
-    pretrained_arch = False
+    pretrained_arch = False"""
 
     
-    """dataset_name = 'imagenette2_hard2'
+    dataset_name = 'imagenette2_hard2'
     label_columns = ['Has_Fish']
     instance_columns = ['Has_Fish']  
     img_size = 128
@@ -44,7 +44,7 @@ if __name__ == '__main__':
     max_bag_size = 25
     instance_batch_size =  25
     arch = 'efficientnet_b0'
-    pretrained_arch = False"""
+    pretrained_arch = False
 
     #ITS2CLR Config
     feature_extractor_train_count = 8 # 6

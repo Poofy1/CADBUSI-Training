@@ -213,10 +213,8 @@ def setup_model(model, optimizer, config):
     # Get the parent directory
     parent_dir = os.path.dirname(current_dir)
     
-    dataset_name = config['dataset_name']
-    arch = config['arch']
     model_name = config['model_version']
-    pretrained_name = f"{config['head_name']}_{arch}"
+    pretrained_name = f"{config['head_name']}"
     
     head_folder = os.path.join(parent_dir, "models", pretrained_name)
     head_path = os.path.join(head_folder, f"model.pth")
@@ -249,6 +247,7 @@ def setup_model(model, optimizer, config):
         model.encoder.load_state_dict(encoder_state_dict)
         state['train_losses'], state['valid_losses'], state['epoch'], state['val_loss_bag'], state['val_loss_instance'], state['selection_mask'] = load_state(stats_path, model_folder)
         state['palm_path'] = os.path.join(model_folder, "palm_state.pkl")
+        save_config(config, head_folder)
     else:
         print(f"{model_name} does not exist, creating new instance")
         os.makedirs(model_folder, exist_ok=True)
