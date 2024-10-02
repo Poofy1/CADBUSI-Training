@@ -121,13 +121,13 @@ def test_model_and_collect_distances(model, palm, bag_dataloader, instance_datal
     with torch.no_grad():
         # Bag-level testing
         for images, yb, _, _ in tqdm(bag_dataloader, desc="Testing bags"):
-            bag_pred, _, _, _ = model(images, pred_on=True)
+            bag_pred, _, _= model(images, pred_on=True)
             bag_targets.extend(yb.cpu().numpy())
             bag_predictions.extend((bag_pred > 0.5).float().cpu().numpy())
         
         for images, instance_labels, unique_ids in tqdm(instance_dataloader, desc="Testing instances"):
             images = images.to(device)
-            _, _, fc_pred, features = model(images, projector=True)
+            _, fc_pred, features = model(images, projector=True)
             palm_pred, dist = palm.predict(features)
             
             distances.extend(dist.cpu().numpy())
@@ -135,7 +135,11 @@ def test_model_and_collect_distances(model, palm, bag_dataloader, instance_datal
             instance_features.extend(features.cpu().numpy())
             
             instance_targets.extend(instance_labels.cpu().numpy())
-            fc_predictions.extend((fc_pred > 0.5).float().cpu().numpy())
+            # Check if fc_pred is None and handle accordingly
+            if fc_pred is None:
+                fc_predictions.extend([0] * len(instance_labels))
+            else:
+                fc_predictions.extend((fc_pred > 0.5).float().cpu().numpy())
             palm_predictions.extend(palm_pred.cpu().numpy())
                 
     return (np.array(bag_targets), np.array(bag_predictions), 
@@ -248,8 +252,8 @@ if __name__ == '__main__':
     os.makedirs(f'{current_dir}/results/PALM_OOD/', exist_ok=True)
     
     # Load the model configuration
-    head_name = "PALM_ITS2CLR_TEST_1_efficientnet_b0"
-    model_version = "1" #Leave "" to read HEAD
+    head_name = "PALM_ITS2CLR_CADBUSI_1"
+    model_version = "" #Leave "" to read HEAD
     
     # loaded configuration
     model_path = os.path.join(model_folder, head_name, model_version)

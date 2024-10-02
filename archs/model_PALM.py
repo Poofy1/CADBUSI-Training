@@ -14,10 +14,9 @@ class Embeddingmodel(nn.Module):
         
         if self.is_efficientnet:
             self.encoder = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
-            nf = 512
-            # Replace the last fully connected layer with a new one
-            num_features = self.encoder.classifier[1].in_features
-            self.encoder.classifier[1] = nn.Linear(num_features, nf)
+            nf = 1536  # EfficientNet-B3's feature map has 1536 channels
+            # Remove the classifier to keep spatial dimensions
+            self.encoder = nn.Sequential(*list(self.encoder.children())[:-2])
         else:
             self.encoder = create_timm_body(arch, pretrained=pretrained_arch)
             nf = num_features_model(nn.Sequential(*self.encoder.children()))
@@ -27,9 +26,12 @@ class Embeddingmodel(nn.Module):
         self.nf = nf
 
         self.aggregator = Linear_Classifier2(nf=self.nf, num_classes=num_classes)
+        
+        dropout_rate=0.5
         self.projector = nn.Sequential(
-            nn.Linear(nf, 512),
+            nn.Linear(75264, 512),
             nn.ReLU(inplace=True),
+            nn.Dropout(dropout_rate),
             nn.Linear(512, feat_dim)
         )
         
@@ -37,13 +39,11 @@ class Embeddingmodel(nn.Module):
         self.adaptive_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         print(f'Feature Map Size: {nf}')
 
-    def forward(self, input, projector=False, pred_on = False):
+    def forward(self, all_images, projector=False, pred_on = False):
         if pred_on:
-            num_bags = len(input) # input = [bag #, image #, channel, height, width]
-            all_images = torch.cat(input, dim=0).cuda()  # Concatenate all bags into a single tensor for batch processing
-        else:
-            all_images = input
-
+            num_bags = len(all_images) # input = [bag #, image #, channel, height, width]
+            all_images = torch.cat(all_images, dim=0).cuda()  # Concatenate all bags into a single tensor for batch processing
+            
         # Calculate the embeddings for all images in one go
         feat = self.encoder(all_images)
         if not self.is_efficientnet:
@@ -55,7 +55,7 @@ class Embeddingmodel(nn.Module):
         bag_instance_predictions = None
         if pred_on:
             # Split the embeddings back into per-bag embeddings
-            split_sizes = [bag.size(0) for bag in input]
+            split_sizes = [bag.size(0) for bag in all_images]
             h_per_bag = torch.split(feat, split_sizes, dim=0)
             bag_pred = torch.empty(num_bags, self.num_classes).cuda()
             bag_instance_predictions = []
@@ -67,7 +67,10 @@ class Embeddingmodel(nn.Module):
         
         proj = None
         if projector:
-            proj = self.projector(feat_pool)
+            # Flatten the feature maps
+            feat_flat = feat.view(feat.size(0), -1)
+            # Project the flattened features
+            proj = self.projector(feat_flat)
             proj = F.normalize(proj, dim=1)
             
 
