@@ -31,7 +31,7 @@ class Embeddingmodel(nn.Module):
         self.projector = nn.Sequential(
             nn.Linear(75264, 512),
             nn.ReLU(inplace=True),
-            nn.Dropout(dropout_rate),
+            #nn.Dropout(dropout_rate),
             nn.Linear(512, feat_dim)
         )
         

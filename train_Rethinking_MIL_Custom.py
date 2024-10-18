@@ -7,7 +7,7 @@ from util.Gen_ITS2CLR_util import *
 import torch.optim as optim
 from util.format_data import *
 from util.sudo_labels import *
-from archs.model_PALM2_solo import *
+from archs.model_INS_custom import *
 from data.bag_loader import *
 from data.instance_loader import *
 from loss.palm import PALM
@@ -21,7 +21,7 @@ if __name__ == '__main__':
 
     # Config
     model_version = '2'
-    head_name = "TESTING3"
+    head_name = "TESTING2"
     
     """dataset_name = 'export_oneLesions' #'export_03_18_2024' or 'export_oneLesions'
     label_columns = ['Has_Malignant']
@@ -132,7 +132,7 @@ if __name__ == '__main__':
     while state['epoch'] < total_epochs:
         
         
-        if not state['pickup_warmup']: # Are we resuming from a head model?
+        """if not state['pickup_warmup']: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
             instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=True)
@@ -273,7 +273,7 @@ if __name__ == '__main__':
                         print("Saved checkpoint due to improved val_loss_instance")
 
 
-
+"""
 
 
         if state['pickup_warmup']: 
@@ -302,7 +302,7 @@ if __name__ == '__main__':
                 optimizer.zero_grad()
 
                 # Forward pass
-                bag_pred, _, instance_pred, features = model(images, pred_on=True, projector=True)
+                bag_pred, _, instance_pred, feat_q, feat_k = model(images, bag_on=True)
     
                 # Split the embeddings back into per-bag embeddings
                 split_sizes = [bag.size(0) for bag in images]
@@ -338,7 +338,7 @@ if __name__ == '__main__':
                 for (images, yb, instance_labels, id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
 
                     # Forward pass
-                    bag_pred, _, _, features = model(images, pred_on=True)
+                    bag_pred, _, _, feat_q, feat_k = model(images, bag_on=True)
 
                     # Calculate bag-level loss
                     loss = BCE_loss(bag_pred, yb)

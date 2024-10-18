@@ -120,10 +120,10 @@ def test_model_and_collect_distances(model, palm, bag_dataloader, instance_datal
     
     with torch.no_grad():
         # Bag-level testing
-        for images, yb, _, _ in tqdm(bag_dataloader, desc="Testing bags"):
-            bag_pred, _, _= model(images, pred_on=True)
+        """for images, yb, _, _ in tqdm(bag_dataloader, desc="Testing bags"):
+            bag_pred, _, _= model(images)
             bag_targets.extend(yb.cpu().numpy())
-            bag_predictions.extend((bag_pred > 0.5).float().cpu().numpy())
+            bag_predictions.extend((bag_pred > 0.5).float().cpu().numpy())"""
         
         for images, instance_labels, unique_ids in tqdm(instance_dataloader, desc="Testing instances"):
             images = images.to(device)
@@ -179,7 +179,7 @@ def run_test(config):
     ])
     
     # Prepare PALM
-    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 90, lambda_pcon=1).cuda()
+    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 90, lambda_pcon=0).cuda()
     palm.load_state(palm_path)
 
     # Prepare test data
@@ -215,7 +215,7 @@ def run_test(config):
     visualize_prototypes_and_instances(palm, instance_features, instance_targets, config['dataset_name'], config['head_name'])
     
      
-    # Calculate and print metrics
+    """# Calculate and print metrics
     print(f"\nResults for dataset: {config['dataset_name']}")
     print("Bag-level Metrics:")
     bag_metrics = calculate_metrics(bag_targets, bag_predictions)
@@ -230,7 +230,7 @@ def run_test(config):
     print("\nPALM Instance-level Metrics:")
     palm_instance_metrics = calculate_metrics(instance_targets, palm_predictions)
     for metric, value in palm_instance_metrics.items():
-        print(f"{metric}: {value:.4f}")
+        print(f"{metric}: {value:.4f}")"""
 
     return distances, instance_info
 
@@ -252,7 +252,7 @@ if __name__ == '__main__':
     os.makedirs(f'{current_dir}/results/PALM_OOD/', exist_ok=True)
     
     # Load the model configuration
-    head_name = "PALM_ITS2CLR_CADBUSI_1"
+    head_name = "PALM_ITS2CLR_CADBUSI_6_fulltest"
     model_version = "" #Leave "" to read HEAD
     
     # loaded configuration
@@ -265,9 +265,9 @@ if __name__ == '__main__':
     distances_1, _ = run_test(config)
     
     
-    config['dataset_name'] = 'export_oneLesions'
-    config['label_columns'] = ['Has_Malignant']
-    config['instance_columns'] = ['Malignant Lesion Present'] 
+    config['dataset_name'] = 'imagenette2_hard'
+    config['label_columns'] = ['Has_Fish']
+    config['instance_columns'] = ['Has_Fish'] 
     
     
     # Test 2: Imagenette dataset
