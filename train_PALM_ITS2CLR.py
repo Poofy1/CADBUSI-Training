@@ -23,7 +23,7 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "PALM_ITS2CLR_CADBUSI_5"
+    head_name = "PALM_ITS2CLR_CADBUSI_8_fulltest"
 
     dataset_name = 'export_oneLesions' #'export_03_18_2024'
     label_columns = ['Has_Malignant']
@@ -51,7 +51,7 @@ if __name__ == '__main__':
     #ITS2CLR Config
     feature_extractor_train_count = 8 # 6
     MIL_train_count = 5
-    initial_ratio = .3 #0.3 # --% preditions included
+    initial_ratio = .1 #0.3 # --% preditions included
     final_ratio = 1 #0.85 # --% preditions included
     total_epochs = 10
     warmup_epochs = 10
@@ -115,7 +115,7 @@ if __name__ == '__main__':
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
     
     # LOSS INIT
-    palm = PALM(nviews = 1, num_classes=2, n_protos=6, k = 5, lambda_pcon=3).cuda()
+    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 90, lambda_pcon=0).cuda()
     BCE_loss = nn.BCELoss()
     
     optimizer = optim.SGD(model.parameters(),
@@ -228,7 +228,7 @@ if __name__ == '__main__':
                 print(f'[{iteration+1}/{target_count}] Val Loss:   {val_losses.avg:.5f}, Val Acc:   {instance_val_acc:.5f}')
 
                 # Save the model
-                if val_losses.avg < state['val_loss_instance']:
+                if True:#val_losses.avg < state['val_loss_instance']:
                     state['val_loss_instance'] = val_losses.avg
                     if state['warmup']:
                         target_folder = state['head_folder']

@@ -32,7 +32,7 @@ def save_accuracy_to_file(epoch, train_acc, val_acc, label_columns, file_path):
         file.write(f"Epoch {epoch + 1}\n")
 
         # Check if train_acc is a single float or an iterable of floats
-        if isinstance(train_acc, float):
+        if isinstance(train_acc, (float, int)):
             # If train_acc is a single float, write it directly
             file.write("Training Accuracy:\n")
             file.write(f"  Overall: {train_acc:.4f}\n")
@@ -43,7 +43,7 @@ def save_accuracy_to_file(epoch, train_acc, val_acc, label_columns, file_path):
                 file.write(f"  {label_columns[idx]}: {acc:.4f}\n")
 
         # Do the same check for val_acc
-        if isinstance(val_acc, float):
+        if isinstance(val_acc, (float, int)):
             file.write("Validation Accuracy:\n")
             file.write(f"  Overall: {val_acc:.4f}\n")
         else:
@@ -240,14 +240,25 @@ def setup_model(model, optimizer, config):
         'pickup_warmup': False
     }
 
+    def load_model(model, model_path):
+        state_dict = torch.load(model_path)
+        
+        # Check if 'encoder.' prefix exists in any key
+        try:
+            # If 'encoder.' prefix exists, load only the encoder part
+            encoder_state_dict = {k.replace('encoder.', ''): v for k, v in state_dict.items() if k.startswith('encoder.')}
+            model.encoder.load_state_dict(encoder_state_dict)
+        except:
+            # If 'encoder.' prefix doesn't exist, load the entire model
+            model.load_state_dict(state_dict)
+        
+        return model
+    
     if os.path.exists(model_path):
         print(f"Loaded pre-existing model from {model_name}")
-        encoder_state_dict = torch.load(model_path)
-        encoder_state_dict = {k.replace('encoder.', ''): v for k, v in encoder_state_dict.items() if k.startswith('encoder.')}
-        model.encoder.load_state_dict(encoder_state_dict)
+        model = load_model(model, model_path)
         state['train_losses'], state['valid_losses'], state['epoch'], state['val_loss_bag'], state['val_loss_instance'], state['selection_mask'] = load_state(stats_path, model_folder)
         state['palm_path'] = os.path.join(model_folder, "palm_state.pkl")
-        save_config(config, head_folder)
     else:
         print(f"{model_name} does not exist, creating new instance")
         os.makedirs(model_folder, exist_ok=True)
@@ -256,16 +267,15 @@ def setup_model(model, optimizer, config):
         if os.path.exists(head_path):
             state['pickup_warmup'] = True
             state['warmup'] = False
-            encoder_state_dict = torch.load(head_path)
-            encoder_state_dict = {k.replace('encoder.', ''): v for k, v in encoder_state_dict.items() if k.startswith('encoder.')}
-            model.encoder.load_state_dict(encoder_state_dict)
+            model = load_model(model, head_path)
             print(f"Loaded pre-trained model from {pretrained_name}")
         else:
             state['warmup'] = True
             os.makedirs(head_folder, exist_ok=True)
 
         save_config(config, model_folder)
-        save_model_architecture(model, model_folder)
+        save_config(config, head_folder)
+        save_model_architecture(model, head_folder)
         
     
     
