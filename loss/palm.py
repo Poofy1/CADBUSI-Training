@@ -1,6 +1,6 @@
 import torch
-from util.format_data import *
-from util.sudo_labels import *
+from data.format_data import *
+
 
 
 class PALM(nn.Module):

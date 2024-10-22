@@ -10,9 +10,9 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
-from util.format_data import *
-from util.sudo_labels import *
-from archs.save_arch import *
+from data.format_data import *
+from data.sudo_labels import *
+from data.save_arch import *
 from archs.model_PALM2_solo import *
 from data.bag_loader import *
 from data.instance_loader import *

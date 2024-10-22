@@ -6,7 +6,6 @@ sys.path.append(parent_dir)
 
 from fastai.vision.all import *
 from archs.model_ABMIL import *
-#from train_ABMIL import *
 from train_GenSCL_ITS2CLR import *
 from data.format_data import *
 import matplotlib.pyplot as plt

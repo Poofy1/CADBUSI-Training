@@ -1,13 +1,14 @@
-import os, pickle
+import os
 from fastai.vision.all import *
 import torch.utils.data as TUD
 from tqdm import tqdm
 from torch import nn
-from archs.save_arch import *
+from data.save_arch import *
 from torch.optim import Adam
-from util.format_data import *
+from data.format_data import *
 from archs.model_ABMIL import *
 from data.bag_loader import *
+from config import *
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
@@ -19,67 +20,12 @@ if __name__ == '__main__':
     # Config
     model_version = '1'
     head_name = "ABMIL_OFFICAL"
-
-    """dataset_name = 'export_oneLesions' #'export_03_18_2024'
-    label_columns = ['Has_Malignant']
-    instance_columns = ['Malignant Lesion Present']  
-    img_size = 300
-    bag_batch_size = 5
-    min_bag_size = 2
-    max_bag_size = 25
-    instance_batch_size =  50
-    arch = 'resnet50'
-    pretrained_arch = False
-    """
+    data_config = FishDataConfig  # or LesionDataConfig
     
-    dataset_name = 'imagenette2_hard'
-    label_columns = ['Has_Fish']
-    instance_columns = ['Has_Fish']  
-    img_size = 128
-    bag_batch_size = 5
-    min_bag_size = 2
-    max_bag_size = 25
-    instance_batch_size =  25
-    arch = 'efficientnet_b0'
-    pretrained_arch = False
-
-
-    #ITS2CLR Config (NOT USED HERE)
-    feature_extractor_train_count = 8 # 6
-    MIL_train_count = 5
-    initial_ratio = .3 #0.3 # --% preditions included
-    final_ratio = .8 #0.85 # --% preditions included
-    total_epochs = 100
-    warmup_epochs = 10
-    learning_rate=0.001
-    reset_aggregator = False # Reset the model.aggregator weights after contrastive learning
-
-    # Paths
-    config = {
-        "head_name": head_name,
-        "model_version": model_version,
-        "dataset_name": dataset_name,
-        "arch": arch,
-        "pretrained_arch": pretrained_arch,
-        "label_columns": label_columns,
-        "instance_columns": instance_columns,
-        "img_size": img_size,
-        "bag_batch_size": bag_batch_size,
-        "min_bag_size": min_bag_size,
-        "max_bag_size": max_bag_size,
-        "instance_batch_size": instance_batch_size,
-        "feature_extractor_train_count": feature_extractor_train_count,
-        "MIL_train_count": MIL_train_count,
-        "initial_ratio": initial_ratio,
-        "final_ratio": final_ratio,
-        "total_epochs": total_epochs,
-        "reset_aggregator": reset_aggregator,
-        "warmup_epochs": warmup_epochs,
-        "learning_rate": learning_rate,
-    }
+    config = build_config(model_version, head_name, data_config)
     bags_train, bags_val = prepare_all_data(config)
-    num_classes = len(label_columns) + 1
-    num_labels = len(label_columns)
+    num_classes = len(config['label_columns']) + 1
+    num_labels = len(config['label_columns'])
     
     train_transform = T.Compose([
                 T.RandomHorizontalFlip(),
@@ -100,16 +46,16 @@ if __name__ == '__main__':
     # Create bag datasets
     bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
     bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
-    bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
-    bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True)
+    bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_size=config['bag_batch_size'], collate_fn = collate_bag, drop_last=True, shuffle = True)
+    bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_size=config['bag_batch_size'], collate_fn = collate_bag, drop_last=True)
 
     
     # total model
-    model = Embeddingmodel(arch, pretrained_arch, num_classes = num_labels).cuda()
+    model = Embeddingmodel(config['arch'], config['pretrained_arch'], num_classes = num_labels).cuda()
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}") 
         
         
-    optimizer = Adam(model.parameters(), lr=learning_rate)
+    optimizer = Adam(model.parameters(), lr=config['learning_rate'])
     loss_func = nn.BCELoss()
     train_losses_over_epochs = []
     valid_losses_over_epochs = []
@@ -120,7 +66,7 @@ if __name__ == '__main__':
     
     print("Training Data...")
     # Training loop
-    while state['epoch'] < total_epochs:
+    while state['epoch'] < config['total_epochs']:
         # Training phase
         model.train()
         total_loss = 0.0
@@ -187,7 +133,7 @@ if __name__ == '__main__':
         valid_losses_over_epochs.append(val_loss)
         
         # Constructing header with label names
-        acc_headers = " | ".join(f"Acc ({name})" for name in label_columns)
+        acc_headers = " | ".join(f"Acc ({name})" for name in config['label_columns'])
         header = f"Epoch {state['epoch']+1} | {acc_headers} | Loss"
 
         # Constructing training and validation accuracy strings
@@ -205,5 +151,5 @@ if __name__ == '__main__':
         # Save the model
         if val_loss < state['val_loss_bag']:
             state['val_loss_bag'] = val_loss  # Update the best validation accuracy
-            save_state(state['epoch'], label_columns, train_acc, val_loss, val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs)
+            save_state(state['epoch'], config['label_columns'], train_acc, val_loss, val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs)
             print("Saved checkpoint due to improved val_loss")

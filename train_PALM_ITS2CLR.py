@@ -3,15 +3,16 @@ from fastai.vision.all import *
 import torch.utils.data as TUD
 from tqdm import tqdm
 from torch import nn
-from archs.save_arch import *
+from data.save_arch import *
 from util.Gen_ITS2CLR_util import *
 import torch.optim as optim
-from util.format_data import *
-from util.sudo_labels import *
+from data.format_data import *
+from data.sudo_labels import *
 from archs.model_PALM import *
 from data.bag_loader import *
 from data.instance_loader import *
 from loss.palm import PALM
+from config import *
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
@@ -24,94 +25,22 @@ if __name__ == '__main__':
     # Config
     model_version = '1'
     head_name = "TEST_PALM_ITS2CLR"
-
-    """dataset_name = 'export_oneLesions' #'export_03_18_2024'
-    label_columns = ['Has_Malignant']
-    instance_columns = ['Malignant Lesion Present']  
-    img_size = 224
-    bag_batch_size = 3
-    min_bag_size = 2
-    max_bag_size = 25
-    instance_batch_size =  50
-    arch = 'efficientnet_b0'
-    pretrained_arch = False"""
-
+    data_config = FishDataConfig  # or LesionDataConfig
     
-    dataset_name = 'imagenette2_hard'
-    label_columns = ['Has_Fish']
-    instance_columns = ['Has_Fish']  
-    img_size = 128
-    bag_batch_size = 5
-    min_bag_size = 2
-    max_bag_size = 25
-    instance_batch_size =  25
-    arch = 'efficientnet_b0'
-    pretrained_arch = False
-
-    #ITS2CLR Config
-    feature_extractor_train_count = 8 # 6
-    MIL_train_count = 5
-    initial_ratio = 1 #0.3 # --% preditions included
-    final_ratio = 1 #0.85 # --% preditions included
-    total_epochs = 100
-    warmup_epochs = 10
-    learning_rate=0.001
-    reset_aggregator = False # Reset the model.aggregator weights after contrastive learning
-
-    
-    
-    train_transform = T.Compose([
-                T.RandomHorizontalFlip(),
-                T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
-                T.RandomAffine(degrees=(-90, 90), translate=(0.05, 0.05), scale=(1, 1.2),),
-                CLAHETransform(),
-                T.ToTensor(),
-                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
-    
-    val_transform = T.Compose([
-                CLAHETransform(),
-                T.ToTensor(),
-                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
-
-    
-    # Get Training Data
-    config = {
-        "head_name": head_name,
-        "model_version": model_version,
-        "dataset_name": dataset_name,
-        "arch": arch,
-        "pretrained_arch": pretrained_arch,
-        "label_columns": label_columns,
-        "instance_columns": instance_columns,
-        "img_size": img_size,
-        "bag_batch_size": bag_batch_size,
-        "min_bag_size": min_bag_size,
-        "max_bag_size": max_bag_size,
-        "instance_batch_size": instance_batch_size,
-        "feature_extractor_train_count": feature_extractor_train_count,
-        "MIL_train_count": MIL_train_count,
-        "initial_ratio": initial_ratio,
-        "final_ratio": final_ratio,
-        "total_epochs": total_epochs,
-        "reset_aggregator": reset_aggregator,
-        "warmup_epochs": warmup_epochs,
-        "learning_rate": learning_rate,
-    }
+    config = build_config(model_version, head_name, data_config)
     bags_train, bags_val = prepare_all_data(config)
-    num_classes = len(label_columns) + 1
-    num_labels = len(label_columns)
+    num_classes = len(config['label_columns']) + 1
+    num_labels = len(config['label_columns'])
 
     # Create bag datasets
     bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
     bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
-    bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
-    bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True)
+    bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_size=config['bag_batch_size'], collate_fn = collate_bag, drop_last=True, shuffle = True)
+    bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_size=config['bag_batch_size'], collate_fn = collate_bag, drop_last=True)
 
 
     # Create Model
-    model = Embeddingmodel(arch, pretrained_arch, num_classes = num_labels).cuda()
+    model = Embeddingmodel(config['arch'], config['pretrained_arch'], num_classes = num_labels).cuda()
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
     
     # LOSS INIT
@@ -119,7 +48,7 @@ if __name__ == '__main__':
     BCE_loss = nn.BCELoss()
     
     optimizer = optim.SGD(model.parameters(),
-                        lr=learning_rate,
+                        lr=config['learning_rate'],
                         momentum=0.9,
                         nesterov=True,
                         weight_decay=0.001)
@@ -130,22 +59,22 @@ if __name__ == '__main__':
     palm.load_state(state['palm_path'])
     
     # Training loop
-    while state['epoch'] < total_epochs:
+    while state['epoch'] < config['total_epochs']:
 
         if not state['pickup_warmup']: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
             instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform)
             instance_dataset_val = Instance_Dataset(bags_val, state['selection_mask'], transform=val_transform)
-            train_sampler = InstanceSampler(instance_dataset_train, instance_batch_size, strategy=1)
-            val_sampler = InstanceSampler(instance_dataset_val, instance_batch_size, strategy=2)
+            train_sampler = InstanceSampler(instance_dataset_train, config['instance_batch_size'], strategy=1)
+            val_sampler = InstanceSampler(instance_dataset_val, config['instance_batch_size'], strategy=2)
             instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, collate_fn = collate_instance)
             instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_sampler=val_sampler, collate_fn = collate_instance)
             
             if state['warmup']:
-                target_count = warmup_epochs
+                target_count = config['warmup_epochs']
             else:
-                target_count = feature_extractor_train_count
+                target_count = config['feature_extractor_train_count']
             
             print('Training Feature Extractor')
             print(f'Warmup Mode: {state["warmup"]}')
@@ -240,7 +169,7 @@ if __name__ == '__main__':
                     all_preds = []
                     
                     if state['warmup']:
-                        save_state(state['epoch'], label_columns, instance_train_acc, val_losses.avg, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
+                        save_state(state['epoch'], config['label_columns'], instance_train_acc, val_losses.avg, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
                         palm.save_state(os.path.join(target_folder, "palm_state.pkl"))
                         print("Saved checkpoint due to improved val_loss_instance")
 
@@ -254,7 +183,7 @@ if __name__ == '__main__':
         
         
         print('\nTraining Bag Aggregator')
-        for iteration in range(MIL_train_count):
+        for iteration in range(config['MIL_train_count']):
             
             model.train()
             total_loss = 0.0
@@ -324,7 +253,7 @@ if __name__ == '__main__':
             state['train_losses'].append(train_loss)
             state['valid_losses'].append(val_loss) 
 
-            print(f"[{iteration+1}/{MIL_train_count}] | Acc | Loss")
+            print(f"[{iteration+1}/{config['MIL_train_count']}] | Acc | Loss")
             print(f"Train | {train_acc:.4f} | {train_loss:.4f}")
             print(f"Val | {val_acc:.4f} | {val_loss:.4f}")
             
@@ -344,12 +273,12 @@ if __name__ == '__main__':
                     target_folder = state['model_folder']
                     target_name = state['model_name']
                 
-                save_state(state['epoch'], label_columns, train_acc, val_loss, val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
+                save_state(state['epoch'], config['label_columns'], train_acc, val_loss, val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
                 palm.save_state(os.path.join(target_folder, "palm_state.pkl"))
                 print("Saved checkpoint due to improved val_loss_bag")
                 
                 # Create selection mask
-                predictions_ratio = prediction_anchor_scheduler(state['epoch'], total_epochs, 0, initial_ratio, final_ratio)
+                predictions_ratio = prediction_anchor_scheduler(state['epoch'], config['total_epochs'], 0, config['initial_ratio'], config['final_ratio'])
                 #predictions_ratio = .9
                 state['selection_mask'] = create_selection_mask(train_bag_logits, predictions_ratio)
                 print("Created new sudo labels")
