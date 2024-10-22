@@ -1,6 +1,5 @@
 import torch
-from util.format_data import *
-from util.sudo_labels import *
+from data.format_data import *
 
 class GenSupConLossv2(nn.Module):
     def __init__(self, temperature=0.07, base_temperature=0.07):
