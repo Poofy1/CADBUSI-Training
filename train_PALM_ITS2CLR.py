@@ -23,9 +23,9 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "PALM_ITS2CLR_CADBUSI_8_fulltest"
+    head_name = "TEST_PALM_ITS2CLR"
 
-    dataset_name = 'export_oneLesions' #'export_03_18_2024'
+    """dataset_name = 'export_oneLesions' #'export_03_18_2024'
     label_columns = ['Has_Malignant']
     instance_columns = ['Malignant Lesion Present']  
     img_size = 224
@@ -34,10 +34,10 @@ if __name__ == '__main__':
     max_bag_size = 25
     instance_batch_size =  50
     arch = 'efficientnet_b0'
-    pretrained_arch = False
+    pretrained_arch = False"""
 
     
-    """dataset_name = 'imagenette2_hard'
+    dataset_name = 'imagenette2_hard'
     label_columns = ['Has_Fish']
     instance_columns = ['Has_Fish']  
     img_size = 128
@@ -46,14 +46,14 @@ if __name__ == '__main__':
     max_bag_size = 25
     instance_batch_size =  25
     arch = 'efficientnet_b0'
-    pretrained_arch = False"""
+    pretrained_arch = False
 
     #ITS2CLR Config
     feature_extractor_train_count = 8 # 6
     MIL_train_count = 5
-    initial_ratio = .1 #0.3 # --% preditions included
+    initial_ratio = 1 #0.3 # --% preditions included
     final_ratio = 1 #0.85 # --% preditions included
-    total_epochs = 10
+    total_epochs = 100
     warmup_epochs = 10
     learning_rate=0.001
     reset_aggregator = False # Reset the model.aggregator weights after contrastive learning
