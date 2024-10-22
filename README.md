@@ -1,22 +1,29 @@
 # CADBUSI-Training
 
-This project is a model training framework that supports various deep learning architectures for ultrasound image analysis. It's designed to be flexible and efficient, catering to a wide range of applications. This project is still a WIP.
+ML framework that supports various deep learning architectures for ultrasound image analysis. Research is still underway 
 
 ## Requirements
 
 - Python 3.8
-- Nvidia GPU (Recommended)
-- Install required Python packages with pip:
+- Nvidia GPU
+- CUDA 11.3 or greater
 
-```
-pip install -r requirements.txt
-```
-
-
+## Usage 
+- Clone repository: `git clone https://github.com/Poofy1/CADBUSI-Training.git`
+- Install required Python packages with pip: `pip install -r requirements.txt`
+- Setup config.py and config.json
+     - config.json example:
+        ```
+        {
+            "export_location": "D:/DATA/CASBUSI/exports/",
+            "cropped_images": "F:/Temp_SSD_Data/"
+        }
+        ```
+- You can begin training by running one of the provided training scripts in the immediate directory. Each script has its own config that you should configure given your task specifications. If you are running a training script on newly processed data, the script will crop and save the images into a temporary directory specified by you to improve performance. It will also manage unbalanced data by upsampling the minority class until they are balanced (This only works when training on 1 label).
 
 ## Dataloader Input Format
 
-[CADBUSI-Database](https://github.com/Poofy1/CADBUSI-Database) has formatted folder directory to the expected data format already, if you wanted to use your own data you would first need to build a script to compile your data into this structured tabular format. This is the expected data format:
+[CADBUSI-Database](https://github.com/Poofy1/CADBUSI-Database) will export the expected data format already, if you need to use your own data you need to compile your data into this structured tabular format:
 
 ### Train_Data.csv
 
@@ -68,11 +75,6 @@ False, True, 2900_3081_left_0.png
 #### 'ImageName'
 - Type: String
 - Description: Contains a image file name associated with the label(s). 
-
-
-## Usage
-
-Once you have your input data formatted, you can begin training by running one of the provided training scripts in the immediate directory. Each script has its own config that you should configure given your task specifications. If you are running a training script on newly processed data, the script will crop and save the images into a temporary directory specified by you to improve performance. It will also manage unbalanced data by upsampling the minority class until they are balanced (This only works best when training on 1 label).
 
 
 
