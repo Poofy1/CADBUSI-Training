@@ -8,6 +8,7 @@ import torch.optim as optim
 from util.format_data import *
 from util.sudo_labels import *
 from archs.model_INS import *
+from loss.IWSCL import *
 from data.bag_loader import *
 from data.instance_loader import *
 torch.backends.cudnn.benchmark = True
@@ -15,73 +16,6 @@ device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 
 
-class IWSCL(nn.Module):
-    def __init__(self, feat_dim, num_classes=2, momentum=0.999, temperature=0.07):
-        super(IWSCL, self).__init__()
-        self.prototypes = nn.Parameter(torch.randn(num_classes, feat_dim))
-        self.momentum = momentum
-        self.num_classes = num_classes
-        self.temperature = temperature
-
-    def forward(self, features, instance_predictions, instance_labels, queue, queue_labels, val_on=False):
-        """
-        Args:
-            features: Current batch instance features [B, feat_dim]
-            instance_predictions: Predicted labels from classifier [B, num_classes]
-            instance_labels: Ground truths, -1 if unknown
-            queue: Feature queue [Q, feat_dim]
-            queue_labels: Labels for queue features [Q, num_classes]
-            val_on: Whether in validation mode
-        """
- 
-        # Fix queue shape
-        queue = queue.T
-
-        # Compute pairwise distances
-        distances = torch.cdist(features, features, p=2)  # Euclidean distance matrix
-        
-        # Create masks for positive and negative pairs
-        labels_matrix = instance_labels.expand(len(instance_labels), len(instance_labels))
-        positive_mask = labels_matrix.eq(labels_matrix.T)
-        negative_mask = ~positive_mask
-        
-        # Remove diagonal elements (self-similarity)
-        mask_no_diagonal = ~torch.eye(len(instance_labels), dtype=torch.bool, device=features.device)
-        positive_mask = positive_mask & mask_no_diagonal
-        negative_mask = negative_mask & mask_no_diagonal
-        
-        # Positive loss: pull same-class samples together
-        positive_loss = (distances * positive_mask).sum() / positive_mask.sum()
-        
-        # Negative loss: push different-class samples apart
-        # Use max(0, margin - distance) to create a margin between classes
-        margin = 2.0
-        negative_loss = torch.clamp(margin - distances, min=0.0)
-        negative_loss = (negative_loss * negative_mask).sum() / negative_mask.sum()
-        
-        # Total loss
-        loss = positive_loss + negative_loss
-
-
-
-        # Update prototypes
-        with torch.no_grad():
-            for c in range(self.num_classes):
-                class_features = features[instance_predictions == c]
-                if class_features.size(0) > 0:
-                    new_prototype = class_features.mean(dim=0)
-                    self.prototypes.data[c] = self.momentum * self.prototypes.data[c] + (1 - self.momentum) * new_prototype
-                    self.prototypes.data[c] = F.normalize(self.prototypes.data[c], dim=0)
-        
-        # Generate pseudo labels
-        similarities = torch.matmul(features, self.prototypes.t())
-        pseudo_labels = similarities.argmax(dim=1)
-        
-        # Override pseudo labels with ground truth when available
-        ground_truth_mask = instance_labels != -1
-        pseudo_labels[ground_truth_mask] = instance_labels[ground_truth_mask]
-
-        return loss, pseudo_labels
         
         
 if __name__ == '__main__':
