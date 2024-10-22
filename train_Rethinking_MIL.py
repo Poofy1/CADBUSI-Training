@@ -1,5 +1,4 @@
 import os, pickle
-from fastai.vision.all import *
 import torch.utils.data as TUD
 from tqdm import tqdm
 from torch import nn
@@ -8,35 +7,102 @@ from util.Gen_ITS2CLR_util import *
 import torch.optim as optim
 from util.format_data import *
 from util.sudo_labels import *
-from archs.model_PALM2_solo import *
 from archs.model_INS import *
 from data.bag_loader import *
-from data.instance_loader_RMIL import *
-from loss.R_MIL import *
+from data.instance_loader import *
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 
 
+class IWSCL(nn.Module):
+    def __init__(self, feat_dim, num_classes=2, momentum=0.999, temperature=0.07):
+        super(IWSCL, self).__init__()
+        self.prototypes = nn.Parameter(torch.randn(num_classes, feat_dim))
+        self.momentum = momentum
+        self.num_classes = num_classes
+        self.temperature = temperature
+
+    def forward(self, features, instance_predictions, instance_labels, queue, queue_labels, val_on=False):
+        """
+        Args:
+            features: Current batch instance features [B, feat_dim]
+            instance_predictions: Predicted labels from classifier [B, num_classes]
+            instance_labels: Ground truths, -1 if unknown
+            queue: Feature queue [Q, feat_dim]
+            queue_labels: Labels for queue features [Q, num_classes]
+            val_on: Whether in validation mode
+        """
+ 
+        # Fix queue shape
+        queue = queue.T
+
+        # Compute pairwise distances
+        distances = torch.cdist(features, features, p=2)  # Euclidean distance matrix
+        
+        # Create masks for positive and negative pairs
+        labels_matrix = instance_labels.expand(len(instance_labels), len(instance_labels))
+        positive_mask = labels_matrix.eq(labels_matrix.T)
+        negative_mask = ~positive_mask
+        
+        # Remove diagonal elements (self-similarity)
+        mask_no_diagonal = ~torch.eye(len(instance_labels), dtype=torch.bool, device=features.device)
+        positive_mask = positive_mask & mask_no_diagonal
+        negative_mask = negative_mask & mask_no_diagonal
+        
+        # Positive loss: pull same-class samples together
+        positive_loss = (distances * positive_mask).sum() / positive_mask.sum()
+        
+        # Negative loss: push different-class samples apart
+        # Use max(0, margin - distance) to create a margin between classes
+        margin = 2.0
+        negative_loss = torch.clamp(margin - distances, min=0.0)
+        negative_loss = (negative_loss * negative_mask).sum() / negative_mask.sum()
+        
+        # Total loss
+        loss = positive_loss + negative_loss
+
+
+
+        # Update prototypes
+        with torch.no_grad():
+            for c in range(self.num_classes):
+                class_features = features[instance_predictions == c]
+                if class_features.size(0) > 0:
+                    new_prototype = class_features.mean(dim=0)
+                    self.prototypes.data[c] = self.momentum * self.prototypes.data[c] + (1 - self.momentum) * new_prototype
+                    self.prototypes.data[c] = F.normalize(self.prototypes.data[c], dim=0)
+        
+        # Generate pseudo labels
+        similarities = torch.matmul(features, self.prototypes.t())
+        pseudo_labels = similarities.argmax(dim=1)
+        
+        # Override pseudo labels with ground truth when available
+        ground_truth_mask = instance_labels != -1
+        pseudo_labels[ground_truth_mask] = instance_labels[ground_truth_mask]
+
+        return loss, pseudo_labels
+        
+        
 if __name__ == '__main__':
 
     # Config
-    model_version = '2'
-    head_name = "TESTING"
+    model_version = '1'
+    head_name = "TEST_R_MIL"
     
-    """dataset_name = 'export_oneLesions' #'export_03_18_2024'
+    """dataset_name = 'export_oneLesions' #'export_03_18_2024' or 'export_oneLesions'
     label_columns = ['Has_Malignant']
     instance_columns = ['Malignant Lesion Present']  
     img_size = 224
     bag_batch_size = 3
     min_bag_size = 2
     max_bag_size = 25
-    instance_batch_size =  25
+    instance_batch_size =  50
     arch = 'efficientnet_b0'
     pretrained_arch = False"""
 
     
-    dataset_name = 'imagenette2_hard'
+    dataset_name = 'imagenette2_hard2'
     label_columns = ['Has_Fish']
     instance_columns = ['Has_Fish']  
     img_size = 128
@@ -48,18 +114,15 @@ if __name__ == '__main__':
     pretrained_arch = False
 
     #ITS2CLR Config
-    feature_extractor_train_count = 3
-    MIL_train_count = 3
+    feature_extractor_train_count = 8 # 6
+    MIL_train_count = 5
     initial_ratio = .3 #0.3 # --% preditions included
     final_ratio = .8 #0.85 # --% preditions included
     total_epochs = 100
-    warmup_epochs = 3
+    warmup_epochs = 10
     learning_rate=0.001
-    reset_aggregator = True # Reset the model.aggregator weights after contrastive learning
+    reset_aggregator = False # Reset the model.aggregator weights after contrastive learning
 
-
-    mix_alpha=0.2  #0.2
-    mix='mixup'
     
     
     train_transform = T.Compose([
@@ -76,6 +139,7 @@ if __name__ == '__main__':
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
+
 
     
     # Get Training Data
@@ -111,67 +175,39 @@ if __name__ == '__main__':
     bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True, shuffle = True)
     bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_size=bag_batch_size, collate_fn = collate_bag, drop_last=True)
 
-    # Create Instance datasets
-    instance_dataset_train = Instance_Dataset(bags_train, transform=train_transform, known_only = False, pos_only = False)
-    instance_dataset_val = Instance_Dataset(bags_val, transform=val_transform, known_only = False, pos_only = False)
-    train_sampler = BalancedSampler(instance_dataset_train, batch_size=instance_batch_size)
-    val_sampler = BalancedSampler(instance_dataset_val, batch_size=instance_batch_size)
-    instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, num_workers=1, collate_fn = collate_instance, pin_memory=True)
-    instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_sampler=val_sampler, collate_fn = collate_instance)
-    
-    
-    
+
     # Create Model
-    class Args:
-        def __init__(self):
-            # Dataset
-            self.dataset = 'cifar10'  # or 'cub200', etc.
-            self.num_class = 2  # number of classes in the dataset
-            
-            # Model architecture
-            self.arch = 'resnet18'  # base encoder architecture
-            self.low_dim = 128  # dimension of embeddings
-            
-            # MoCo specific configs
-            self.moco_queue = 8000  # queue size
-            self.moco_m = 0.999  # moco momentum of updating key encoder
-            
-            # Prototype learning
-            self.proto_m = 0.99  # momentum for updating prototypes
-            
-            self.epochs = 10
-            self.conf_ema_range= [0.95, 0.8]
-            
-    args = Args()
-    model = INS(args, SupConResNet).cuda()
-    #model = Embeddingmodel(arch, pretrained_arch, num_classes = num_labels).cuda()
+    model = Embeddingmodel(arch, pretrained_arch, num_classes = num_labels).cuda()
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
     
-    
-    BCE_loss = nn.BCEWithLogitsLoss() # for testing
-    
-    loss_fn = partial_loss(instance_dataset_train.partialY.cuda())
-    loss_fn_pos = partial_loss(instance_dataset_train.partialY_pos.cuda())
-    cls_loss = Cls_loss(instance_dataset_train.partialY_cls.cuda())
-    loss_cont_fn = SupConLoss()
-    CE_loss = nn.CrossEntropyLoss()
+    # LOSS INIT
+    BCE_loss = nn.BCEWithLogitsLoss()
+    CE_crit = nn.CrossEntropyLoss()
+    IWSCL_crit = IWSCL(128).to(device)
     optimizer = optim.SGD(model.parameters(),
                         lr=learning_rate,
                         momentum=0.9,
                         nesterov=True,
-                        weight_decay=0.001)
+                        weight_decay=0.001) # original .001
     
-
+    
+    # MODEL INIT
     model, optimizer, state = setup_model(model, optimizer, config)
+
     
     # Training loop
     while state['epoch'] < total_epochs:
         
-        loss_fn.set_conf_ema_m(state['epoch'], args) #Setup loss
         
         if not state['pickup_warmup']: # Are we resuming from a head model?
         
-            
+            # Used the instance predictions from bag training to update the Instance Dataloader
+            instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=state['warmup'], dual_output=True)
+            instance_dataset_val = Instance_Dataset(bags_val, state['selection_mask'], transform=val_transform, warmup=True, dual_output=True)
+            train_sampler = InstanceSampler(instance_dataset_train, instance_batch_size, strategy=1)
+            val_sampler = InstanceSampler(instance_dataset_val, instance_batch_size, strategy=1)
+            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, num_workers=2, collate_fn = collate_instance, pin_memory=True)
+            instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_sampler=val_sampler, collate_fn = collate_instance)
             
             if state['warmup']:
                 target_count = warmup_epochs
@@ -185,98 +221,88 @@ if __name__ == '__main__':
             print(f'Warmup Mode: {state["warmup"]}')
 
             
+            
             for iteration in range(target_count): 
-                model.train()
                 losses = AverageMeter()
                 palm_total_correct = 0
-                instance_correct  = 0
+                instance_total_correct = 0
                 total_samples = 0
+                model.train()
                 
                 # Iterate over the training data
-                for idx, (im_q, im_k, instance_labels, bag_label, point, unique_id) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
+                for idx, ((im_q, im_k), instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
                     im_q = im_q.cuda(non_blocking=True)
                     im_k = im_k.cuda(non_blocking=True)
                     instance_labels = instance_labels.cuda(non_blocking=True)
-                    bsz = instance_labels.shape[0]
 
                     # forward
                     optimizer.zero_grad()
-                    instance_predictions, features_cont, pseudo_score_cont, partial_target_cont, score_prot = model(im_q, im_k, partial_Y=instance_labels, args=args)
-                    print(instance_predictions)
-                    print(pseudo_score_cont)
-                    # BCE loss (assuming your model now outputs 2 values per instance)
-                    #bce_loss_value = BCE_loss(instance_predictions[:bsz], instance_labels)
+                    _, _, instance_predictions, feat_q = model(im_q, im_k, true_label = instance_labels, projector=True)
+                    feat_q.to(device)
                     
-                    if not state['warmup']:
-                        pseudo_target_max, pseudo_target_cont = torch.max(pseudo_score_cont, dim=1)  # 8194,
-                        pseudo_target_cont = pseudo_target_cont.contiguous().view(-1, 1)  # 8194,1 
-        
-                        loss_fn.confidence_update(temp_un_conf=score_prot, batch_index=unique_id, batchY=instance_labels, point=point)
-                        mask = torch.eq(pseudo_target_cont[:bsz], pseudo_target_cont.T).float().cuda()
-                    else: 
-                        mask = None
-                        
-                    # contrastive loss
-                    loss_cont = loss_cont_fn(features=features_cont, mask=mask, batch_size=bsz)
-                    # classification loss 
-                    loss_cls = loss_fn(instance_predictions, unique_id)
-        
+                    
+                    # Calculate loss
+                    queue, queue_labels = model.get_queue()
+                    supcon_loss, pseudo_labels = IWSCL_crit(feat_q, instance_predictions, instance_labels, queue, queue_labels)
+                    ce_loss = CE_crit(instance_predictions, instance_labels.float())
+                    total_loss = ce_loss + supcon_loss
+                    
                     # Backward pass and optimization step
-                    total_loss = loss_cls + loss_cont * .0
                     total_loss.backward()
                     optimizer.step()
-
+        
                     # Update the loss meter
-                    losses.update(total_loss.item(), bsz)       
+                    losses.update(total_loss.item(), im_q[0].size(0))
                     
-                    # Assuming instance_predictions has shape [batch_size, 2]
-                    predicted = (torch.sigmoid(instance_predictions[:, 1]) > 0.5).float()
-                    instance_correct += (predicted == instance_labels[:, 1]).sum().item()  # Compare with the second number in instance_labels
-                    total_samples += instance_labels.size(0) 
+                    # Get predictions
+                    with torch.no_grad():
+                        instance_predicted_classes = (instance_predictions) > 0.5
+                        instance_correct = (instance_predicted_classes == instance_labels).sum().item()
+                        instance_total_correct += instance_correct
+                        total_samples += instance_labels.size(0)
+
+                # Calculate accuracies
+                palm_train_acc = palm_total_correct / total_samples
+                instance_train_acc = instance_total_correct / total_samples
+                                
                 
-                instance_train_acc = instance_correct / total_samples
                 
                 # Validation loop
                 model.eval()
                 palm_total_correct = 0
-                instance_correct = 0
+                instance_total_correct = 0
                 total_samples = 0
                 val_losses = AverageMeter()
 
                 with torch.no_grad():
-                    for idx, (im_q, im_k, instance_labels, bag_label, point, unique_id) in enumerate(tqdm(instance_dataloader_val, total=len(instance_dataloader_val))):
+                    for idx, ((im_q, im_k), instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_val, total=len(instance_dataloader_val))):
                         im_q = im_q.cuda(non_blocking=True)
                         im_k = im_k.cuda(non_blocking=True)
                         instance_labels = instance_labels.cuda(non_blocking=True)
-                        bsz = instance_labels.shape[0]
 
                         # Forward pass
-                        instance_predictions, features_cont, pseudo_score_cont, partial_target_cont, score_prot = model(im_q, im_k, partial_Y=instance_labels, args=args)
+                        _, _, instance_predictions, feat_q = model(im_q, projector=True)
+                        feat_q.to(device)
+                        
+                        # Calculate loss
+                        queue, queue_labels = model.get_queue()
+                        supcon_loss, pseudo_labels = IWSCL_crit(feat_q, instance_predictions, instance_labels, queue, queue_labels, val_on = True)
+                        ce_loss = CE_crit(instance_predictions, pseudo_labels.float())
+                        total_loss = ce_loss + 0
+                        val_losses.update(total_loss.item(), im_q[0].size(0))
 
-                        # Calculate total loss
-                        #bce_loss_value = BCE_loss(instance_predictions[:bsz], instance_labels)
-                        
-                        # contrastive loss
-                        loss_cont = loss_cont_fn(features=features_cont, mask=None, batch_size=bsz)
-                        # classification loss 
-                        loss_cls = loss_fn(instance_predictions, unique_id)
-                        
-                        total_loss = loss_cls + loss_cont * .5
-                        
-                        # Update the loss meter
-                        val_losses.update(total_loss.item(), bsz)
-                        
-                        # Assuming instance_predictions has shape [batch_size, 2]
-                        predicted = (torch.sigmoid(instance_predictions[:, 1]) > 0.5).float()
-                        instance_correct += (predicted == instance_labels[:, 1]).sum().item()  # Compare with the second number in instance_labels
+                        # Get predictions
+                        instance_predicted_classes = (instance_predictions) > 0.5
+                        instance_correct = (instance_predicted_classes == instance_labels).sum().item()
+                        instance_total_correct += instance_correct
                         total_samples += instance_labels.size(0)
 
+                # Calculate accuracies
+                palm_val_acc = palm_total_correct / total_samples
+                instance_val_acc = instance_total_correct / total_samples
                 
-                instance_val_acc = instance_correct / total_samples
-                
-                print(f'[{iteration+1}/{target_count}] Train Loss: {losses.avg:.5f},  Train Acc: {instance_train_acc:.5f}')
-                print(f'[{iteration+1}/{target_count}] Val Loss:   {val_losses.avg:.5f}, Val Acc: {instance_val_acc:.5f}')
-                
+                print(f'[{iteration+1}/{target_count}] Train Loss: {losses.avg:.5f}, Train FC Acc: {instance_train_acc:.5f}')
+                print(f'[{iteration+1}/{target_count}] Val Loss:   {val_losses.avg:.5f}, Val FC Acc: {instance_val_acc:.5f}')
                 
                 # Save the model
                 if val_losses.avg < state['val_loss_instance']:
@@ -290,10 +316,10 @@ if __name__ == '__main__':
                     all_targs = []
                     all_preds = []
                     
-                    
                     if state['warmup']:
                         save_state(state['epoch'], label_columns, instance_train_acc, val_losses.avg, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
                         print("Saved checkpoint due to improved val_loss_instance")
+
 
 
 
@@ -303,6 +329,8 @@ if __name__ == '__main__':
         if state['warmup']:
             print("Warmup Phase Finished")
             state['warmup'] = False
+            
+
         
             
         print('\nTraining Bag Aggregator')
@@ -316,46 +344,20 @@ if __name__ == '__main__':
 
             for (images, yb, instance_labels, id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)):
                 optimizer.zero_grad()
-                
-                total_bag_loss = 0
-                bag_preds = []
-                
-                # Process each bag separately
-                for i, bag in enumerate(images):
 
-                    # Forward pass for a single bag
-                    bag_pred = model(bag.cuda(), args, bag_flag=True)
-                    
-                    # Move yb to CUDA and convert to one-hot encoding
-                    yb_cuda = yb[i].unsqueeze(0).cuda()
-                    yb_one_hot = F.one_hot(yb_cuda.long(), num_classes=2).float().squeeze(0)
-                    
-                    # Calculate loss for this bag
-                    bag_loss = CE_loss(bag_pred, yb_one_hot)
-                    
-                    # Accumulate the loss
-                    total_bag_loss += bag_loss
-                    
-                    # Store the prediction
-                    bag_preds.append(bag_pred)
-                    
-                # Backward pass with accumulated loss
-                total_bag_loss.backward()
+                # Forward pass
+                bag_pred, _, instance_pred, _ = model(images, bag_on=True)
                 
-                # Optimizer step
+                bag_loss = BCE_loss(bag_pred, yb)
+                bag_loss.backward()
                 optimizer.step()
                 
-                # Concatenate all bag predictions
-                bag_preds = torch.cat(bag_preds, dim=0)
-                
-                
-                # Update metrics
-                total_loss += total_bag_loss.item()
-                predicted = torch.argmax(bag_preds, dim=1)
+                total_loss += bag_loss.item() * yb.size(0)
+                predicted = (bag_pred > 0.5).float()
                 total += yb.size(0)
-                yb_squeezed = yb.squeeze()  # This removes the extra dimension
-                correct += (predicted.cpu() == yb_squeezed.cpu()).sum().item()
-
+                correct += (predicted == yb).sum().item()
+                    
+            
             
             train_loss = total_loss / total
             train_acc = correct / total
@@ -372,41 +374,28 @@ if __name__ == '__main__':
 
             with torch.no_grad():
                 for (images, yb, instance_labels, id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
-                    total_bag_loss = 0
-                    bag_preds = []
-                    
-                    # Process each bag separately
-                    for i, bag in enumerate(images):
 
-                        # Forward pass for a single bag
-                        bag_pred = model(bag.cuda(), args, bag_flag=True)
-                        
-                        # Move yb to CUDA and convert to one-hot encoding
-                        yb_cuda = yb[i].unsqueeze(0).cuda()
-                        yb_one_hot = F.one_hot(yb_cuda.long(), num_classes=2).float().squeeze(0)
-                        
-                        # Calculate loss for this bag
-                        bag_loss = BCE_loss(bag_pred, yb_one_hot)
-                        
-                        # Accumulate the loss
-                        total_bag_loss += bag_loss
-                        
-                        # Store the prediction
-                        bag_preds.append(bag_pred)
-                    
-                    # Concatenate all bag predictions
-                    bag_preds = torch.cat(bag_preds, dim=0)
-                    
-                    # Update metrics
-                    total_val_loss += total_bag_loss.item()
-                    predicted = torch.argmax(bag_preds, dim=1)
+                    # Forward pass
+                    bag_pred, _, _, _ = model(images, bag_on=True, val_on = True)
+
+                    # Calculate bag-level loss
+                    loss = BCE_loss(bag_pred, yb)
+                    total_val_loss += loss.item() * yb.size(0)
+
+                    predicted = (bag_pred > 0.5).float()
                     total += yb.size(0)
-                    yb_squeezed = yb.squeeze()  # This removes the extra dimension
-                    correct += (predicted.cpu() == yb_squeezed.cpu()).sum().item()
+                    correct += (predicted == yb).sum().item()
+
+                    # Confusion Matrix data
+                    all_targs.extend(yb.cpu().numpy())
+                    if len(predicted.size()) == 0:
+                        predicted = predicted.view(1)
+                    all_preds.extend(predicted.cpu().detach().numpy())
                         
             val_loss = total_val_loss / total
             val_acc = correct / total
                 
+        
             state['train_losses'].append(train_loss)
             state['valid_losses'].append(val_loss)    
             
@@ -429,3 +418,13 @@ if __name__ == '__main__':
 
                 
                 state['epoch'] += 1
+                
+                # Create selection mask
+                """predictions_ratio = prediction_anchor_scheduler(state['epoch'], total_epochs, 0, initial_ratio, final_ratio)
+                state['selection_mask'] = create_selection_mask(train_bag_logits, predictions_ratio)
+                print("Created new sudo labels")
+                
+                # Save selection
+                with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
+                    pickle.dump(state['selection_mask'], file)"""
+
