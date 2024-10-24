@@ -42,7 +42,7 @@ if __name__ == '__main__':
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
     
     # LOSS INIT
-    BCE_loss = nn.BCEWithLogitsLoss()
+    BCE_loss = nn.BCELoss()
     CE_crit = nn.CrossEntropyLoss()
     IWSCL_crit = IWSCL(128).to(device)
     optimizer = optim.SGD(model.parameters(),
@@ -90,6 +90,9 @@ if __name__ == '__main__':
                 total_samples = 0
                 model.train()
                 
+                supcon_loss_total = AverageMeter()
+                ce_loss_total = AverageMeter()
+                
                 # Iterate over the training data
                 for idx, ((im_q, im_k), instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
                     im_q = im_q.cuda(non_blocking=True)
@@ -111,16 +114,26 @@ if __name__ == '__main__':
                     # Backward pass and optimization step
                     total_loss.backward()
                     optimizer.step()
-        
+
                     # Update the loss meter
-                    losses.update(total_loss.item(), im_q[0].size(0))
+                    losses.update(total_loss.item(), instance_labels.size(0))
+                    supcon_loss_total.update(supcon_loss.item(), instance_labels.size(0))
+                    ce_loss_total.update(ce_loss.item(), instance_labels.size(0))
                     
                     # Get predictions
                     with torch.no_grad():
-                        instance_predicted_classes = (instance_predictions) > 0.5
-                        instance_correct = (instance_predicted_classes == instance_labels).sum().item()
+                        # Create mask for valid labels (0 and 1)
+                        valid_mask = (instance_labels != -1)
+                        
+                        # Apply mask to get predictions and labels
+                        valid_predictions = instance_predictions[valid_mask]
+                        valid_labels = instance_labels[valid_mask]
+                        
+                        # Calculate accuracy for valid samples only
+                        instance_predicted_classes = (valid_predictions > 0.5)
+                        instance_correct = (instance_predicted_classes == valid_labels).sum().item()
                         instance_total_correct += instance_correct
-                        total_samples += instance_labels.size(0)
+                        total_samples += valid_mask.sum().item()
 
                 # Calculate accuracies
                 palm_train_acc = palm_total_correct / total_samples
@@ -149,8 +162,8 @@ if __name__ == '__main__':
                         queue, queue_labels = model.get_queue()
                         supcon_loss, pseudo_labels = IWSCL_crit(feat_q, instance_predictions, instance_labels, queue, queue_labels, val_on = True)
                         ce_loss = CE_crit(instance_predictions, pseudo_labels.float())
-                        total_loss = ce_loss + 0
-                        val_losses.update(total_loss.item(), im_q[0].size(0))
+                        total_loss = ce_loss + supcon_loss
+                        val_losses.update(total_loss.item(), instance_labels.size(0))
 
                         # Get predictions
                         instance_predicted_classes = (instance_predictions) > 0.5
@@ -162,6 +175,7 @@ if __name__ == '__main__':
                 palm_val_acc = palm_total_correct / total_samples
                 instance_val_acc = instance_total_correct / total_samples
                 
+                print(f'Train supcon Loss: {supcon_loss_total.avg:.5f}, CE Loss: {ce_loss_total.avg:.5f}')
                 print(f'[{iteration+1}/{target_count}] Train Loss: {losses.avg:.5f}, Train FC Acc: {instance_train_acc:.5f}')
                 print(f'[{iteration+1}/{target_count}] Val Loss:   {val_losses.avg:.5f}, Val FC Acc: {instance_val_acc:.5f}')
                 
@@ -208,7 +222,7 @@ if __name__ == '__main__':
 
                 # Forward pass
                 bag_pred, _, instance_pred, _ = model(images, bag_on=True)
-                
+
                 bag_loss = BCE_loss(bag_pred, yb)
                 bag_loss.backward()
                 optimizer.step()
