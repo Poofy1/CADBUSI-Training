@@ -17,13 +17,13 @@ class IWSCL(nn.Module):
         
         # Compute the similarity between input features and prototypes
         similarity = torch.matmul(features, self.prototypes.T)
+        #print("Similarities:", similarity[:5])
         
         # Get the index of the prototype with the highest similarity
         _, prototype_indices = torch.max(similarity, dim=1)
         
         # Map the prototype indices to their corresponding class labels
         predicted_classes = proto_classes[prototype_indices]
-        
         
         return predicted_classes
     
@@ -65,12 +65,13 @@ class IWSCL(nn.Module):
         negative_loss = (negative_loss * negative_mask).sum() / negative_mask.sum()
         
         # Total loss
-        loss = positive_loss + negative_loss"""
+        loss = positive_loss + negative_loss * 2"""
         
         
         
         ground_truth_mask = instance_labels != -1
         pred_labels = (instance_predictions > 0.5).long()
+
         # Override pred labels with ground truth when available
         pred_labels[ground_truth_mask] = instance_labels[ground_truth_mask]
 
@@ -93,17 +94,21 @@ class IWSCL(nn.Module):
                 continue
                 
             # Calculate similarities
-            # q_i: [1, feat_dim], family_samples: [feat_dim, num_family]
             l_pos = torch.mm(q_i, family_samples) / self.temperature  # [1, num_family]
-            
-            # q_i: [1, feat_dim], nonfamily_samples: [feat_dim, num_nonfamily]
             l_neg = torch.mm(q_i, nonfamily_samples) / self.temperature  # [1, num_nonfamily]
-            
-            # Calculate loss for this instance
+                    
+            """# Calculate loss for this instance
             logits = torch.cat([l_pos, l_neg], dim=1)  # [1, num_family + num_nonfamily]
             labels = torch.zeros(1, device=features.device, dtype=torch.long)  # positive is first
+            instance_loss = F.cross_entropy(logits, labels)"""
             
-            instance_loss = F.cross_entropy(logits, labels)
+            #Use InfoNCE-style loss with better numerical stability
+            exp_pos = torch.exp(l_pos)
+            exp_neg = torch.exp(l_neg)
+            instance_loss = -torch.log(
+                exp_pos.sum() / (exp_pos.sum() + exp_neg.sum() + 1e-6)
+            )
+
             losses.append(instance_loss)
             
         if len(losses) == 0:
@@ -117,7 +122,12 @@ class IWSCL(nn.Module):
         if not val_on:
             with torch.no_grad():
                 for c in range(self.num_classes):
-                    class_mask = instance_predictions == c
+                    # First use known labels
+                    known_mask = instance_labels == c
+                    # Then add predictions where labels are unknown (-1)
+                    unknown_mask = (instance_labels == -1) & (instance_predictions == c)
+                    # Combine masks
+                    class_mask = known_mask | unknown_mask
                     class_features = features[class_mask]
                     if class_features.size(0) > 0:
                         new_prototype = class_features.mean(dim=0)
@@ -131,8 +141,17 @@ class IWSCL(nn.Module):
                             for label in true_labels[valid_labels]:
                                 self.proto_class_counts[c, label] += 1
         
+        
+        cosine_sim = F.cosine_similarity(
+            self.prototypes[0:1], 
+            self.prototypes[1:2]
+        )
+        #print("Cosine similarity between prototypes:", cosine_sim.item())
+        
+        
         # Generate pseudo labels using the predict method
         pseudo_labels = self.predict(features)
+        #print(pseudo_labels)
         
         # Override pseudo labels with ground truth when available
         pseudo_labels[ground_truth_mask] = instance_labels[ground_truth_mask]

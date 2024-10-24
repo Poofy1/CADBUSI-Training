@@ -14,7 +14,7 @@ class ITS2CLRConfig(BaseConfig):
         self.initial_ratio = 0.3
         self.final_ratio = 1
         self.total_epochs = 100
-        self.warmup_epochs = 10
+        self.warmup_epochs = 5
         self.learning_rate = 0.001
         self.reset_aggregator = False
 
@@ -28,7 +28,7 @@ class LesionDataConfig(BaseConfig):
         self.min_bag_size = 2
         self.max_bag_size = 25
         self.instance_batch_size = 25
-        self.arch = 'efficientnet_b0'
+        self.arch = 'efficientnet'
         self.pretrained_arch = False
 
 class FishDataConfig(BaseConfig):
@@ -41,7 +41,7 @@ class FishDataConfig(BaseConfig):
         self.min_bag_size = 2
         self.max_bag_size = 25
         self.instance_batch_size = 25
-        self.arch = 'efficientnet_b0'
+        self.arch = 'efficientnet'
         self.pretrained_arch = False
 
 def build_config(model_version, head_name, data_config_class):
