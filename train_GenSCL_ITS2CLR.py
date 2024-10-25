@@ -224,21 +224,21 @@ if __name__ == '__main__':
                 state['val_loss_bag'] = val_loss
                 if state['warmup']:
                     target_folder = state['head_folder']
-                    target_name = state['pretrained_name']
                 else:
                     target_folder = state['model_folder']
-                    target_name = state['model_name']
+
                 
-                save_state(state['epoch'], config['label_columns'], train_acc, val_loss, val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
+                save_state(state, config, train_acc, val_loss, val_acc, model, optimizer, all_targs, all_preds)
                 print("Saved checkpoint due to improved val_loss_bag")
+
+                
+                state['epoch'] += 1
                 
                 # Create selection mask
                 predictions_ratio = prediction_anchor_scheduler(state['epoch'], config['total_epochs'], 0, config['initial_ratio'], config['final_ratio'])
                 #predictions_ratio = .9
                 state['selection_mask'] = create_selection_mask(train_bag_logits, predictions_ratio)
                 print("Created new sudo labels")
-                
-                state['epoch'] += 1
                 
                 # Save selection
                 with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:

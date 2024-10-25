@@ -4,6 +4,7 @@ from fastai.vision.all import *
 import torch.nn.functional as F
 from archs.backbone import create_timm_body
 from torchvision.models import efficientnet_b3, EfficientNet_B3_Weights
+from loss.IWSCL import *
 
 class Embeddingmodel(nn.Module):
     def __init__(self, arch, pretrained_arch, num_classes=1, feat_dim=128, momentum=0.999, queue_size=8192):
@@ -14,12 +15,12 @@ class Embeddingmodel(nn.Module):
         self.momentum = momentum
 
         # Original encoder
-        self.encoder_q = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
+        self.encoder_q = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
         num_features = self.encoder_q.classifier[1].in_features
         self.encoder_q.classifier[1] = nn.Linear(num_features, self.nf)
         
         # Momentum encoder
-        self.encoder_k = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
+        self.encoder_k = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
         self.encoder_k.classifier[1] = nn.Linear(num_features, self.nf)
         
         self.aggregator = Linear_Classifier(nf=self.nf, num_classes=num_classes)
@@ -61,6 +62,9 @@ class Embeddingmodel(nn.Module):
         self.queue = F.normalize(self.queue, dim=0)
         self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
         self.queue_size = queue_size
+        
+        # Add IWSCL
+        self.iwscl = IWSCL(feat_dim=feat_dim, momentum=momentum)
     
     def get_queue(self):
         return self.queue.clone().detach(), self.queue_labels.clone().detach()
@@ -122,9 +126,16 @@ class Embeddingmodel(nn.Module):
         
         proj_q = None
         proj_k = None
+        iwscl_loss = torch.tensor(0.0).cuda()
+        pseudo_labels = None
         if projector:
             proj_q = self.projector_q(feat_q)
             proj_q = F.normalize(proj_q, dim=1)
+            
+            
+            # 1. Calculate IWSCL loss using current queue state
+            iwscl_loss, pseudo_labels = self.iwscl(proj_q, instance_predictions, true_label, 
+                                                  self.queue, self.queue_labels, val_on)
             
             if im_k is not None and not val_on:
                 # Momentum update
@@ -153,7 +164,7 @@ class Embeddingmodel(nn.Module):
                 # Enqueue and dequeue
                 self._dequeue_and_enqueue(proj_k, enqueue_labels)
                 
-        return bag_pred, bag_instance_predictions, instance_predictions.squeeze(), proj_q
+        return bag_pred, bag_instance_predictions, instance_predictions.squeeze(), proj_q, iwscl_loss, pseudo_labels
 
 class Linear_Classifier(nn.Module):
     """Linear classifier"""

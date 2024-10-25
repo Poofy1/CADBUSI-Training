@@ -151,5 +151,5 @@ if __name__ == '__main__':
         # Save the model
         if val_loss < state['val_loss_bag']:
             state['val_loss_bag'] = val_loss  # Update the best validation accuracy
-            save_state(state['epoch'], config['label_columns'], train_acc, val_loss, val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs)
+            save_state(state, config, train_acc, val_loss, val_acc, model, optimizer)
             print("Saved checkpoint due to improved val_loss")

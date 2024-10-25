@@ -14,7 +14,7 @@ class ITS2CLRConfig(BaseConfig):
         self.initial_ratio = 0.3
         self.final_ratio = 1
         self.total_epochs = 100
-        self.warmup_epochs = 5
+        self.warmup_epochs = 10
         self.learning_rate = 0.001
         self.reset_aggregator = False
 
@@ -24,7 +24,7 @@ class LesionDataConfig(BaseConfig):
         self.label_columns = ['Has_Malignant']
         self.instance_columns = ['Malignant Lesion Present']
         self.img_size = 224
-        self.bag_batch_size = 5
+        self.bag_batch_size = 3
         self.min_bag_size = 2
         self.max_bag_size = 25
         self.instance_batch_size = 25

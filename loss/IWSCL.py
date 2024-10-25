@@ -67,11 +67,12 @@ class IWSCL(nn.Module):
         # Total loss
         loss = positive_loss + negative_loss * 2"""
         
-        
+
+        instance_predictions = instance_predictions.squeeze()
         
         ground_truth_mask = instance_labels != -1
         pred_labels = (instance_predictions > 0.5).long()
-
+        
         # Override pred labels with ground truth when available
         pred_labels[ground_truth_mask] = instance_labels[ground_truth_mask]
 
@@ -112,7 +113,7 @@ class IWSCL(nn.Module):
             losses.append(instance_loss)
             
         if len(losses) == 0:
-            loss = 0
+            loss = torch.tensor(0.0, device=features.device)
         else:
             loss = torch.stack(losses).mean()
 
