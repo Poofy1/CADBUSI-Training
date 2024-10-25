@@ -7,6 +7,10 @@ class BaseConfig:
         """Convert config to a dictionary with only serializable types"""
         return {k: v for k, v in self.__dict__.items()}
 
+
+
+####### CONFIGURE #######
+
 class ITS2CLRConfig(BaseConfig):
     def __init__(self):
         self.feature_extractor_train_count = 8
@@ -44,36 +48,14 @@ class FishDataConfig(BaseConfig):
         self.arch = 'efficientnet'
         self.pretrained_arch = False
 
-def build_config(model_version, head_name, data_config_class):
-    """Combines configs into a single dictionary"""
-    its2clr_config = ITS2CLRConfig().to_dict()
-    data_config = data_config_class().to_dict()
-    
-    config = {
-        "head_name": head_name,
-        "model_version": model_version,
-        **its2clr_config,
-        **data_config
-    }
-    return config
-
-
 class PathConfig(BaseConfig):
     def __init__(self):
         self.export_location = "D:/DATA/CASBUSI/exports/"
         self.cropped_images = "F:/Temp_SSD_Data/"
         
-def load_paths():
-    """Returns a dictionary of paths using PathConfig"""
-    path_config = PathConfig()
-
-    # Convert PathConfig to dictionary
-    paths = path_config.to_dict()
-    return paths
-
-export_location = "D:/DATA/CASBUSI/exports/",
-cropped_images = "F:/Temp_SSD_Data/"
-
+        
+        
+        
 # Augmentations 
 train_transform = T.Compose([
             T.RandomHorizontalFlip(),
@@ -89,3 +71,28 @@ val_transform = T.Compose([
             T.ToTensor(),
             T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
+
+##############
+
+
+def build_config(model_version, head_name, data_config_class):
+    """Combines configs into a single dictionary"""
+    its2clr_config = ITS2CLRConfig().to_dict()
+    data_config = data_config_class().to_dict()
+    
+    config = {
+        "head_name": head_name,
+        "model_version": model_version,
+        **its2clr_config,
+        **data_config
+    }
+    return config
+        
+def load_paths():
+    """Returns a dictionary of paths using PathConfig"""
+    path_config = PathConfig()
+
+    # Convert PathConfig to dictionary
+    paths = path_config.to_dict()
+    return paths
+
