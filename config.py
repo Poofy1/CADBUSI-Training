@@ -1,5 +1,5 @@
 import torchvision.transforms as T
-from data.format_data import CLAHETransform
+from data.transforms import CLAHETransform
 
 
 class BaseConfig:
@@ -58,6 +58,23 @@ def build_config(model_version, head_name, data_config_class):
     return config
 
 
+class PathConfig(BaseConfig):
+    def __init__(self):
+        self.export_location = "D:/DATA/CASBUSI/exports/"
+        self.cropped_images = "F:/Temp_SSD_Data/"
+        
+def load_paths():
+    """Returns a dictionary of paths using PathConfig"""
+    path_config = PathConfig()
+
+    # Convert PathConfig to dictionary
+    paths = path_config.to_dict()
+    return paths
+
+export_location = "D:/DATA/CASBUSI/exports/",
+cropped_images = "F:/Temp_SSD_Data/"
+
+# Augmentations 
 train_transform = T.Compose([
             T.RandomHorizontalFlip(),
             T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
