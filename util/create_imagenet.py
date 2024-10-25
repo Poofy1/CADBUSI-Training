@@ -11,7 +11,7 @@ output_dir = "D:\DATA\CASBUSI\exports"
 export_name = "imagenette2_hard2"
 positive_percentage = 0.2  # Percentage of positive instances to include 
 min_bag_size = 2
-max_bag_size = 5 # Was 10 previously
+max_bag_size = 10
 target_label = 'n01440764'
 
 
