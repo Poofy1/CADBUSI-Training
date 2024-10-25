@@ -11,19 +11,88 @@ ML framework that supports various deep learning architectures for ultrasound im
 ## Usage 
 - Clone repository: `git clone https://github.com/Poofy1/CADBUSI-Training.git`
 - Install required Python packages with pip: `pip install -r requirements.txt`
-- Setup config.py and config.json
-     - config.json example:
-        ```
-        {
-            "export_location": "D:/DATA/CASBUSI/exports/",
-            "cropped_images": "F:/Temp_SSD_Data/"
-        }
-        ```
-- You can begin training by running one of the provided training scripts in the immediate directory. Each script has its own config that you should configure given your task specifications. If you are running a training script on newly processed data, the script will crop and save the images into a temporary directory specified by you to improve performance. It will also manage unbalanced data by upsampling the minority class until they are balanced (This only works when training on 1 label).
+- Configure `./config.py`
+- Generate the [Test Dataset](#test-dataset) or prepare [Custom Data](#dataloader-input-format)
+- You can begin training by running one of the provided training scripts in the immediate directory. Each script has its own training loop for that specific technique
+     - If you are running a training script on newly processed data, the script will crop and save the images into a temporary `cropped_images` directory
+     - This will automatically continue training if a model exists under the specified name already
+     - This will automatically unbalanced data by upsampling the minority class until they are balanced (Only when training on 2 classes)
+     - Trained models will be saved in the `./models/` dir with your 
+
+## Test Dataset
+
+We use a modified version of [ImageNet](https://paperswithcode.com/dataset/imagenet), specifically the ImageNette subset, to test our MIL architectures. The `./util/create_imagenet.py` script automatically generates this dataset by:
+
+- Downloading the ImageNette dataset (a 10-class subset of ImageNet)
+- Creating bags of 2-10 images each
+- Generating both bag-level and instance-level labels
+- Converting the data into our required format (TrainData.csv and InstanceData.csv)
+- Organizing images into the expected directory structure
+
+The script creates a binary classification problem where the target class is 'n01440764', with approximately 20% of bags containing positive instances. The dataset is automatically split with 80% for training and 20% for validation.
+
+This synthetic dataset provides a controlled environment for testing MIL architectures before deploying them on medical imaging data.
+
+
+## Model Format
+
+### Warmup Phase
+- Instance-level training only
+- Checkpoints saved in immediate directory
+
+### Post-Warmup Training
+- Alternates between instance and MIL-level learning
+- Builds on warmup checkpoint
+- Often involves using sudo labels to some degree
+
+### Versioning Structure
+```
+./
+└── models/
+    └── test_run_1/            # Model name
+         ├── 1/                # First training version
+         ├── 2/                # Second training version
+         ├── model.pth         # Warmup checkpoint
+         └── ...               # Additional state information
+```
+
+This structure allows multiple training iterations to branch from the same warmup checkpoint, enabling experimentation with different strategies while maintaining a common foundation. Within this direcotry is other metric data like accuracy logs, loss graphs, roc graphs, and confuision matrices.
+
+
+## Model Testing
+
+Testing scripts reside in the `./eval/` folder, these scripts test the performace of trained models. Please note that these evaluation scripts are currently not actively maintained and may require modifications to work with your setup.
+
+
+
+## Supported Architectures
+Our model trainer has a configurable backbone encoder, such as ResNet18. This backbone acts as a feature extractor. All architectures support both ABMIL and ITS2CLR-style training, with additional modifications based on their specific approach.
+
+### ABMIL (Attention-Based Multiple Instance Learning)
+- Source: https://arxiv.org/pdf/1802.04712.pdf
+- ABMIL is ideal for tasks where the relation between parts of the data is crucial.
+- This architecture leverages attention mechanisms to focus on relevant parts of the input data.
+
+### Gen_ITS2CLR (Custom)
+- This uses a combination of different techniques given these two papers:
+    - GenSCL: https://arxiv.org/pdf/2106.00908.pdf
+    - ITS2CLR: https://arxiv.org/pdf/2210.09452.pdf
+    - This architecture leverages generalized contrastive learning alongside techniques used in ITS2CLR
+
+### PALM
+- Source: https://arxiv.org/abs/2402.02653
+- Incorporates PALM-specific innovations while maintaining ABMIL and ITS2CLR capabilities
+
+### Rethinking MIL
+- Source: https://arxiv.org/abs/2307.02249
+- Builds on core ABMIL and ITS2CLR functionality with rethinking-specific enhancements
+
+Each architecture extends the base ABMIL and ITS2CLR capabilities with its own unique improvements and methodologies.
+
 
 ## Dataloader Input Format
 
-[CADBUSI-Database](https://github.com/Poofy1/CADBUSI-Database) will export the expected data format already, if you need to use your own data you need to compile your data into this structured tabular format:
+[CADBUSI-Database](https://github.com/Poofy1/CADBUSI-Database) will provide exports with the expected data format, if you need to use your own data you need to compile your data into this structured tabular format:
 
 ### Train_Data.csv
 
@@ -60,7 +129,7 @@ Inside the export folder should exist a `/Export/images/` to hold the images tha
 
 ### InstanceData.csv (Optional)
 
-This file `/Export/InstanceData.csv` is optional but can provide some labels for image instances for bags. If this is being used it must include these columns: `{User Labels}, ImageName`
+This file `/Export/InstanceData.csv` is optional but can provide labels for image instances for bags. If this is being used it must include these columns: `{User Labels}, ImageName`
 Example: 
 ```
 Benign Lesion Present, Malignant Lesion Present, ImageName
@@ -75,36 +144,6 @@ False, True, 2900_3081_left_0.png
 #### 'ImageName'
 - Type: String
 - Description: Contains a image file name associated with the label(s). 
-
-
-
-## Supported Architectures
-
-At the core of our model trainer is a configurable backbone based on convolutional neural networks, such as ResNet18. This backbone acts as a feature extractor. This approach allows for the flexibility of using advanced pre-trained models while customizing the network's final layers to suit different requirements.
-
-Our model trainer currently supports the following architectures:
-
-### Gen_ITS2CLR (Custom)
-
-- This uses a combination of different techniques given these two papers:
-    - GenSCL: https://arxiv.org/pdf/2106.00908.pdf
-    - ITS2CLR: https://arxiv.org/pdf/2210.09452.pdf
-    - This architecture leverages generalized contrasitive learning alongside techniques used in ITS2CLR
-
-### ABMIL (Attention-Based Multiple Instance Learning)
-
-- Source: https://arxiv.org/pdf/1802.04712.pdf
-- ABMIL is ideal for tasks where the relation between parts of the data is crucial.
-- This architecture leverages attention mechanisms to focus on relevant parts of the input data.
-- A Mixup version of this exists to try and prevent any overfitting.
-- Results:
-    - Failed to learn past 84% validation accuracy.
-    - Feature maps failed to capture accurate feauture locations.
-    - We believe this model is not able to learn the more difficult features. 
-
-### FC
-
-- Traditional FC networks with Resnet, used as a baseline.
 
 
 ## Data Pipeline
