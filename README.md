@@ -77,15 +77,12 @@ Our model trainer has a configurable backbone encoder, such as ResNet18. This ba
 - This uses a combination of different techniques given these two papers:
     - GenSCL: https://arxiv.org/pdf/2106.00908.pdf
     - ITS2CLR: https://arxiv.org/pdf/2210.09452.pdf
-    - This architecture leverages generalized contrastive learning alongside techniques used in ITS2CLR
 
 ### PALM
 - Source: https://arxiv.org/abs/2402.02653
-- Incorporates PALM-specific innovations while maintaining ABMIL and ITS2CLR capabilities
 
 ### Rethinking MIL
 - Source: https://arxiv.org/abs/2307.02249
-- Builds on core ABMIL and ITS2CLR functionality with rethinking-specific enhancements
 
 Each architecture extends the base ABMIL and ITS2CLR capabilities with its own unique improvements and methodologies.
 
