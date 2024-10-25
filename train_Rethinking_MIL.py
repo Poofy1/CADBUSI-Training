@@ -84,14 +84,13 @@ if __name__ == '__main__':
             
             
             for iteration in range(target_count): 
-                losses = AverageMeter()
                 palm_total_correct = 0
                 instance_total_correct = 0
                 total_samples = 0
                 model.train()
                 
-                supcon_loss_total = AverageMeter()
-                ce_loss_total = AverageMeter()
+                train_supcon_loss_total = AverageMeter()
+                train_ce_loss_total = AverageMeter()
                 
                 # Iterate over the training data
                 for idx, ((im_q, im_k), instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
@@ -116,9 +115,8 @@ if __name__ == '__main__':
                     optimizer.step()
 
                     # Update the loss meter
-                    losses.update(total_loss.item(), instance_labels.size(0))
-                    supcon_loss_total.update(supcon_loss.item(), instance_labels.size(0))
-                    ce_loss_total.update(ce_loss.item(), instance_labels.size(0))
+                    train_supcon_loss_total.update(supcon_loss.item(), instance_labels.size(0))
+                    train_ce_loss_total.update(ce_loss.item(), instance_labels.size(0))
                     
                     # Get predictions
                     with torch.no_grad():
@@ -146,6 +144,8 @@ if __name__ == '__main__':
                 palm_total_correct = 0
                 instance_total_correct = 0
                 total_samples = 0
+                val_supcon_loss_total = AverageMeter()
+                val_ce_loss_total = AverageMeter()
                 val_losses = AverageMeter()
 
                 with torch.no_grad():
@@ -163,6 +163,9 @@ if __name__ == '__main__':
                         supcon_loss, pseudo_labels = IWSCL_crit(feat_q, instance_predictions, instance_labels, queue, queue_labels, val_on = True)
                         ce_loss = CE_crit(instance_predictions, pseudo_labels.float())
                         total_loss = ce_loss + supcon_loss
+                        
+                        val_supcon_loss_total.update(supcon_loss.item(), instance_labels.size(0))
+                        val_ce_loss_total.update(ce_loss.item(), instance_labels.size(0))
                         val_losses.update(total_loss.item(), instance_labels.size(0))
 
                         # Get predictions
@@ -175,9 +178,8 @@ if __name__ == '__main__':
                 palm_val_acc = palm_total_correct / total_samples
                 instance_val_acc = instance_total_correct / total_samples
                 
-                print(f'Train supcon Loss: {supcon_loss_total.avg:.5f}, CE Loss: {ce_loss_total.avg:.5f}')
-                print(f'[{iteration+1}/{target_count}] Train Loss: {losses.avg:.5f}, Train FC Acc: {instance_train_acc:.5f}')
-                print(f'[{iteration+1}/{target_count}] Val Loss:   {val_losses.avg:.5f}, Val FC Acc: {instance_val_acc:.5f}')
+                print(f'[{iteration+1}/{target_count}] Train | Supcon Loss: {train_supcon_loss_total.avg:.5f}, CE Loss: {train_ce_loss_total.avg:.5f}, Acc: {instance_train_acc:.5f}')
+                print(f'[{iteration+1}/{target_count}] Val   | Supcon Loss: {val_supcon_loss_total.avg:.5f}, CE Loss: {val_ce_loss_total.avg:.5f}, Acc: {instance_val_acc:.5f}')
                 
                 # Save the model
                 if val_losses.avg < state['val_loss_instance']:
