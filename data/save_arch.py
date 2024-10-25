@@ -69,7 +69,7 @@ def plot_single_roc_curve(all_fpr, all_tpr, save_path):
     # Add a red dotted diagonal line (random classifier)
     plt.plot([0, 1], [0, 1], color='red', linestyle='--', label='Random (AUC = 0.5)')
 
-    plt.title('ROC Curve Over Epochs')
+    plt.title('ROC Curve Over Epochs (val)')
     plt.xlabel('1 - Specificity (False Positive Rate)')
     plt.ylabel('Sensitivity (True Positive Rate)')
     plt.legend(loc="lower right")
@@ -102,8 +102,15 @@ def plot_multi_roc_curve(all_fpr, all_tpr, n_classes, save_path):
     
     
 def plot_Confusion(all_targs, all_preds, vocab, file_path):
+    # Convert to numpy arrays if they aren't already
+    all_preds_np = np.array(all_preds) if isinstance(all_preds, list) else all_preds
+    all_targs_np = np.array(all_targs) if isinstance(all_targs, list) else all_targs
+    
+    # Threshold the predictions
+    all_preds_binary = (all_preds_np > 0.5).astype(int)
+    
     # Compute the confusion matrix
-    cm = confusion_matrix(all_targs, all_preds)
+    cm = confusion_matrix(all_targs_np, all_preds_binary)
     
     # Normalize the confusion matrix by the total number of predictions
     cm_normalized = cm.astype('float') / cm.sum()
@@ -112,7 +119,8 @@ def plot_Confusion(all_targs, all_preds, vocab, file_path):
     fig, ax = plt.subplots(figsize=(8, 6))
 
     # Plot the normalized confusion matrix
-    sns.heatmap(cm_normalized, annot=True, fmt=".3f", cmap='Blues', xticklabels=vocab, yticklabels=vocab, ax=ax)
+    sns.heatmap(cm_normalized, annot=True, fmt=".3f", cmap='Blues', 
+                xticklabels=vocab, yticklabels=vocab, ax=ax)
     
     # Invert the y-axis to make it display correctly
     ax.invert_yaxis()
@@ -126,11 +134,21 @@ def plot_Confusion(all_targs, all_preds, vocab, file_path):
     fig.savefig(file_path)
     plt.close(fig)
 
-def save_state(e, label_columns, train_acc, val_loss, val_acc, model_folder, model_name, bagmodel, optimizer, all_targs, all_preds, train_losses_over_epochs, valid_losses_over_epochs, classifier=None, palm = None):
+def save_state(state, config, train_acc, val_loss, val_acc, bagmodel, optimizer, all_targs = [], all_preds = [], classifier=None, palm = None):
+    if state['warmup']:
+        model_folder = state['head_folder']
+    else:
+        model_folder = state['model_folder']
+        
     model_path = f"{model_folder}/model.pth"
     classifier_path = f"{model_folder}/classifier.pth"
     optimizer_path = f"{model_folder}/optimizer.pth"
     stats_path = f"{model_folder}/stats.pkl"
+    
+    label_columns = config['label_columns']
+    e = state['epoch']
+    train_losses_over_epochs = state['train_losses']
+    valid_losses_over_epochs = state['valid_losses']
 
     # Calculate current epoch metrics
     all_preds_np = all_preds.numpy() if isinstance(all_preds, torch.Tensor) else np.array(all_preds)
@@ -189,7 +207,7 @@ def save_state(e, label_columns, train_acc, val_loss, val_acc, model_folder, mod
             
     # Save the plots
     plot_loss(train_losses_over_epochs, valid_losses_over_epochs, f"{model_folder}/loss.png")
-    save_accuracy_to_file(e, train_acc, val_acc, label_columns, f"{model_folder}/accuracy.txt")
+    save_accuracy_to_file(e, train_acc, val_acc, label_columns, f"{model_folder}/{state['mode']}_accuracy.txt")
 
     # Save the confusion matrix if all_targs and all_preds are not empty
     if len(all_targs) > 0 and len(all_preds) > 0 and n_classes == 1:
@@ -229,6 +247,7 @@ def setup_model(model, optimizer, config):
         'pretrained_name': pretrained_name,
         'model_folder': model_folder,
         'model_name': model_name,
+        'mode': 'instance',
         'palm_path': None,
         'train_losses': [],
         'valid_losses': [],

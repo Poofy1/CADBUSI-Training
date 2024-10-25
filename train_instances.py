@@ -152,17 +152,9 @@ if __name__ == '__main__':
                 # Save the model
                 if val_losses.avg < state['val_loss_instance']:
                     state['val_loss_instance'] = val_losses.avg
-                    if state['warmup']:
-                        target_folder = state['head_folder']
-                        target_name = state['pretrained_name']
-                    else:
-                        target_folder = state['model_folder']
-                        target_name = state['model_name']
-                    all_targs = []
-                    all_preds = []
                     
                     if state['warmup']:
-                        save_state(state['epoch'], config['label_columns'], instance_train_acc, val_losses.avg, instance_val_acc, target_folder, target_name, model, optimizer, all_targs, all_preds, state['train_losses'], state['valid_losses'],)
+                        save_state(state, config, instance_train_acc, val_losses.avg, instance_val_acc, model, optimizer)
                         print("Saved checkpoint due to improved val_loss_instance")
 
 
