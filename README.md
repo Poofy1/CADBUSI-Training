@@ -66,17 +66,16 @@ Testing scripts reside in the `./eval/` folder, these scripts test the performac
 
 
 ## Supported Architectures
-Our model trainer has a configurable backbone encoder, such as ResNet18. This backbone acts as a feature extractor. All architectures support both ABMIL and ITS2CLR-style training, with additional modifications based on their specific approach.
+Our model trainer has a configurable backbone encoder, such as ResNet18. This backbone acts as a feature extractor. All architectures support both ABMIL and ITS2CLR-style training, with additional modifications based on their specific approach. Each architecture extends the base ABMIL and ITS2CLR capabilities with its own unique improvements and methodologies.
 
-### ABMIL (Attention-Based Multiple Instance Learning)
-- Source: https://arxiv.org/pdf/1802.04712.pdf
-- ABMIL is ideal for tasks where the relation between parts of the data is crucial.
-- This architecture leverages attention mechanisms to focus on relevant parts of the input data.
+### ABMIL + ITS2CLR (Base architecture)
+- ABMIL: https://arxiv.org/pdf/1802.04712.pdf
+- ITS2CLR: https://arxiv.org/pdf/2210.09452.pdf
+- ABMIL uses attention to determine the relations between parts of data.
+- ITS2CLR structures the training to alternate between instance level and bag training, while sending sudo labels from bag level to instance level.
 
-### Gen_ITS2CLR (Custom)
-- This uses a combination of different techniques given these two papers:
-    - GenSCL: https://arxiv.org/pdf/2106.00908.pdf
-    - ITS2CLR: https://arxiv.org/pdf/2210.09452.pdf
+### Gen_ITS2CLR
+- Source: https://arxiv.org/pdf/2106.00908.pdf
 
 ### PALM
 - Source: https://arxiv.org/abs/2402.02653
@@ -84,7 +83,7 @@ Our model trainer has a configurable backbone encoder, such as ResNet18. This ba
 ### Rethinking MIL
 - Source: https://arxiv.org/abs/2307.02249
 
-Each architecture extends the base ABMIL and ITS2CLR capabilities with its own unique improvements and methodologies.
+
 
 
 ## Dataloader Input Format
