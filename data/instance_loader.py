@@ -17,12 +17,13 @@ class Instance_Dataset(TUD.Dataset):
             images = bag_info['images']
             image_labels = bag_info['image_labels']
             bag_label = bag_info['bag_labels'][0]  # Assuming each bag has a single label
+            accession_number = bag_info['Accession_Number']  # Get accession number
             
-            bag_id_key = bag_id.item() if isinstance(bag_id, torch.Tensor) else bag_id
+            # Use accession_number as the key for selection mask
+            acc_number_key = accession_number.item() if isinstance(accession_number, torch.Tensor) else accession_number
             
-            
-            if bag_id_key in selection_mask:
-                selection_mask_labels, _ = selection_mask[bag_id_key]
+            if acc_number_key in selection_mask:
+                selection_mask_labels, _ = selection_mask[acc_number_key]
             else: 
                 selection_mask_labels = None
 
@@ -51,8 +52,8 @@ class Instance_Dataset(TUD.Dataset):
                 if image_label is not None:
                     self.images.append(img)
                     self.final_labels.append(image_label)
-                    # Create a unique ID combining bag_id and image index
-                    unique_id = f"{bag_id_key}_{idx}"
+                    # Create a unique ID combining accession_number and image index
+                    unique_id = f"{acc_number_key}_{idx}"
                     self.unique_ids.append(unique_id)
 
     def __getitem__(self, index):

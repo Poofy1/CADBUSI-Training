@@ -38,7 +38,7 @@ def test_model(model, bag_dataloader, instance_dataloader):
         for images, yb, _, _ in tqdm(bag_dataloader, desc="Testing bags"):
             bag_pred, _, instance_pred, _, _, _ = model(images, bag_on=True)
             bag_targets.extend(yb.cpu().numpy())
-            bag_predictions.extend((bag_pred > 0.5).float().cpu().numpy())
+            bag_predictions.extend((bag_pred).float().cpu().numpy())
         
         for idx, ((im_q, im_k), instance_labels, unique_id) in enumerate(tqdm(instance_dataloader, total=len(instance_dataloader))):
             im_q = im_q.cuda(non_blocking=True)
@@ -54,7 +54,7 @@ def test_model(model, bag_dataloader, instance_dataloader):
             if fc_pred is None:
                 fc_predictions.extend([0] * len(instance_labels))
             else:
-                fc_predictions.extend((fc_pred > 0.5).float().cpu().numpy())
+                fc_predictions.extend((fc_pred).float().cpu().numpy())
                 
     return (np.array(bag_targets), np.array(bag_predictions), 
             np.array(instance_targets), np.array(fc_predictions),
@@ -99,11 +99,29 @@ if __name__ == '__main__':
     model, optimizer, state = setup_model(model, config)
 
     # Test the model
-    results = test_model(model, bag_dataloader_val, instance_dataloader_train)
+    results = test_model(model, bag_dataloader_val, instance_dataloader_test)
     bag_targets, bag_predictions, instance_targets, fc_predictions, instance_info, instance_features = results
     
     
+    # Create a DataFrame with targets and predictions
+    results_df = pd.DataFrame({
+        'targets': instance_targets,
+        'predictions': fc_predictions,
+        'id': instance_info
+    })
+
+    # Save to CSV
+    results_df.to_csv(f'{output_path}/instance_predictions_test.csv', index=False)
+
+    print("BAG TRAINING")
+    calculate_metrics(bag_targets, bag_predictions, save_path=f'{output_path}/bag_metrics/')
     
+    print("\nINSTANCE TRAINING")
+    calculate_metrics(instance_targets, fc_predictions, save_path=f'{output_path}/instance_metrics/')
+    
+    
+    
+
     # Get the model and access IWSCL
     iwscl = model.iwscl
     prototypes = iwscl.prototypes

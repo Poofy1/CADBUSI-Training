@@ -72,10 +72,11 @@ def create_bags(data, min_size, max_size, root_dir, label_columns, instance_colu
         bags_dict[row['ID']] = {
             'bag_labels': bag_labels, 
             'images': bag_files,
-            'image_labels': image_labels
+            'image_labels': image_labels,
+            'Accession_Number': row['Accession_Number']  # Add Accession_Number to the dictionary
         }
 
-    return bags_dict  # ID : {'bag_labels': [...], 'images': [...], 'image_labels': [...]}
+    return bags_dict  # ID : {'bag_labels': [...], 'images': [...], 'image_labels': [...], 'Accession_Number': xxx}
 
 
 
