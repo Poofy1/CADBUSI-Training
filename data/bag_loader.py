@@ -13,10 +13,11 @@ class BagOfImagesDataset(TUD.Dataset):
         actual_id = self.unique_bag_ids[index]
         bag_info = self.bags_dict[actual_id]
 
-        # Extract labels, image file paths, and instance-level labels
+        # Extract labels, image file paths, instance-level labels, and accession number
         bag_labels = bag_info['bag_labels']
         files_this_bag = bag_info['images']
         instance_labels = bag_info['image_labels']
+        accession_number = bag_info['Accession_Number']  # Get the accession number
 
         # Process images
         image_data = torch.stack([self.transform(Image.open(fn).convert("RGB")) for fn in files_this_bag])
@@ -27,7 +28,8 @@ class BagOfImagesDataset(TUD.Dataset):
         # Convert instance labels to a tensor, using -1 for None
         instance_labels_tensors = [torch.tensor(labels, dtype=torch.float32) if labels != [None] else torch.tensor([-1], dtype=torch.float32) for labels in instance_labels]
 
-        return image_data, bag_labels_tensor, instance_labels_tensors, actual_id
+        # Return accession_number instead of actual_id in the last position
+        return image_data, bag_labels_tensor, instance_labels_tensors, accession_number
 
     
     def __len__(self):

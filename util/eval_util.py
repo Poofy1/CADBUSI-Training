@@ -4,8 +4,8 @@ import numpy as np
 from sklearn.manifold import TSNE
 import plotly.graph_objects as go
 import plotly.io as pio
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, balanced_accuracy_score
-from sklearn.preprocessing import label_binarize
+import matplotlib.pyplot as plt
+from sklearn.metrics import roc_curve, precision_score, recall_score, f1_score, roc_auc_score, balanced_accuracy_score
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
@@ -115,29 +115,166 @@ def calculate_ood_stats(distances_1, distances_2):
 
 
 
-def calculate_metrics(targets, predictions):
-    accuracy = balanced_accuracy_score(targets, predictions)
-    precision = precision_score(targets, predictions, average='binary')
-    recall = recall_score(targets, predictions, average='binary')
-    f1 = f1_score(targets, predictions, average='binary')
+def calculate_metrics(targets, predictions, target_specificity=0.80, save_path="./"):
+    # Create directory if it doesn't exist
+    os.makedirs(save_path, exist_ok=True)
     
-    # Check if it's binary or multi-class
-    unique_classes = np.unique(targets)
-    if len(unique_classes) == 2:
-        auc = roc_auc_score(targets, predictions)
-    else:
-        # Multi-class scenario
-        binarized_targets = label_binarize(targets, classes=unique_classes)
-        binarized_predictions = label_binarize(predictions, classes=unique_classes)
-        auc = roc_auc_score(binarized_targets, binarized_predictions, average='weighted', multi_class='ovr')
+    # Fiolter out non 0/1 classes
+    binary_indices = np.where((targets == 0) | (targets == 1))[0]
+    targets = targets[binary_indices]
+    predictions = predictions[binary_indices]
     
-    metrics = {
-        'accuracy': accuracy,
-        'precision': precision,
-        'recall': recall,
-        'f1_score': f1,
-        'auc': auc
-    }
+    # Basic metrics
+    pred_class = (predictions >= 0.5).astype(int)  # Threshold for basic metrics
+    accuracy = balanced_accuracy_score(targets, pred_class)
+    precision = precision_score(targets, pred_class, average='binary')
+    recall = recall_score(targets, pred_class, average='binary') 
+    f1 = f1_score(targets, pred_class, average='binary')
+    auc = roc_auc_score(targets, predictions)
     
-    for metric, value in metrics.items():
-        print(f"{metric}: {value:.4f}")
+    # Calculate metrics for threshold 0.5
+    pred_class = (predictions >= 0.5).astype(int)
+    TP = np.sum((targets == 1) & (pred_class == 1))
+    TN = np.sum((targets == 0) & (pred_class == 0))
+    FP = np.sum((targets == 0) & (pred_class == 1))
+    FN = np.sum((targets == 1) & (pred_class == 0))
+    
+    default_sens = TP / (TP + FN) if (TP + FN) != 0 else 0
+    default_spec = TN / (TN + FP) if (TN + FP) != 0 else 0
+    default_ppv = TP / (TP + FP) if (TP + FP) != 0 else 0
+    default_npv = TN / (TN + FN) if (TN + FN) != 0 else 0
+    
+    # Print basic metrics
+    print("Basic Metrics:")
+    print(f"* Accuracy: {accuracy:.2%}")
+    print(f"* AUC: {auc:.2%}")
+    print(f"* Sensitivity: {default_sens:.2%}")
+    print(f"* Specificity: {default_spec:.2%}")
+    print(f"* PPV: {default_ppv:.2%}")
+    print(f"* NPV: {default_npv:.2%}")
+    print(f"* Threshold: 0.50")
+    print(f"* Precision: {precision:.2%}")
+    print(f"* Recall: {recall:.2%}")
+    print(f"* F1 Score: {f1:.2%}")
+    
+    # Detailed threshold analysis
+    thresholds = np.linspace(0, 1, 1000)
+    best_threshold = best_accuracy = best_sensitivity = best_specificity = best_ppv = best_npv = 0
+    target_threshold = None
+    target_metrics = None
+    
+    # Arrays to store metrics for plotting
+    sensitivity_arr = []
+    specificity_arr = []
+    accuracy_arr = []
+    
+    for threshold in thresholds:
+        pred_class = (predictions >= threshold).astype(int)
+        TP = np.sum((targets == 1) & (pred_class == 1))
+        TN = np.sum((targets == 0) & (pred_class == 0))
+        FP = np.sum((targets == 0) & (pred_class == 1))
+        FN = np.sum((targets == 1) & (pred_class == 0))
+        
+        sens = TP / (TP + FN) if (TP + FN) != 0 else 0
+        spec = TN / (TN + FP) if (TN + FP) != 0 else 0
+        acc = (TP + TN) / (TP + TN + FP + FN)
+        ppv = TP / (TP + FP) if (TP + FP) != 0 else 0
+        npv = TN / (TN + FN) if (TN + FN) != 0 else 0
+        
+        sensitivity_arr.append(sens)
+        specificity_arr.append(spec)
+        accuracy_arr.append(acc)
+        
+        if target_threshold is None and spec >= target_specificity:
+            target_threshold = threshold
+            target_metrics = (acc, sens, spec, ppv, npv)
+            
+        if acc > best_accuracy:
+            best_accuracy = acc
+            best_threshold = threshold
+            best_sensitivity = sens
+            best_specificity = spec
+            best_ppv = ppv
+            best_npv = npv
+    
+    print("\nBest Accuracy Threshold Metrics:")
+    print(f"* Accuracy: {best_accuracy:.2%}")
+    print(f"* Sensitivity: {best_sensitivity:.2%}")
+    print(f"* Specificity: {best_specificity:.2%}")
+    print(f"* PPV: {best_ppv:.2%}")
+    print(f"* NPV: {best_npv:.2%}")
+    print(f"* Threshold: {best_threshold:.2f}")
+    
+    if target_metrics:
+        print(f"\nTarget Specificity ({target_specificity:.0%}) Threshold Metrics:")
+        print(f"* Accuracy: {target_metrics[0]:.2%}")
+        print(f"* Sensitivity: {target_metrics[1]:.2%}")
+        print(f"* Specificity: {target_metrics[2]:.2%}")
+        print(f"* PPV: {target_metrics[3]:.2%}")
+        print(f"* NPV: {target_metrics[4]:.2%}")
+        print(f"* Threshold: {target_threshold:.2f}")
+    
+    
+    # Plot Performance Metrics
+    plt.figure(figsize=(8, 8))
+    plt.plot(thresholds, sensitivity_arr, label='Sensitivity')
+    plt.plot(thresholds, specificity_arr, label='Specificity')
+    plt.plot(thresholds, accuracy_arr, label='Accuracy')
+    plt.axvline(x=best_threshold, color='r', linestyle='--', label='Best Accuracy Threshold')
+    plt.axvline(x=target_threshold, color='g', linestyle='--', label=f'Target Specificity Threshold ({target_specificity:.0%})')
+    plt.xlabel('Threshold')
+    plt.ylabel('Metric Value')
+    plt.title('Performance Metrics vs. Threshold')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(f"{save_path}/Performance_metrics_graph.png")
+    plt.close()
+
+    # Plot ROC Curve
+    fpr, tpr, roc_thresholds = roc_curve(targets, predictions)
+    
+    plt.figure(figsize=(10, 10))
+    plt.plot(fpr, tpr, color='blue', label=f'ROC curve (AUC = {auc:.2f})')
+    plt.plot([0, 1], [0, 1], color='red', linestyle='--', label='Random Classifier')
+
+    # Find points for thresholds
+    target_fpr = 1 - target_metrics[2]
+    target_tpr = target_metrics[1]
+    
+    threshold_05_idx = np.argmin(np.abs(thresholds - 0.5))
+    fpr_05 = 1 - specificity_arr[threshold_05_idx]
+    tpr_05 = sensitivity_arr[threshold_05_idx]
+
+    # Plot threshold points
+    plt.plot(target_fpr, target_tpr, 'ro', markersize=10, label=f'Threshold at {target_specificity:.0%} Specificity')
+    plt.plot(fpr_05, tpr_05, 'go', markersize=10, label='Threshold at 0.5')
+
+    # Add crosshairs
+    plt.axvline(x=target_fpr, color='red', linestyle=':', alpha=0.8)
+    plt.axhline(y=target_tpr, color='red', linestyle=':', alpha=0.8)
+    plt.axvline(x=fpr_05, color='green', linestyle=':', alpha=0.8)
+    plt.axhline(y=tpr_05, color='green', linestyle=':', alpha=0.8)
+
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate (1 - Specificity)')
+    plt.ylabel('True Positive Rate (Sensitivity)')
+    plt.title('Receiver Operating Characteristic (ROC) Curve')
+    plt.legend(loc="lower right")
+    plt.grid(True)
+
+    # Add annotations
+    plt.annotate(f'Threshold: {target_threshold:.2f}',
+                xy=(target_fpr, target_tpr), xycoords='data',
+                xytext=(10, -10), textcoords='offset points',
+                arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=.2"))
+
+    plt.annotate(f'Threshold: 0.5',
+                xy=(fpr_05, tpr_05), xycoords='data',
+                xytext=(10, 10), textcoords='offset points',
+                arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=.2"))
+
+    plt.savefig(f"{save_path}/AUC_graph.png")
+    plt.close()
+    
+    print(f'Saved performace graphs to {save_path}')
