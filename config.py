@@ -13,8 +13,8 @@ class BaseConfig:
 
 class ITS2CLRConfig(BaseConfig):
     def __init__(self):
-        self.feature_extractor_train_count = 8
-        self.MIL_train_count = 5
+        self.feature_extractor_train_count = 6
+        self.MIL_train_count = 6
         self.initial_ratio = 0.3
         self.final_ratio = 1
         self.total_epochs = 100
@@ -28,7 +28,7 @@ class LesionDataConfig(BaseConfig):
         self.label_columns = ['Has_Malignant']
         self.instance_columns = ['Malignant Lesion Present']
         self.img_size = 224
-        self.bag_batch_size = 3
+        self.bag_batch_size = 8
         self.min_bag_size = 2
         self.max_bag_size = 25
         self.instance_batch_size = 25

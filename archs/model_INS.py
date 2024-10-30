@@ -15,12 +15,12 @@ class Embeddingmodel(nn.Module):
         self.momentum = momentum
 
         # Original encoder
-        self.encoder_q = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
+        self.encoder_q = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
         num_features = self.encoder_q.classifier[1].in_features
         self.encoder_q.classifier[1] = nn.Linear(num_features, self.nf)
         
         # Momentum encoder
-        self.encoder_k = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
+        self.encoder_k = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
         self.encoder_k.classifier[1] = nn.Linear(num_features, self.nf)
         
         self.aggregator = Linear_Classifier(nf=self.nf, num_classes=num_classes)
@@ -41,9 +41,9 @@ class Embeddingmodel(nn.Module):
         )
         
         self.ins_classifier = nn.Sequential(
-            nn.Linear(self.nf, 512),
+            nn.Linear(self.nf, 128),
             nn.ReLU(inplace=True),
-            nn.Linear(512, num_classes),
+            nn.Linear(128, num_classes),
             nn.Sigmoid()
         )
         
@@ -168,7 +168,7 @@ class Embeddingmodel(nn.Module):
 
 class Linear_Classifier(nn.Module):
     """Linear classifier"""
-    def __init__(self, nf, num_classes=1, L=256):
+    def __init__(self, nf, num_classes=1, L=64):
         super(Linear_Classifier, self).__init__()
         self.fc = nn.Linear(nf, num_classes)
         
