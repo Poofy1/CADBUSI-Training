@@ -61,7 +61,7 @@ if __name__ == '__main__':
     valid_losses_over_epochs = []
     
     # MODEL INIT
-    model, optimizer, state = setup_model(model, optimizer, config)
+    model, optimizer, state = setup_model(model, config, optimizer)
     
     
     print("Training Data...")

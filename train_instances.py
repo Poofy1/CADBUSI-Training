@@ -46,7 +46,7 @@ if __name__ == '__main__':
     
     
     # MODEL INIT
-    model, optimizer, state = setup_model(model, optimizer, config)
+    model, optimizer, state = setup_model(model, config, optimizer)
     
     # Training loop
     while state['epoch'] < config['total_epochs']:

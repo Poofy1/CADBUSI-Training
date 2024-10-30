@@ -19,9 +19,9 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 if __name__ == '__main__':
 
     # Config
-    model_version = '1'
-    head_name = "Fish_test4"
-    data_config = FishDataConfig #FishDataConfig or LesionDataConfig
+    model_version = '3'
+    head_name = "CADBUSI_R-MIL_64_test"
+    data_config = LesionDataConfig #FishDataConfig or LesionDataConfig
     
     
     config = build_config(model_version, head_name, data_config)
@@ -31,6 +31,7 @@ if __name__ == '__main__':
 
     # Create bag datasets
     bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
+    #bag_dataset_train = SyntheticBagDataset(bags_train, transform=train_transform)
     bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
     bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_size=config['bag_batch_size'], collate_fn = collate_bag, drop_last=True, shuffle = True)
     bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_size=config['bag_batch_size'], collate_fn = collate_bag, drop_last=True)
@@ -51,7 +52,7 @@ if __name__ == '__main__':
     
     
     # MODEL INIT
-    model, optimizer, state = setup_model(model, optimizer, config)
+    model, optimizer, state = setup_model(model, config, optimizer)
 
     
     # Training loop
@@ -199,6 +200,7 @@ if __name__ == '__main__':
             
         print('\nTraining Bag Aggregator')
         for iteration in range(config['MIL_train_count']):
+        
             model.train()
             train_bag_logits = {}
             total_loss = 0.0
@@ -211,6 +213,8 @@ if __name__ == '__main__':
 
                 # Forward pass
                 bag_pred, _, instance_pred, _, _, _ = model(images, bag_on=True)
+                
+                bag_pred = torch.clamp(bag_pred, min=0.000001, max=.999999)
 
                 bag_loss = BCE_loss(bag_pred, yb)
                 bag_loss.backward()
@@ -241,7 +245,7 @@ if __name__ == '__main__':
 
                     # Forward pass
                     bag_pred, _, _, _, _, _ = model(images, bag_on=True, val_on = True)
-
+                    bag_pred = torch.clamp(bag_pred, min=0.000001, max=.999999)
                     # Calculate bag-level loss
                     loss = BCE_loss(bag_pred, yb)
                     total_val_loss += loss.item() * yb.size(0)

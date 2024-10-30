@@ -6,16 +6,12 @@ from torchvision import transforms as T
 from tqdm import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, balanced_accuracy_score
-from sklearn.preprocessing import label_binarize
-from sklearn.manifold import TSNE
-import plotly.graph_objects as go
-import plotly.io as pio
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
+from util.eval_util import *
 from data.format_data import *
 from data.sudo_labels import *
 from loss.palm import PALM
@@ -24,88 +20,7 @@ from archs.model_PALM import *
 from data.bag_loader import *
 from data.instance_loader import *
 
-    
-def visualize_prototypes_and_instances(palm, instance_features, instance_labels, dataset_name, head_name):
-    # Extract prototypes
-    prototypes = palm.protos.cpu().numpy()
 
-    # Calculate prototype labels based on class counts
-    prototype_labels = palm.proto_class_counts.cpu().numpy().argmax(axis=1)
-
-    # Randomly sample 1000 instances if there are more than 1000
-    num_instances = instance_features.shape[0]
-    if num_instances > 1000:
-        sample_indices = np.random.choice(num_instances, 1000, replace=False)
-        instance_features = instance_features[sample_indices]
-        instance_labels = instance_labels[sample_indices]
-
-    # Combine prototypes and instances
-    combined_features = np.vstack((prototypes, instance_features))
-
-    # Apply t-SNE to the combined features
-    tsne = TSNE(n_components=3, random_state=42)
-    combined_tsne = tsne.fit_transform(combined_features)
-
-    # Split the results back into prototypes and instances
-    num_prototypes = prototypes.shape[0]
-    prototypes_tsne = combined_tsne[:num_prototypes]
-    instances_tsne = combined_tsne[num_prototypes:]
-
-    # Create 3D scatter plot
-    fig = go.Figure()
-
-    # Add prototypes
-    fig.add_trace(go.Scatter3d(
-        x=prototypes_tsne[:, 0],
-        y=prototypes_tsne[:, 1],
-        z=prototypes_tsne[:, 2],
-        mode='markers',
-        marker=dict(
-            size=5,
-            color=prototype_labels,
-            colorscale='Viridis',
-            opacity=0.8
-        ),
-        text=[f"Prototype {i}, Label: {label}" for i, label in enumerate(prototype_labels)],
-        hoverinfo='text',
-        name='Prototypes'
-    ))
-
-    # Add instances with color based on label
-    for label, color in [(0, 'blue'), (1, 'red')]:
-        mask = instance_labels == label
-        fig.add_trace(go.Scatter3d(
-            x=instances_tsne[mask, 0],
-            y=instances_tsne[mask, 1],
-            z=instances_tsne[mask, 2],
-            mode='markers',
-            marker=dict(
-                size=3,
-                color=color,
-                opacity=0.5
-            ),
-            name=f'Instances (Label {label})'
-        ))
-
-    # Update layout
-    fig.update_layout(
-        title=f'Prototypes/Instances {head_name} {dataset_name}',
-        scene=dict(
-            xaxis_title='t-SNE 1',
-            yaxis_title='t-SNE 2',
-            zaxis_title='t-SNE 3'
-        ),
-        width=800,
-        height=800,
-        margin=dict(r=20, b=10, l=10, t=40)
-    )
-
-    # Save the plot as an interactive HTML file
-    pio.write_html(fig, file=f'{current_dir}/results/PALM_OOD/{head_name}_{dataset_name}_TSNE.html')
-    print("Prototype and instances visualization saved as 'TSNE.html'")
-    
-
-    
 def test_model_and_collect_distances(model, palm, bag_dataloader, instance_dataloader, device):
     model.eval()
     
@@ -146,29 +61,7 @@ def test_model_and_collect_distances(model, palm, bag_dataloader, instance_datal
             np.array(instance_targets), np.array(fc_predictions), np.array(palm_predictions),
             np.array(distances), instance_info, np.array(instance_features))
 
-def calculate_metrics(targets, predictions):
-    accuracy = balanced_accuracy_score(targets, predictions)
-    precision = precision_score(targets, predictions, average='binary')
-    recall = recall_score(targets, predictions, average='binary')
-    f1 = f1_score(targets, predictions, average='binary')
-    
-    # Check if it's binary or multi-class
-    unique_classes = np.unique(targets)
-    if len(unique_classes) == 2:
-        auc = roc_auc_score(targets, predictions)
-    else:
-        # Multi-class scenario
-        binarized_targets = label_binarize(targets, classes=unique_classes)
-        binarized_predictions = label_binarize(predictions, classes=unique_classes)
-        auc = roc_auc_score(binarized_targets, binarized_predictions, average='weighted', multi_class='ovr')
-    
-    return {
-        'accuracy': accuracy,
-        'precision': precision,
-        'recall': recall,
-        'f1_score': f1,
-        'auc': auc
-    }
+
 
 def run_test(config):
     # Define transforms
@@ -211,38 +104,29 @@ def run_test(config):
     results = test_model_and_collect_distances(model, palm, bag_dataloader_test, instance_dataloader_test, device)
     bag_targets, bag_predictions, instance_targets, fc_predictions, palm_predictions, distances, instance_info, instance_features = results
 
+    # Extract prototypes
+    prototypes = palm.protos.cpu().numpy()
+
+    # Calculate prototype labels based on class counts
+    prototype_labels = palm.proto_class_counts.cpu().numpy().argmax(axis=1)
+
     # Visualize prototypes and instances
-    visualize_prototypes_and_instances(palm, instance_features, instance_targets, config['dataset_name'], config['head_name'])
+    visualize_prototypes_and_instances(prototypes, prototype_labels, instance_features, instance_targets, config['dataset_name'], config['head_name'], f'{current_dir}/results/PALM_OOD/')
     
      
-    """# Calculate and print metrics
+    # Calculate and print metrics
     print(f"\nResults for dataset: {config['dataset_name']}")
     print("Bag-level Metrics:")
-    bag_metrics = calculate_metrics(bag_targets, bag_predictions)
-    for metric, value in bag_metrics.items():
-        print(f"{metric}: {value:.4f}")
+    calculate_metrics(bag_targets, bag_predictions)
 
     print("\nFC Instance-level Metrics:")
-    fc_instance_metrics = calculate_metrics(instance_targets, fc_predictions)
-    for metric, value in fc_instance_metrics.items():
-        print(f"{metric}: {value:.4f}")
+    calculate_metrics(instance_targets, fc_predictions)
 
     print("\nPALM Instance-level Metrics:")
-    palm_instance_metrics = calculate_metrics(instance_targets, palm_predictions)
-    for metric, value in palm_instance_metrics.items():
-        print(f"{metric}: {value:.4f}")"""
+    calculate_metrics(instance_targets, palm_predictions)
 
     return distances, instance_info
 
-
-def calculate_ood_stats(distances_1, distances_2):
-    # Calculate threshold (95th percentile of distances_1)
-    threshold = np.percentile(distances_1, 95)
-    
-    # Calculate percentage of OOD samples in distances_2
-    ood_percentage = (distances_2 > threshold).mean() * 100
-    
-    return threshold, ood_percentage
 
 if __name__ == '__main__':
     # Get the parent directory

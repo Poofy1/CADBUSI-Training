@@ -217,7 +217,7 @@ def save_state(state, config, train_acc, val_loss, val_acc, bagmodel, optimizer,
         
         
 
-def setup_model(model, optimizer, config):
+def setup_model(model, config, optimizer = None):
     """
     Set up the model, handle loading/saving, and manage configurations.
     

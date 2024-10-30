@@ -50,7 +50,7 @@ if __name__ == '__main__':
     genscl = GenSupConLossv2(temperature=0.07, base_temperature=0.07)
 
 
-    model, optimizer, state = setup_model(model, optimizer, config)
+    model, optimizer, state = setup_model(model, config, optimizer)
 
 
     # Training loop

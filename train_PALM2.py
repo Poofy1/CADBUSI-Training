@@ -53,7 +53,7 @@ if __name__ == '__main__':
     
     
     # MODEL INIT
-    model, optimizer, state = setup_model(model, optimizer, config)
+    model, optimizer, state = setup_model(model, config, optimizer)
     palm.load_state(state['palm_path'])
 
     
