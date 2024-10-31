@@ -6,6 +6,8 @@ import plotly.graph_objects as go
 import plotly.io as pio
 import matplotlib.pyplot as plt
 from sklearn.metrics import roc_curve, precision_score, recall_score, f1_score, roc_auc_score, balanced_accuracy_score
+import seaborn as sns
+import pandas as pd
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
@@ -278,3 +280,87 @@ def calculate_metrics(targets, predictions, target_specificity=0.80, save_path="
     plt.close()
     
     print(f'Saved performace graphs to {save_path}')
+    
+    
+
+
+def get_worse_instances(targets, predictions, output_path='./'):
+    """
+    Analyze and identify poor performing instances from targets and predictions arrays
+    
+    Args:
+        targets: Array-like of ground truth labels (0 or 1)
+        predictions: Array-like of prediction probabilities (0 to 1)
+        output_path: Path to save the poor performing instances CSV
+    """
+    # Convert inputs to numpy arrays if they aren't already
+    targets = np.array(targets)
+    predictions = np.array(predictions)
+    
+    # Filter for only 0 and 1 targets
+    valid_mask = (targets == 0) | (targets == 1)
+    targets = targets[valid_mask]
+    predictions = predictions[valid_mask]
+    original_indices = np.where(valid_mask)[0]
+    
+    # 1. Analyze label distribution
+    unique_labels, label_counts = np.unique(targets, return_counts=True)
+    label_dist = dict(zip(unique_labels, label_counts))
+    
+    # Create subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+    
+    # Plot label distribution
+    ax1.bar(label_dist.keys(), label_dist.values())
+    ax1.set_title('Label Distribution')
+    ax1.set_xlabel('Label')
+    ax1.set_ylabel('Count')
+    
+    # Plot prediction distributions by label
+    for label in unique_labels:
+        label_preds = predictions[targets == label]
+        sns.kdeplot(data=label_preds, label=f'Label {label}', ax=ax2)
+    
+    ax2.set_title('Prediction Distribution by Label')
+    ax2.set_xlabel('Prediction Value')
+    ax2.set_ylabel('Density')
+    ax2.legend()
+    
+    plt.tight_layout()
+    plt.show()
+    
+    # Print summary statistics
+    print("\nLabel Distribution:")
+    for label, count in label_dist.items():
+        print(f"Label {label}: {count}")
+    
+    print("\nPrediction Statistics by Label:")
+    for label in unique_labels:
+        label_preds = predictions[targets == label]
+        print(f"\nLabel {label}:")
+        print(f"Mean: {np.mean(label_preds):.4f}")
+        print(f"Std: {np.std(label_preds):.4f}")
+        print(f"Min: {np.min(label_preds):.4f}")
+        print(f"Max: {np.max(label_preds):.4f}")
+
+    # Find poor performing instances
+    poor_performing_mask = (
+        ((targets == 0) & (predictions >= 0.9)) |
+        ((targets == 1) & (predictions <= 0.1))
+    )
+    
+    poor_performing_indices = original_indices[poor_performing_mask]
+    poor_performing_targets = targets[poor_performing_mask]
+    poor_performing_predictions = predictions[poor_performing_mask]
+    
+    # Create DataFrame and save to CSV
+    poor_performing_df = pd.DataFrame({
+        'index': poor_performing_indices,
+        'targets': poor_performing_targets,
+        'predictions': poor_performing_predictions
+    })
+    
+    
+    poor_performing_df.to_csv(f'{output_path}/worst_instances.csv', index=False)
+    print(f"\nPoor performing instances saved to: {f'{output_path}/worst_instances.csv'}")
+    print(f"Number of poor performing instances: {len(poor_performing_indices)}")
