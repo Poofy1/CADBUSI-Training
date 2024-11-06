@@ -27,7 +27,7 @@ class LesionDataConfig(BaseConfig):
         self.dataset_name = 'export_oneLesions'
         self.label_columns = ['Has_Malignant']
         self.instance_columns = ['Malignant Lesion Present']
-        self.img_size = 224
+        self.img_size = 300
         self.bag_batch_size = 8
         self.min_bag_size = 2
         self.max_bag_size = 25

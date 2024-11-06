@@ -67,15 +67,13 @@ def test_model(model, bag_dataloader, instance_dataloader):
 if __name__ == '__main__':
     # Get the parent directory
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    output_path = f'{current_dir}/results/RMIL_OOD/'
-    os.makedirs(output_path, exist_ok=True)
     
     # Config
     model_version = '3'
     head_name = "CADBUSI_R-MIL_64"
     data_config = LesionDataConfig #FishDataConfig or LesionDataConfig
     
-    
+    output_path = get_metrics_path(head_name, model_version)
     config = build_config(model_version, head_name, data_config)
     bags_train, bags_val = prepare_all_data(config)
     num_classes = len(config['label_columns']) + 1

@@ -118,40 +118,49 @@ class InstanceSampler(Sampler):
     def __init__(self, dataset, batch_size, strategy=1):
         self.dataset = dataset
         self.batch_size = batch_size
-        self.strategy = strategy
+        
+        # Get indices for each class
         self.indices_positive = [i for i, label in enumerate(self.dataset.final_labels) if label == 1]
         self.indices_negative = [i for i, label in enumerate(self.dataset.final_labels) if label == 0]
         self.indices_unknown = [i for i, label in enumerate(self.dataset.final_labels) if label == -1]
         self.indices_non_positive = self.indices_negative + self.indices_unknown
+        
+        # Number of positive samples determines the number of samples per class
+        self.samples_per_class = len(self.indices_positive)
+        
+        # Calculate total number of batches possible with balanced classes
+        self.total_samples = self.samples_per_class * 2  # multiply by 2 for pos and neg
+        self.total_batches = self.total_samples // self.batch_size
 
     def __iter__(self):
-        total_batches = len(self.dataset) // self.batch_size
-
-        for _ in range(total_batches):
-            if self.strategy == 1:
-                # Ensure at least one positive sample
-                num_positives = random.randint(1, max(1, min(len(self.indices_positive), self.batch_size - 1)))
-                num_others = self.batch_size - num_positives
-
-                batch_positives = random.sample(self.indices_positive, num_positives)
-                batch_others = random.sample(self.indices_non_positive, num_others)
-
-                batch = batch_positives + batch_others
-            elif self.strategy == 2:
-                # Aim for 50/50 balance between positive and non-positive (including unknown)
-                num_positives = self.batch_size // 2
-                num_others = self.batch_size - num_positives
-
-                batch_positives = random.sample(self.indices_positive, num_positives)
-                batch_others = random.sample(self.indices_non_positive, num_others)
-
-                batch = batch_positives + batch_others
-            else:
-                raise ValueError("Invalid strategy. Choose 1 or 2")
-
+        # Randomly sample from majority class to match minority class size
+        selected_non_positive = random.sample(self.indices_non_positive, self.samples_per_class)
+        
+        # Create balanced dataset
+        all_indices = self.indices_positive + selected_non_positive
+        
+        # Shuffle initially
+        random.shuffle(all_indices)
+        
+        # Create batches ensuring at least one positive sample per batch
+        for i in range(self.total_batches):
+            batch = []
+            remaining_size = self.batch_size
+            
+            # Ensure at least one positive sample
+            pos_sample = random.choice(self.indices_positive)
+            batch.append(pos_sample)
+            remaining_size -= 1
+            
+            # Fill rest of batch from shuffled indices, excluding the chosen positive sample
+            available_indices = [idx for idx in all_indices if idx != pos_sample]
+            batch.extend(random.sample(available_indices, remaining_size))
+            
+            # Final shuffle of the batch
             random.shuffle(batch)
+            
             yield batch
 
     def __len__(self):
-        return len(self.dataset) // self.batch_size
+        return self.total_batches
     
