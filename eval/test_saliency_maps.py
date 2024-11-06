@@ -14,7 +14,7 @@ from archs.model_PALM2_solo_saliency import *
 from data.bag_loader import *
 from data.instance_loader import *
 from PIL import ImageDraw, ImageFont
-
+from util.eval_util import *
 
 
 def unnormalize(tensor, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]):
@@ -38,8 +38,7 @@ if __name__ == '__main__':
     config = load_model_config(model_path)
 
     # Paths
-    output_path = f"{current_dir}/results/{head_name}_Map/"
-    mkdir(output_path, exist_ok=True)
+    output_path = get_metrics_path(head_name, model_version)
 
     # Get Training Data
     bags_train, bags_val = prepare_all_data(config)

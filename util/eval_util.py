@@ -5,7 +5,7 @@ from sklearn.manifold import TSNE
 import plotly.graph_objects as go
 import plotly.io as pio
 import matplotlib.pyplot as plt
-from sklearn.metrics import roc_curve, precision_score, recall_score, f1_score, roc_auc_score, balanced_accuracy_score
+from sklearn.metrics import roc_curve, confusion_matrix, precision_score, recall_score, f1_score, roc_auc_score, balanced_accuracy_score
 import seaborn as sns
 import pandas as pd
 
@@ -13,7 +13,38 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 
 
+def plot_Confusion(all_targs, all_preds, vocab, file_path):
+    # Convert to numpy arrays if they aren't already
+    all_preds_np = np.array(all_preds) if isinstance(all_preds, list) else all_preds
+    all_targs_np = np.array(all_targs) if isinstance(all_targs, list) else all_targs
+    
+    # Threshold the predictions
+    all_preds_binary = (all_preds_np > 0.5).astype(int)
+    
+    # Compute the confusion matrix
+    cm = confusion_matrix(all_targs_np, all_preds_binary)
+    
+    # Normalize the confusion matrix by the total number of predictions
+    cm_normalized = cm.astype('float') / cm.sum()
+    
+    # Create a new figure
+    fig, ax = plt.subplots(figsize=(8, 6))
 
+    # Plot the normalized confusion matrix
+    sns.heatmap(cm_normalized, annot=True, fmt=".3f", cmap='Blues', 
+                xticklabels=vocab, yticklabels=vocab, ax=ax)
+    
+    # Invert the y-axis to make it display correctly
+    ax.invert_yaxis()
+
+    # Set labels and title
+    ax.set_xlabel('Predicted labels')
+    ax.set_ylabel('True labels')
+    ax.set_title('Validation Confusion Matrix')
+
+    # Save the figure
+    fig.savefig(file_path)
+    plt.close(fig)
 
 
 
@@ -115,13 +146,33 @@ def calculate_ood_stats(distances_1, distances_2):
     return threshold, ood_percentage
 
 
+def get_metrics_path(head_name, version = None):
+    
+    if version:
+        output_path = f'{parent_dir}/models/{head_name}/{version}/evaluation/'
+    else:
+        output_path = f'{parent_dir}/models/{head_name}/evaluation/'
+    
+    os.makedirs(output_path, exist_ok=True)
+    
+    return output_path
 
 
 def calculate_metrics(targets, predictions, target_specificity=0.80, save_path="./"):
     # Create directory if it doesn't exist
     os.makedirs(save_path, exist_ok=True)
     
-    # Fiolter out non 0/1 classes
+    # Convert PyTorch tensors to numpy arrays if needed
+    if torch.is_tensor(targets):
+        targets = targets.cpu().numpy()
+    if torch.is_tensor(predictions):
+        predictions = predictions.cpu().numpy()
+    
+    # Ensure we're working with numpy arrays
+    targets = np.array(targets)
+    predictions = np.array(predictions)
+    
+    # Filter out non 0/1 classes
     binary_indices = np.where((targets == 0) | (targets == 1))[0]
     targets = targets[binary_indices]
     predictions = predictions[binary_indices]
@@ -146,18 +197,7 @@ def calculate_metrics(targets, predictions, target_specificity=0.80, save_path="
     default_ppv = TP / (TP + FP) if (TP + FP) != 0 else 0
     default_npv = TN / (TN + FN) if (TN + FN) != 0 else 0
     
-    # Print basic metrics
-    print("Basic Metrics:")
-    print(f"* Accuracy: {accuracy:.2%}")
-    print(f"* AUC: {auc:.2%}")
-    print(f"* Sensitivity: {default_sens:.2%}")
-    print(f"* Specificity: {default_spec:.2%}")
-    print(f"* PPV: {default_ppv:.2%}")
-    print(f"* NPV: {default_npv:.2%}")
-    print(f"* Threshold: 0.50")
-    print(f"* Precision: {precision:.2%}")
-    print(f"* Recall: {recall:.2%}")
-    print(f"* F1 Score: {f1:.2%}")
+
     
     # Detailed threshold analysis
     thresholds = np.linspace(0, 1, 1000)
@@ -198,24 +238,39 @@ def calculate_metrics(targets, predictions, target_specificity=0.80, save_path="
             best_specificity = spec
             best_ppv = ppv
             best_npv = npv
-    
-    print("\nBest Accuracy Threshold Metrics:")
-    print(f"* Accuracy: {best_accuracy:.2%}")
-    print(f"* Sensitivity: {best_sensitivity:.2%}")
-    print(f"* Specificity: {best_specificity:.2%}")
-    print(f"* PPV: {best_ppv:.2%}")
-    print(f"* NPV: {best_npv:.2%}")
-    print(f"* Threshold: {best_threshold:.2f}")
-    
-    if target_metrics:
-        print(f"\nTarget Specificity ({target_specificity:.0%}) Threshold Metrics:")
-        print(f"* Accuracy: {target_metrics[0]:.2%}")
-        print(f"* Sensitivity: {target_metrics[1]:.2%}")
-        print(f"* Specificity: {target_metrics[2]:.2%}")
-        print(f"* PPV: {target_metrics[3]:.2%}")
-        print(f"* NPV: {target_metrics[4]:.2%}")
-        print(f"* Threshold: {target_threshold:.2f}")
-    
+
+    with open(f"{save_path}/performance.txt", 'w') as f:
+        f.write("Basic Metrics:\n")
+        f.write(f"* Accuracy: {accuracy:.2%}\n")
+        f.write(f"* AUC: {auc:.2%}\n")
+        f.write(f"* Sensitivity: {default_sens:.2%}\n")
+        f.write(f"* Specificity: {default_spec:.2%}\n")
+        f.write(f"* PPV: {default_ppv:.2%}\n")
+        f.write(f"* NPV: {default_npv:.2%}\n")
+        f.write(f"* Threshold: 0.50\n")
+        f.write(f"* Precision: {precision:.2%}\n")
+        f.write(f"* Recall: {recall:.2%}\n")
+        f.write(f"* F1 Score: {f1:.2%}\n\n")
+        
+        f.write("Best Accuracy Threshold Metrics:\n")
+        f.write(f"* Accuracy: {best_accuracy:.2%}\n")
+        f.write(f"* Sensitivity: {best_sensitivity:.2%}\n")
+        f.write(f"* Specificity: {best_specificity:.2%}\n")
+        f.write(f"* PPV: {best_ppv:.2%}\n")
+        f.write(f"* NPV: {best_npv:.2%}\n")
+        f.write(f"* Threshold: {best_threshold:.2f}\n\n")
+        
+        if target_metrics:
+            f.write(f"Target Specificity ({target_specificity:.0%}) Threshold Metrics:\n")
+            f.write(f"* Accuracy: {target_metrics[0]:.2%}\n")
+            f.write(f"* Sensitivity: {target_metrics[1]:.2%}\n")
+            f.write(f"* Specificity: {target_metrics[2]:.2%}\n")
+            f.write(f"* PPV: {target_metrics[3]:.2%}\n")
+            f.write(f"* NPV: {target_metrics[4]:.2%}\n")
+            f.write(f"* Threshold: {target_threshold:.2f}\n")
+
+    # Plot confusion matrix
+    plot_Confusion(targets, predictions, ['Negitive', 'Positive'], f"{save_path}/confusion_matrix.png")
     
     # Plot Performance Metrics
     plt.figure(figsize=(8, 8))
@@ -279,7 +334,8 @@ def calculate_metrics(targets, predictions, target_specificity=0.80, save_path="
     plt.savefig(f"{save_path}/AUC_graph.png")
     plt.close()
     
-    print(f'Saved performace graphs to {save_path}')
+    
+    get_worse_instances(targets, predictions, save_path)
     
     
 
@@ -324,24 +380,13 @@ def get_worse_instances(targets, predictions, output_path='./'):
     ax2.set_title('Prediction Distribution by Label')
     ax2.set_xlabel('Prediction Value')
     ax2.set_ylabel('Density')
+    ax2.set_xlim(0, 1)  # Set x-axis limits to 0-1
     ax2.legend()
     
     plt.tight_layout()
-    plt.show()
+    plt.savefig(f'{output_path}/distribution_analysis.png')
+    plt.close()  # Close the figure to free memory
     
-    # Print summary statistics
-    print("\nLabel Distribution:")
-    for label, count in label_dist.items():
-        print(f"Label {label}: {count}")
-    
-    print("\nPrediction Statistics by Label:")
-    for label in unique_labels:
-        label_preds = predictions[targets == label]
-        print(f"\nLabel {label}:")
-        print(f"Mean: {np.mean(label_preds):.4f}")
-        print(f"Std: {np.std(label_preds):.4f}")
-        print(f"Min: {np.min(label_preds):.4f}")
-        print(f"Max: {np.max(label_preds):.4f}")
 
     # Find poor performing instances
     poor_performing_mask = (
@@ -362,5 +407,16 @@ def get_worse_instances(targets, predictions, output_path='./'):
     
     
     poor_performing_df.to_csv(f'{output_path}/worst_instances.csv', index=False)
-    print(f"\nPoor performing instances saved to: {f'{output_path}/worst_instances.csv'}")
-    print(f"Number of poor performing instances: {len(poor_performing_indices)}")
+    #print(f"Number of poor performing instances: {len(poor_performing_indices)}")
+    
+    
+    
+    
+def save_metrics(config, state, train_targets, train_pred, val_targets, val_pred, mode = 'instance'):
+    
+    model_version = None
+    if not state['warmup']: model_version = config['model_version']
+    
+    output_path = get_metrics_path(config['head_name'], model_version)
+    calculate_metrics(train_targets, train_pred, save_path=f'{output_path}/{mode}_metrics_train/')
+    calculate_metrics(val_targets, val_pred, save_path=f'{output_path}/{mode}_metrics_val/')
