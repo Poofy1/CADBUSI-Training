@@ -53,7 +53,7 @@ def save_accuracy_to_file(epoch, train_acc, val_acc, label_columns, file_path):
     
 
 
-def save_state(state, config, train_acc, val_loss, val_acc, bagmodel, optimizer, all_targs = [], all_preds = [], classifier=None, palm = None):
+def save_state(state, config, train_acc, val_loss, val_acc, bagmodel, optimizer, classifier=None, palm = None):
     if state['warmup']:
         model_folder = state['head_folder']
     else:
@@ -65,7 +65,6 @@ def save_state(state, config, train_acc, val_loss, val_acc, bagmodel, optimizer,
     stats_path = f"{model_folder}/stats.pkl"
     
     label_columns = config['label_columns']
-    e = state['epoch']
     train_losses_over_epochs = state['train_losses']
     valid_losses_over_epochs = state['valid_losses']
 
@@ -89,7 +88,7 @@ def save_state(state, config, train_acc, val_loss, val_acc, bagmodel, optimizer,
     # Save updated stats with all_fpr and all_tpr
     with open(stats_path, 'wb') as f:
         pickle.dump({
-            'epoch': e + 1,
+            'epoch': state['epoch'] + 1,
             'train_losses': train_losses_over_epochs,
             'valid_losses': valid_losses_over_epochs,
             'val_loss': val_loss,
@@ -111,7 +110,7 @@ def save_state(state, config, train_acc, val_loss, val_acc, bagmodel, optimizer,
             
     # Save the plots
     plot_loss(train_losses_over_epochs, valid_losses_over_epochs, f"{model_folder}/loss.png")
-    save_accuracy_to_file(e, train_acc, val_acc, label_columns, f"{model_folder}/{state['mode']}_accuracy.txt")
+    save_accuracy_to_file(state['epoch'], train_acc, val_acc, label_columns, f"{model_folder}/{state['mode']}_accuracy.txt")
         
         
 

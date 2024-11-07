@@ -1,3 +1,5 @@
+import matplotlib
+matplotlib.use('Agg')
 import torch
 import os
 import numpy as np
@@ -157,26 +159,7 @@ def get_metrics_path(head_name, version = None):
     
     return output_path
 
-
-def calculate_metrics(targets, predictions, target_specificity=0.80, save_path="./"):
-    # Create directory if it doesn't exist
-    os.makedirs(save_path, exist_ok=True)
-    
-    # Convert PyTorch tensors to numpy arrays if needed
-    if torch.is_tensor(targets):
-        targets = targets.cpu().numpy()
-    if torch.is_tensor(predictions):
-        predictions = predictions.cpu().numpy()
-    
-    # Ensure we're working with numpy arrays
-    targets = np.array(targets)
-    predictions = np.array(predictions)
-    
-    # Filter out non 0/1 classes
-    binary_indices = np.where((targets == 0) | (targets == 1))[0]
-    targets = targets[binary_indices]
-    predictions = predictions[binary_indices]
-    
+def evaluate_model_performance(targets, predictions, target_specificity, save_path):
     # Basic metrics
     pred_class = (predictions >= 0.5).astype(int)  # Threshold for basic metrics
     accuracy = balanced_accuracy_score(targets, pred_class)
@@ -268,9 +251,6 @@ def calculate_metrics(targets, predictions, target_specificity=0.80, save_path="
             f.write(f"* PPV: {target_metrics[3]:.2%}\n")
             f.write(f"* NPV: {target_metrics[4]:.2%}\n")
             f.write(f"* Threshold: {target_threshold:.2f}\n")
-
-    # Plot confusion matrix
-    plot_Confusion(targets, predictions, ['Negitive', 'Positive'], f"{save_path}/confusion_matrix.png")
     
     # Plot Performance Metrics
     plt.figure(figsize=(8, 8))
@@ -286,7 +266,8 @@ def calculate_metrics(targets, predictions, target_specificity=0.80, save_path="
     plt.grid(True)
     plt.savefig(f"{save_path}/Performance_metrics_graph.png")
     plt.close()
-
+    
+    
     # Plot ROC Curve
     fpr, tpr, roc_thresholds = roc_curve(targets, predictions)
     
@@ -335,30 +316,55 @@ def calculate_metrics(targets, predictions, target_specificity=0.80, save_path="
     plt.close()
     
     
+    
+    
+            
+def calculate_metrics(targets, predictions, target_specificity=0.80, save_path="./"):
+    # Create directory if it doesn't exist
+    os.makedirs(save_path, exist_ok=True)
+    
+    # Convert PyTorch tensors to numpy arrays if needed
+    if torch.is_tensor(targets):
+        targets = targets.cpu().numpy()
+    if torch.is_tensor(predictions):
+        predictions = predictions.cpu().numpy()
+    
+    # Ensure we're working with numpy arrays
+    targets = np.array(targets)
+    predictions = np.array(predictions)
+    
+    # Label/Pred Dist before filtering 0/1 classes
+    plot_distribution_analysis(targets, predictions, save_path)
+    
+    # Filter out non 0/1 classes
+    binary_indices = np.where((targets == 0) | (targets == 1))[0]
+    targets = targets[binary_indices]
+    predictions = predictions[binary_indices]
+    
+    # Collect worst performing labels
     get_worse_instances(targets, predictions, save_path)
     
+    evaluate_model_performance(targets, predictions, target_specificity, save_path)
+
+    # Plot confusion matrix
+    plot_Confusion(targets, predictions, ['Negitive', 'Positive'], f"{save_path}/confusion_matrix.png")
     
-
-
-def get_worse_instances(targets, predictions, output_path='./'):
+    
+    
+    
+def plot_distribution_analysis(targets, predictions, output_path='./'):
     """
-    Analyze and identify poor performing instances from targets and predictions arrays
+    Visualize the distribution of targets and predictions
     
     Args:
         targets: Array-like of ground truth labels (0 or 1)
         predictions: Array-like of prediction probabilities (0 to 1)
-        output_path: Path to save the poor performing instances CSV
+        output_path: Path to save the distribution analysis plot
     """
     # Convert inputs to numpy arrays if they aren't already
     targets = np.array(targets)
     predictions = np.array(predictions)
-    
-    # Filter for only 0 and 1 targets
-    valid_mask = (targets == 0) | (targets == 1)
-    targets = targets[valid_mask]
-    predictions = predictions[valid_mask]
-    original_indices = np.where(valid_mask)[0]
-    
+
     # 1. Analyze label distribution
     unique_labels, label_counts = np.unique(targets, return_counts=True)
     label_dist = dict(zip(unique_labels, label_counts))
@@ -386,7 +392,21 @@ def get_worse_instances(targets, predictions, output_path='./'):
     plt.tight_layout()
     plt.savefig(f'{output_path}/distribution_analysis.png')
     plt.close()  # Close the figure to free memory
+
+def get_worse_instances(targets, predictions, output_path='./'):
+    """
+    Analyze and identify poor performing instances from targets and predictions arrays
     
+    Args:
+        targets: Array-like of ground truth labels (0 or 1)
+        predictions: Array-like of prediction probabilities (0 to 1)
+        output_path: Path to save the poor performing instances CSV
+    """
+    # Filter for only 0 and 1 targets
+    valid_mask = (targets == 0) | (targets == 1)
+    targets = targets[valid_mask]
+    predictions = predictions[valid_mask]
+    original_indices = np.where(valid_mask)[0]
 
     # Find poor performing instances
     poor_performing_mask = (
@@ -412,11 +432,17 @@ def get_worse_instances(targets, predictions, output_path='./'):
     
     
     
-def save_metrics(config, state, train_targets, train_pred, val_targets, val_pred, mode = 'instance'):
+def save_metrics(config, state, train_targets, train_pred, val_targets, val_pred):
     
+    # Concatenate all validation predictions and targets
+    train_targets = torch.cat(train_targets, dim=0)
+    train_pred = torch.cat(train_pred, dim=0)
+    val_targets = torch.cat(val_targets, dim=0)
+    val_pred = torch.cat(val_pred, dim=0)
+            
     model_version = None
     if not state['warmup']: model_version = config['model_version']
     
     output_path = get_metrics_path(config['head_name'], model_version)
-    calculate_metrics(train_targets, train_pred, save_path=f'{output_path}/{mode}_metrics_train/')
-    calculate_metrics(val_targets, val_pred, save_path=f'{output_path}/{mode}_metrics_val/')
+    calculate_metrics(train_targets, train_pred, save_path=f'{output_path}/{state["mode"]}_metrics_train/')
+    calculate_metrics(val_targets, val_pred, save_path=f'{output_path}/{state["mode"]}_metrics_val/')

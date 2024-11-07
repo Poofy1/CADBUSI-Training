@@ -8,6 +8,7 @@ from torch.optim import Adam
 from data.format_data import *
 from archs.model_ABMIL import *
 from data.bag_loader import *
+from util.eval_util import *
 from config import *
 env = os.path.dirname(os.path.abspath(__file__))
 torch.backends.cudnn.benchmark = True
@@ -73,24 +74,32 @@ if __name__ == '__main__':
         total_acc = 0
         total = 0
         correct = [0] * num_labels
+        train_pred = []
+        train_targets = []
+                
+                
         for (data, yb, instance_yb, id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)): 
             xb, yb = data, yb.cuda()
             
             optimizer.zero_grad()
             
-            outputs, _, _, _ = model(xb)
+            bag_pred, _, _, _ = model(xb)
 
-            loss = loss_func(outputs, yb)
+            loss = loss_func(bag_pred, yb)
 
             loss.backward()
             optimizer.step()
 
             total_loss += loss.item() * len(xb)
-            predicted = (outputs > .5).float()
+            predicted = (bag_pred > .5).float()
             total += yb.size(0)
             
             for label_idx in range(num_labels):
                 correct[label_idx] += (predicted[:, label_idx] == yb[:, label_idx]).sum().item()
+                
+            # Store raw predictions and targets
+            train_pred.append(bag_pred.cpu().detach())
+            train_targets.append(yb.cpu().detach())
             
         train_loss = total_loss / total
         train_acc = [total_correct / total for total_correct in correct]
@@ -102,8 +111,9 @@ if __name__ == '__main__':
         total_val_acc = 0.0
         total = 0
         correct = [0] * num_labels
-        all_targs = []
-        all_preds = []
+        val_pred = []
+        val_targets = []
+            
         with torch.no_grad():
             for (data, yb, instance_yb, id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
                 xb, yb = data, yb.cuda()
@@ -120,11 +130,9 @@ if __name__ == '__main__':
                 for label_idx in range(num_labels):
                     correct[label_idx] += (predicted[:, label_idx] == yb[:, label_idx]).sum().item()
                 
-                # Confusion Matrix data
-                all_targs.extend(yb.cpu().numpy())
-                if len(predicted.size()) == 0:
-                    predicted = predicted.view(1)
-                all_preds.extend(predicted.cpu().detach().numpy())
+                # Store raw predictions and targets
+                val_pred.append(bag_pred.cpu().detach())
+                val_targets.append(yb.cpu().detach())
 
         val_loss = total_val_loss / total
         val_acc = [total_correct / total for total_correct in correct]
@@ -151,5 +159,8 @@ if __name__ == '__main__':
         # Save the model
         if val_loss < state['val_loss_bag']:
             state['val_loss_bag'] = val_loss  # Update the best validation accuracy
-            save_state(state, config, train_acc, val_loss, val_acc, model, optimizer)
+            state['mode'] = 'bag'
+
+            save_state(state, config, train_acc, val_loss, val_acc, model, optimizer,)
+            save_metrics(config, state, train_targets, train_pred, val_targets, val_pred)
             print("Saved checkpoint due to improved val_loss")

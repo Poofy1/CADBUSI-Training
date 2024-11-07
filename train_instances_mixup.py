@@ -132,10 +132,7 @@ if __name__ == '__main__':
             # Calculate training accuracy
             instance_train_acc = instance_total_correct / total_samples
             
-            # Concatenate all training predictions and targets
-            train_pred = torch.cat(train_pred, dim=0)
-            train_targets = torch.cat(train_targets, dim=0)
-            
+
             # Validation loop
             model.eval()
             instance_total_correct = 0
@@ -173,20 +170,18 @@ if __name__ == '__main__':
             # Calculate validation accuracy
             instance_val_acc = instance_total_correct / total_samples
             
-            # Concatenate all validation predictions and targets
-            val_pred = torch.cat(val_pred, dim=0)
-            val_targets = torch.cat(val_targets, dim=0)
-            
             print(f'[{iteration+1}/{target_count}] Train Loss: {losses.avg:.5f}, Train FC Acc: {instance_train_acc:.5f}')
             print(f'[{iteration+1}/{target_count}] Val Loss:   {val_losses.avg:.5f}, Val FC Acc: {instance_val_acc:.5f}')
             
-            save_metrics(config, state, train_targets, train_pred, val_targets, val_pred, mode = 'instance')
+            
                     
             # Save the model
             if val_losses.avg < state['val_loss_instance']:
                 state['val_loss_instance'] = val_losses.avg
+                state['mode'] = 'instance'
                 
                 save_state(state, config, instance_train_acc, val_losses.avg, instance_val_acc, model, optimizer)
+                save_metrics(config, state, train_targets, train_pred, val_targets, val_pred)
                 print("Saved checkpoint due to improved val_loss_instance")
         
         

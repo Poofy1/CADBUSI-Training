@@ -11,6 +11,7 @@ from archs.model_PALM2_solo import *
 from data.bag_loader import *
 from data.instance_loader import *
 from loss.FocalLoss import *
+from util.eval_util import *
 from config import *
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -22,7 +23,7 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "Instance_testing"
+    head_name = "Instance_testing_focal"
     data_config = LesionDataConfig  # or LesionDataConfig
     
     config = build_config(model_version, head_name, data_config)
@@ -36,8 +37,8 @@ if __name__ == '__main__':
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
     
     # LOSS INIT
-    criterion = nn.BCELoss()
-    #criterion = FocalLoss(alpha=4, gamma=2).cuda()
+    #criterion = nn.BCELoss()
+    criterion = FocalLoss(alpha=1, gamma=2).cuda()
     
     optimizer = optim.SGD(model.parameters(),
                         lr=config['learning_rate'],
@@ -75,6 +76,8 @@ if __name__ == '__main__':
             instance_total_correct = 0
             total_samples = 0
             model.train()
+            train_pred = []
+            train_targets = []
             
             # Iterate over the training data
             for idx, (images, instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
@@ -102,17 +105,21 @@ if __name__ == '__main__':
                 correct = (predicted == instance_labels).float()
                 instance_total_correct += correct.sum().item()
                 total_samples += instance_labels.numel()
+                
+                # Store raw predictions and targets
+                train_pred.append(instance_predictions.cpu().detach())
+                train_targets.append(instance_labels.cpu().detach())
 
             # Calculate accuracies
             instance_train_acc = instance_total_correct / total_samples
-                            
-            
             
             # Validation loop
             model.eval()
             instance_total_correct = 0
             total_samples = 0
             val_losses = AverageMeter()
+            val_pred = []
+            val_targets = []
 
             with torch.no_grad():
                 for idx, (images, instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_val, total=len(instance_dataloader_val))):
@@ -127,12 +134,16 @@ if __name__ == '__main__':
                     loss_value = criterion(instance_predictions, instance_labels.float())
                     total_loss = loss_value
                     val_losses.update(total_loss.item(), images[0].size(0))
-                    print(instance_predictions)
+
                     # Calculate correct predictions
                     predicted = (instance_predictions > 0.5).float()  # Assuming 0.5 as threshold
                     correct = (predicted == instance_labels).float()
                     instance_total_correct += correct.sum().item()
                     total_samples += instance_labels.numel()
+                    
+                    # Store raw predictions and targets
+                    val_pred.append(instance_predictions.cpu().detach())
+                    val_targets.append(instance_labels.cpu().detach())
 
             # Calculate accuracies
             instance_val_acc = instance_total_correct / total_samples
@@ -143,7 +154,9 @@ if __name__ == '__main__':
             # Save the model
             if val_losses.avg < state['val_loss_instance']:
                 state['val_loss_instance'] = val_losses.avg
+                state['mode'] = 'instance'
                 
                 save_state(state, config, instance_train_acc, val_losses.avg, instance_val_acc, model, optimizer)
+                save_metrics(config, state, train_targets, train_pred, val_targets, val_pred)
                 print("Saved checkpoint due to improved val_loss_instance")
 

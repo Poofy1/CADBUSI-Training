@@ -12,6 +12,7 @@ from archs.model_GenSCL import *
 from data.bag_loader import *
 from data.instance_loader import *
 from loss.genSCL import GenSupConLossv2
+from util.eval_util import *
 from config import *
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -82,6 +83,7 @@ if __name__ == '__main__':
             model.train()
             for iteration in range(target_count): 
                 losses = AverageMeter()
+                
 
                 # Iterate over the training data
                 for idx, (images, instance_labels, unique_ids) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
@@ -149,31 +151,37 @@ if __name__ == '__main__':
             total_acc = 0
             total = 0
             correct = 0
+            train_pred = []
+            train_targets = []
 
             for (data, yb, instance_yb, id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)):
                 xb, yb = data, yb.cuda()
             
                 optimizer.zero_grad()
                 
-                outputs, instance_pred, _ = model(xb, pred_on = True)
+                bag_pred, instance_pred, _ = model(xb, pred_on = True)
                 #print(outputs)
                 #print(yb)
-                outputs = torch.clamp(outputs, 0, 1) # temp fix
+                bag_pred = torch.clamp(bag_pred, 0, 1) # temp fix
                 
                 # Calculate bag-level loss
-                loss = BCE_loss(outputs, yb)
+                loss = BCE_loss(bag_pred, yb)
 
                 loss.backward()
                 optimizer.step()
 
                 total_loss += loss.item() * yb.size(0)
-                predicted = (outputs > 0.5).float()
+                predicted = (bag_pred > 0.5).float()
                 total += yb.size(0)
                 correct += (predicted == yb).sum().item()
                 
                 for instance_id, bag_id in enumerate(id):
                     train_bag_logits[bag_id] = instance_pred[instance_id].detach().cpu().numpy()
 
+                # Store raw predictions and targets
+                train_pred.append(bag_pred.cpu().detach())
+                train_targets.append(yb.cpu().detach())
+                
             train_loss = total_loss / total
             train_acc = correct / total
 
@@ -183,8 +191,8 @@ if __name__ == '__main__':
             total_val_acc = 0.0
             total = 0
             correct = 0
-            all_targs = []
-            all_preds = []
+            val_pred = []
+            val_targets = []
 
             with torch.no_grad():
                 for (data, yb, instance_yb, id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
@@ -202,11 +210,9 @@ if __name__ == '__main__':
                     total += yb.size(0)
                     correct += (predicted == yb).sum().item()
 
-                    # Confusion Matrix data
-                    all_targs.extend(yb.cpu().numpy())
-                    if len(predicted.size()) == 0:
-                        predicted = predicted.view(1)
-                    all_preds.extend(predicted.cpu().detach().numpy())
+                    # Store raw predictions and targets
+                    val_pred.append(bag_pred.cpu().detach())
+                    val_targets.append(yb.cpu().detach())
             
 
             val_loss = total_val_loss / total
@@ -222,13 +228,10 @@ if __name__ == '__main__':
             # Save the model
             if val_loss < state['val_loss_bag']:
                 state['val_loss_bag'] = val_loss
-                if state['warmup']:
-                    target_folder = state['head_folder']
-                else:
-                    target_folder = state['model_folder']
+                state['mode'] = 'bag'
 
-                
-                save_state(state, config, train_acc, val_loss, val_acc, model, optimizer, all_targs, all_preds)
+                save_state(state, config, train_acc, val_loss, val_acc, model, optimizer,)
+                save_metrics(config, state, train_targets, train_pred, val_targets, val_pred)
                 print("Saved checkpoint due to improved val_loss_bag")
 
                 
@@ -240,6 +243,11 @@ if __name__ == '__main__':
                 state['selection_mask'] = create_selection_mask(train_bag_logits, predictions_ratio)
                 print("Created new sudo labels")
                 
+                if state['warmup']:
+                    target_folder = state['head_folder']
+                else:
+                    target_folder = state['model_folder']
+                    
                 # Save selection
                 with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
                     pickle.dump(state['selection_mask'], file)

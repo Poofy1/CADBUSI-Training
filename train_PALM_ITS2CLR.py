@@ -12,6 +12,7 @@ from archs.model_PALM import *
 from data.bag_loader import *
 from data.instance_loader import *
 from loss.palm import PALM
+from util.eval_util import *
 from config import *
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -90,6 +91,8 @@ if __name__ == '__main__':
                 total_correct = 0
                 total_samples = 0
                 model.train()
+                train_pred = []
+                train_targets = []
                 
                 # Iterate over the training data
                 for idx, (images, instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
@@ -113,12 +116,16 @@ if __name__ == '__main__':
                     
                     # Get predictions from PALM
                     with torch.no_grad():
-                        predicted_classes, dist = palm.predict(features)
+                        instance_predictions, dist = palm.predict(features)
 
                     # Calculate accuracy
-                    correct = (predicted_classes == instance_labels).sum().item()
+                    correct = (instance_predictions == instance_labels).sum().item()
                     total_correct += correct
                     total_samples += instance_labels.size(0)
+                    
+                    # Store raw predictions and targets
+                    train_pred.append(instance_predictions.cpu().detach())
+                    train_targets.append(instance_labels.cpu().detach())
 
                 instance_train_acc = total_correct / total_samples
                 
@@ -129,6 +136,8 @@ if __name__ == '__main__':
                 val_losses = AverageMeter()
                 val_total_correct = 0
                 val_total_samples = 0
+                val_pred = []
+                val_targets = []
 
                 with torch.no_grad():
                     for idx, (images, instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_val, total=len(instance_dataloader_val))):
@@ -144,12 +153,16 @@ if __name__ == '__main__':
                         val_losses.update(total_loss.item(), images[0].size(0))
 
                         # Get predictions from PALM
-                        predicted_classes, _ = palm.predict(features)
+                        instance_predictions, _ = palm.predict(features)
 
                         # Calculate accuracy
-                        correct = (predicted_classes == instance_labels).sum().item()
+                        correct = (instance_predictions == instance_labels).sum().item()
                         val_total_correct += correct
                         val_total_samples += instance_labels.size(0)
+                        
+                        # Store raw predictions and targets
+                        val_pred.append(instance_predictions.cpu().detach())
+                        val_targets.append(instance_labels.cpu().detach())
 
                 instance_val_acc = val_total_correct / val_total_samples
                 
@@ -159,6 +172,8 @@ if __name__ == '__main__':
                 # Save the model
                 if val_losses.avg < state['val_loss_instance']:
                     state['val_loss_instance'] = val_losses.avg
+                    state['mode'] = 'instance'
+                    save_metrics(config, state, train_targets, train_pred, val_targets, val_pred)
                     
                     if state['warmup']:
                         save_state(state, config, instance_train_acc, val_losses.avg, instance_val_acc, model, optimizer)
@@ -183,27 +198,33 @@ if __name__ == '__main__':
             total_acc = 0
             total = 0
             correct = 0
+            train_pred = []
+            train_targets = []
 
             for (data, yb, instance_yb, id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)):
                 xb, yb = data, yb.cuda()
             
                 optimizer.zero_grad()
                 
-                outputs, instance_pred, _ = model(xb, pred_on = True)
+                bag_pred, instance_pred, _ = model(xb, pred_on = True)
                 
                 # Calculate bag-level loss
-                loss = BCE_loss(outputs, yb)
+                loss = BCE_loss(bag_pred, yb)
 
                 loss.backward()
                 optimizer.step()
 
                 total_loss += loss.item() * yb.size(0)
-                predicted = (outputs > 0.5).float()
+                predicted = (bag_pred > 0.5).float()
                 total += yb.size(0)
                 correct += (predicted == yb).sum().item()
                 
                 for instance_id, bag_id in enumerate(id):
                     train_bag_logits[bag_id] = instance_pred[instance_id].detach().cpu().numpy()
+                    
+                # Store raw predictions and targets
+                train_pred.append(bag_pred.cpu().detach())
+                train_targets.append(yb.cpu().detach())
 
             train_loss = total_loss / total
             train_acc = correct / total
@@ -214,8 +235,8 @@ if __name__ == '__main__':
             total_val_acc = 0.0
             total = 0
             correct = 0
-            all_targs = []
-            all_preds = []
+            val_pred = []
+            val_targets = []
 
             with torch.no_grad():
                 for (data, yb, instance_yb, id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
@@ -232,11 +253,9 @@ if __name__ == '__main__':
                     total += yb.size(0)
                     correct += (predicted == yb).sum().item()
 
-                    # Confusion Matrix data
-                    all_targs.extend(yb.cpu().numpy())
-                    if len(predicted.size()) == 0:
-                        predicted = predicted.view(1)
-                    all_preds.extend(predicted.cpu().detach().numpy())
+                    # Store raw predictions and targets
+                    val_pred.append(bag_pred.cpu().detach())
+                    val_targets.append(yb.cpu().detach())
             
 
             val_loss = total_val_loss / total
@@ -258,13 +277,16 @@ if __name__ == '__main__':
             # Save the model
             if val_loss < state['val_loss_bag']:
                 state['val_loss_bag'] = val_loss
+                state['mode'] = 'bag'
+                
                 if state['warmup']:
                     target_folder = state['head_folder']
                 else:
                     target_folder = state['model_folder']
 
                 
-                save_state(state, config, train_acc, val_loss, val_acc, model, optimizer, all_targs, all_preds)
+                save_state(state, config, train_acc, val_loss, val_acc, model, optimizer,)
+                save_metrics(config, state, train_targets, train_pred, val_targets, val_pred)
                 palm.save_state(os.path.join(target_folder, "palm_state.pkl"))
                 print("Saved checkpoint due to improved val_loss_bag")
 
