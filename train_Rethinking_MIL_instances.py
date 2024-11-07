@@ -11,6 +11,7 @@ from archs.model_INS import *
 from data.bag_loader import *
 from data.instance_loader import *
 from config import *
+from util.eval_util import *
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
@@ -94,6 +95,8 @@ if __name__ == '__main__':
                 
                 train_iwscl_loss_total = AverageMeter()
                 train_ce_loss_total = AverageMeter()
+                train_pred = []
+                train_targets = []
                 
                 # Iterate over the training data
                 for idx, ((im_q, im_k), instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
@@ -108,7 +111,7 @@ if __name__ == '__main__':
                     
                     
                     # Calculate loss
-                    ce_loss = CE_crit(instance_predictions, pseudo_labels.float()) * .01
+                    ce_loss = CE_crit(instance_predictions, pseudo_labels.float()) * .1
                     total_loss = ce_loss + iwscl_loss
                     
                     # Backward pass and optimization step
@@ -133,13 +136,15 @@ if __name__ == '__main__':
                         instance_correct = (instance_predicted_classes == valid_labels).sum().item()
                         instance_total_correct += instance_correct
                         total_samples += valid_mask.sum().item()
+                        
+                    # Store raw predictions and targets
+                    train_pred.append(instance_predictions.cpu().detach())
+                    train_targets.append(instance_labels.cpu().detach())
 
                 # Calculate accuracies
                 palm_train_acc = palm_total_correct / total_samples
                 instance_train_acc = instance_total_correct / total_samples
-                                
-                
-                
+
                 # Validation loop
                 model.eval()
                 palm_total_correct = 0
@@ -148,6 +153,10 @@ if __name__ == '__main__':
                 val_iwscl_loss_total = AverageMeter()
                 val_ce_loss_total = AverageMeter()
                 val_losses = AverageMeter()
+                
+                # Initialize lists to store validation predictions and targets
+                val_pred = []
+                val_targets = []
 
                 with torch.no_grad():
                     for idx, ((im_q, im_k), instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_val, total=len(instance_dataloader_val))):
@@ -160,7 +169,7 @@ if __name__ == '__main__':
                         feat_q.to(device)
                         
                         # Calculate loss
-                        ce_loss = CE_crit(instance_predictions, pseudo_labels.float()) * .01
+                        ce_loss = CE_crit(instance_predictions, pseudo_labels.float()) * .1
                         total_loss = ce_loss + iwscl_loss
                         
                         val_iwscl_loss_total.update(iwscl_loss.item(), instance_labels.size(0))
@@ -172,20 +181,29 @@ if __name__ == '__main__':
                         instance_correct = (instance_predicted_classes == instance_labels).sum().item()
                         instance_total_correct += instance_correct
                         total_samples += instance_labels.size(0)
+                        
+                        # Store raw predictions and targets
+                        val_pred.append(instance_predictions.cpu().detach())
+                        val_targets.append(instance_labels.cpu().detach())
 
                 # Calculate accuracies
                 palm_val_acc = palm_total_correct / total_samples
                 instance_val_acc = instance_total_correct / total_samples
-                
+
                 print(f'[{iteration+1}/{target_count}] Train | iwscl Loss: {train_iwscl_loss_total.avg:.5f}, CE Loss: {train_ce_loss_total.avg:.5f}, Acc: {instance_train_acc:.5f}')
                 print(f'[{iteration+1}/{target_count}] Val   | iwscl Loss: {val_iwscl_loss_total.avg:.5f}, CE Loss: {val_ce_loss_total.avg:.5f}, Acc: {instance_val_acc:.5f}')
                 
+                
+                    
                 # Save the model
                 if val_losses.avg < state['val_loss_instance']:
                     state['val_loss_instance'] = val_losses.avg
                     state['mode'] = 'instance'
 
                     save_state(state, config, instance_train_acc, val_losses.avg, instance_val_acc, model, optimizer)
+                    save_metrics(config, state, train_targets, train_pred, val_targets, val_pred)
                     print("Saved checkpoint due to improved val_loss_instance")
+            
+            state['warmup'] = False
 
 

@@ -13,7 +13,7 @@ class Embeddingmodel(nn.Module):
         self.is_efficientnet = "efficientnet" in arch.lower()
         
         if self.is_efficientnet:
-            self.encoder = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
+            self.encoder = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
             nf = 512
             # Replace the last fully connected layer with a new one
             num_features = self.encoder.classifier[1].in_features
@@ -35,14 +35,14 @@ class Embeddingmodel(nn.Module):
         self.projector = nn.Sequential(
             nn.Linear(nf, 512),
             nn.ReLU(inplace=True),
-            nn.Dropout(dropout_rate),
+            #nn.Dropout(dropout_rate),
             nn.Linear(512, feat_dim)
         )
         
         self.ins_classifier = nn.Sequential(
             nn.Linear(nf, 512),
             nn.ReLU(inplace=True),
-            nn.Dropout(dropout_rate),  # Add dropout after the first ReLU
+            #nn.Dropout(dropout_rate),  # Add dropout after the first ReLU
             nn.Linear(512, num_classes),
             nn.Sigmoid()
         )

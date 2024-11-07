@@ -10,6 +10,7 @@ from data.sudo_labels import *
 from archs.model_INS import *
 from data.bag_loader import *
 from data.instance_loader import *
+from util.eval_util import *
 from config import *
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -19,9 +20,9 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 if __name__ == '__main__':
 
     # Config
-    model_version = '3'
-    head_name = "CADBUSI_R-MIL_64_test"
-    data_config = FishDataConfig #FishDataConfig or LesionDataConfig
+    model_version = '1'
+    head_name = "CADBUSI_R-MIL_1by1"
+    data_config = LesionDataConfig #FishDataConfig or LesionDataConfig
     
     
     config = build_config(model_version, head_name, data_config)
@@ -90,6 +91,8 @@ if __name__ == '__main__':
                 
                 train_iwscl_loss_total = AverageMeter()
                 train_ce_loss_total = AverageMeter()
+                train_pred = []
+                train_targets = []
                 
                 # Iterate over the training data
                 for idx, ((im_q, im_k), instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
@@ -129,13 +132,17 @@ if __name__ == '__main__':
                         instance_correct = (instance_predicted_classes == valid_labels).sum().item()
                         instance_total_correct += instance_correct
                         total_samples += valid_mask.sum().item()
+                    
+                    # Store raw predictions and targets
+                    train_pred.append(instance_predictions.cpu().detach())
+                    train_targets.append(instance_labels.cpu().detach())
 
                 # Calculate accuracies
                 palm_train_acc = palm_total_correct / total_samples
                 instance_train_acc = instance_total_correct / total_samples
-                                
-                
-                
+
+            
+            
                 # Validation loop
                 model.eval()
                 palm_total_correct = 0
@@ -144,6 +151,8 @@ if __name__ == '__main__':
                 val_iwscl_loss_total = AverageMeter()
                 val_ce_loss_total = AverageMeter()
                 val_losses = AverageMeter()
+                val_pred = []
+                val_targets = []
 
                 with torch.no_grad():
                     for idx, ((im_q, im_k), instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_val, total=len(instance_dataloader_val))):
@@ -168,10 +177,17 @@ if __name__ == '__main__':
                         instance_correct = (instance_predicted_classes == instance_labels).sum().item()
                         instance_total_correct += instance_correct
                         total_samples += instance_labels.size(0)
+                        
+                        # Store raw predictions and targets
+                        val_pred.append(instance_predictions.cpu().detach())
+                        val_targets.append(instance_labels.cpu().detach())
+                    
+                    
 
                 # Calculate accuracies
                 palm_val_acc = palm_total_correct / total_samples
                 instance_val_acc = instance_total_correct / total_samples
+                
                 
                 print(f'[{iteration+1}/{target_count}] Train | iwscl Loss: {train_iwscl_loss_total.avg:.5f}, CE Loss: {train_ce_loss_total.avg:.5f}, Acc: {instance_train_acc:.5f}')
                 print(f'[{iteration+1}/{target_count}] Val   | iwscl Loss: {val_iwscl_loss_total.avg:.5f}, CE Loss: {val_ce_loss_total.avg:.5f}, Acc: {instance_val_acc:.5f}')
@@ -180,6 +196,7 @@ if __name__ == '__main__':
                 if val_losses.avg < state['val_loss_instance']:
                     state['val_loss_instance'] = val_losses.avg
                     state['mode'] = 'instance'
+                    save_metrics(config, state, train_targets, train_pred, val_targets, val_pred)
                     
                     if state['warmup']:
                         save_state(state, config, instance_train_acc, val_losses.avg, instance_val_acc, model, optimizer)
@@ -207,7 +224,9 @@ if __name__ == '__main__':
             total_acc = 0
             total = 0
             correct = 0
-
+            train_pred = []
+            train_targets = []
+                
             for (images, yb, instance_labels, id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)):
                 optimizer.zero_grad()
 
@@ -224,6 +243,10 @@ if __name__ == '__main__':
                 predicted = (bag_pred > 0.5).float()
                 total += yb.size(0)
                 correct += (predicted == yb).sum().item()
+                
+                # Store raw predictions and targets
+                train_pred.append(bag_pred.cpu().detach())
+                train_targets.append(yb.cpu().detach())
                     
             
             
@@ -237,8 +260,8 @@ if __name__ == '__main__':
             correct = 0
             total_val_loss = 0.0
             total_val_acc = 0.0
-            all_targs = []
-            all_preds = []
+            val_pred = []
+            val_targets = []
 
             with torch.no_grad():
                 for (images, yb, instance_labels, id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
@@ -254,11 +277,9 @@ if __name__ == '__main__':
                     total += yb.size(0)
                     correct += (predicted == yb).sum().item()
 
-                    # Confusion Matrix data
-                    all_targs.extend(yb.cpu().numpy())
-                    if len(bag_pred.size()) == 0:
-                        bag_pred = bag_pred.view(1)
-                    all_preds.extend(bag_pred.cpu().detach().numpy())
+                    # Store raw predictions and targets
+                    val_pred.append(bag_pred.cpu().detach())
+                    val_targets.append(yb.cpu().detach())
                         
             val_loss = total_val_loss / total
             val_acc = correct / total
@@ -276,7 +297,8 @@ if __name__ == '__main__':
                 state['val_loss_bag'] = val_loss
                 state['mode'] = 'bag'
 
-                save_state(state, config, train_acc, val_loss, val_acc, model, optimizer, all_targs, all_preds)
+                save_state(state, config, train_acc, val_loss, val_acc, model, optimizer,)
+                save_metrics(config, state, train_targets, train_pred, val_targets, val_pred)
                 print("Saved checkpoint due to improved val_loss_bag")
                 
                 state['epoch'] += 1
