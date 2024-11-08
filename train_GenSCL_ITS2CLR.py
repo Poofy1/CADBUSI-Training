@@ -151,15 +151,14 @@ if __name__ == '__main__':
             total_acc = 0
             total = 0
             correct = 0
-            train_pred = []
-            train_targets = []
+            train_pred = PredictionTracker()
 
-            for (data, yb, instance_yb, id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)):
+            for (data, yb, instance_yb, unique_id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)):
                 xb, yb = data, yb.cuda()
             
                 optimizer.zero_grad()
                 
-                bag_pred, instance_pred, _ = model(xb, pred_on = True)
+                bag_pred, instance_predictions, _ = model(xb, pred_on = True)
                 #print(outputs)
                 #print(yb)
                 bag_pred = torch.clamp(bag_pred, 0, 1) # temp fix
@@ -176,11 +175,10 @@ if __name__ == '__main__':
                 correct += (predicted == yb).sum().item()
                 
                 for instance_id, bag_id in enumerate(id):
-                    train_bag_logits[bag_id] = instance_pred[instance_id].detach().cpu().numpy()
+                    train_bag_logits[bag_id] = instance_predictions[instance_id].detach().cpu().numpy()
 
                 # Store raw predictions and targets
-                train_pred.append(bag_pred.cpu().detach())
-                train_targets.append(yb.cpu().detach())
+                train_pred.update(bag_pred, yb, unique_id)
                 
             train_loss = total_loss / total
             train_acc = correct / total
@@ -191,28 +189,26 @@ if __name__ == '__main__':
             total_val_acc = 0.0
             total = 0
             correct = 0
-            val_pred = []
-            val_targets = []
+            val_pred = PredictionTracker()
 
             with torch.no_grad():
-                for (data, yb, instance_yb, id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
+                for (data, yb, instance_yb, unique_id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
                     xb, yb = data, yb.cuda()
 
-                    outputs, instance_pred, _ = model(xb, pred_on = True)
+                    bag_pred, instance_predictions, _ = model(xb, pred_on = True)
                     #print(instance_pred)
-                    outputs = torch.clamp(outputs, 0, 1) # temp fix
+                    bag_pred = torch.clamp(bag_pred, 0, 1) # temp fix
 
                     # Calculate bag-level loss
-                    loss = BCE_loss(outputs, yb)
+                    loss = BCE_loss(bag_pred, yb)
                     total_val_loss += loss.item() * yb.size(0)
 
-                    predicted = (outputs > 0.5).float()
+                    predicted = (bag_pred > 0.5).float()
                     total += yb.size(0)
                     correct += (predicted == yb).sum().item()
 
                     # Store raw predictions and targets
-                    val_pred.append(bag_pred.cpu().detach())
-                    val_targets.append(yb.cpu().detach())
+                    val_pred.update(bag_pred, yb, unique_id)
             
 
             val_loss = total_val_loss / total
@@ -231,7 +227,7 @@ if __name__ == '__main__':
                 state['mode'] = 'bag'
 
                 save_state(state, config, train_acc, val_loss, val_acc, model, optimizer,)
-                save_metrics(config, state, train_targets, train_pred, val_targets, val_pred)
+                save_metrics(config, state, train_pred, val_pred)
                 print("Saved checkpoint due to improved val_loss_bag")
 
                 

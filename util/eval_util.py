@@ -15,6 +15,20 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 
 
+class PredictionTracker:
+    def __init__(self):
+        self.predictions = []
+        self.targets = []
+        self.ids = []
+    
+    def update(self, predictions, targets, ids):
+        self.predictions.append(predictions.cpu().detach())
+        self.targets.append(targets.cpu().detach())
+        self.ids.extend(ids)
+    
+    def get_results(self):
+        return torch.cat(self.predictions), torch.cat(self.targets), self.ids
+
 def plot_Confusion(all_targs, all_preds, vocab, file_path):
     # Convert to numpy arrays if they aren't already
     all_preds_np = np.array(all_preds) if isinstance(all_preds, list) else all_preds
@@ -319,7 +333,7 @@ def evaluate_model_performance(targets, predictions, target_specificity, save_pa
     
     
             
-def calculate_metrics(targets, predictions, target_specificity=0.80, save_path="./"):
+def calculate_metrics(targets, predictions, ids, target_specificity=0.80, save_path="./"):
     # Create directory if it doesn't exist
     os.makedirs(save_path, exist_ok=True)
     
@@ -342,7 +356,7 @@ def calculate_metrics(targets, predictions, target_specificity=0.80, save_path="
     predictions = predictions[binary_indices]
     
     # Collect worst performing labels
-    get_worse_instances(targets, predictions, save_path)
+    get_worse_instances(targets, predictions, ids, save_path)
     
     evaluate_model_performance(targets, predictions, target_specificity, save_path)
 
@@ -392,57 +406,84 @@ def plot_distribution_analysis(targets, predictions, output_path='./'):
     plt.tight_layout()
     plt.savefig(f'{output_path}/distribution_analysis.png')
     plt.close()  # Close the figure to free memory
-
-def get_worse_instances(targets, predictions, output_path='./'):
+    
+def get_worse_instances(targets, predictions, ids, output_path='./'):
     """
     Analyze and identify poor performing instances from targets and predictions arrays
-    
-    Args:
-        targets: Array-like of ground truth labels (0 or 1)
-        predictions: Array-like of prediction probabilities (0 to 1)
-        output_path: Path to save the poor performing instances CSV
     """
-    # Filter for only 0 and 1 targets
-    valid_mask = (targets == 0) | (targets == 1)
-    targets = targets[valid_mask]
-    predictions = predictions[valid_mask]
-    original_indices = np.where(valid_mask)[0]
-
-    # Find poor performing instances
-    poor_performing_mask = (
-        ((targets == 0) & (predictions >= 0.9)) |
-        ((targets == 1) & (predictions <= 0.1))
-    )
-    
-    poor_performing_indices = original_indices[poor_performing_mask]
-    poor_performing_targets = targets[poor_performing_mask]
-    poor_performing_predictions = predictions[poor_performing_mask]
-    
-    # Create DataFrame and save to CSV
-    poor_performing_df = pd.DataFrame({
-        'index': poor_performing_indices,
-        'targets': poor_performing_targets,
-        'predictions': poor_performing_predictions
-    })
-    
-    
-    poor_performing_df.to_csv(f'{output_path}/worst_instances.csv', index=False)
-    #print(f"Number of poor performing instances: {len(poor_performing_indices)}")
-    
-    
-    
-    
-def save_metrics(config, state, train_targets, train_pred, val_targets, val_pred):
-    
-    # Concatenate all validation predictions and targets
-    train_targets = torch.cat(train_targets, dim=0)
-    train_pred = torch.cat(train_pred, dim=0)
-    val_targets = torch.cat(val_targets, dim=0)
-    val_pred = torch.cat(val_pred, dim=0)
+    # Convert to numpy, handling tensor, cuda tensor and numpy inputs
+    def to_numpy(x):
+        try:
+            # Special handling for list of strings
+            if isinstance(x, (list, tuple)) and any(isinstance(item, str) for item in x):
+                return np.array(x, dtype=object)
             
+            if isinstance(x, (list, tuple)):
+                x = torch.tensor(x)
+            if torch.is_tensor(x):
+                if x.is_cuda:
+                    x = x.cpu()
+                x = x.detach().numpy()
+            elif isinstance(x, np.ndarray):
+                return x
+            else:
+                x = np.array(x)
+            return x
+        except Exception as e:
+            print(f"Error converting to numpy: {type(x)}")
+            raise e
+
+    try:
+        # Convert all inputs to numpy arrays
+        targets = to_numpy(targets)
+        predictions = to_numpy(predictions)
+        ids = to_numpy(ids)  # Now handles string arrays properly
+
+        # Flatten arrays if they're not already 1D
+        targets = targets.flatten()
+        predictions = predictions.flatten()
+        if len(ids.shape) > 1:
+            ids = ids.flatten()
+
+        # Ensure all arrays are the same length
+        min_length = min(len(targets), len(predictions), len(ids))
+        targets = targets[:min_length]
+        predictions = predictions[:min_length]
+        ids = ids[:min_length]
+
+        # Find poor performing instances
+        poor_performing_mask = (
+            ((targets == 0) & (predictions >= 0.8)) |
+            ((targets == 1) & (predictions <= 0.2))
+        )
+        
+        poor_performing_df = pd.DataFrame({
+            'id': ids[poor_performing_mask],
+            'targets': targets[poor_performing_mask],
+            'predictions': predictions[poor_performing_mask]
+        })
+        
+        # Create output directory if it doesn't exist
+        os.makedirs(output_path, exist_ok=True)
+        
+        poor_performing_df.to_csv(f'{output_path}/worst_instances.csv', index=False)
+        
+    except Exception as e:
+        print(f"Error processing arrays:")
+        print(f"targets type: {type(targets)}, shape: {targets.shape if hasattr(targets, 'shape') else 'no shape'}")
+        print(f"predictions type: {type(predictions)}, shape: {predictions.shape if hasattr(predictions, 'shape') else 'no shape'}")
+        print(f"ids type: {type(ids)}, shape: {ids.shape if hasattr(ids, 'shape') else 'no shape'}")
+        raise e
+    
+def save_metrics(config, state, train_pred, val_pred):
+    
+    train_pred, train_targets, train_ids = train_pred.get_results()
+    val_pred, val_targets, val_ids = val_pred.get_results()
+    
+    
     model_version = None
     if not state['warmup']: model_version = config['model_version']
     
     output_path = get_metrics_path(config['head_name'], model_version)
-    calculate_metrics(train_targets, train_pred, save_path=f'{output_path}/{state["mode"]}_metrics_train/')
-    calculate_metrics(val_targets, val_pred, save_path=f'{output_path}/{state["mode"]}_metrics_val/')
+    calculate_metrics(train_targets, train_pred, train_ids, save_path=f'{output_path}/{state["mode"]}_metrics_train/')
+    calculate_metrics(val_targets, val_pred, val_ids, save_path=f'{output_path}/{state["mode"]}_metrics_val/')

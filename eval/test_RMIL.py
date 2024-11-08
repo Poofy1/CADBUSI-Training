@@ -13,7 +13,7 @@ from util.eval_util import *
 from data.format_data import *
 from data.sudo_labels import *
 from data.save_arch import *
-from archs.model_INS import *
+from archs.model_PALM2_solo import *
 from data.bag_loader import *
 from data.instance_loader import *
 from config import *
@@ -36,7 +36,7 @@ def test_model(model, bag_dataloader, instance_dataloader):
     with torch.no_grad():
         # Bag-level testing
         for images, yb, _, _ in tqdm(bag_dataloader, desc="Testing bags"):
-            bag_pred, _, instance_pred, _, _, _ = model(images, bag_on=True)
+            bag_pred, _, instance_pred, features = model(images, pred_on=True)
             bag_targets.extend(yb.cpu().numpy())
             bag_predictions.extend((bag_pred).float().cpu().numpy())
         
@@ -44,21 +44,20 @@ def test_model(model, bag_dataloader, instance_dataloader):
             im_q = im_q.cuda(non_blocking=True)
             im_k = im_k.cuda(non_blocking=True)
             instance_labels = instance_labels.cuda(non_blocking=True)
-            _, _, fc_pred, features, iwscl_loss, pseudo_labels = model(im_q, im_k, true_label = instance_labels, projector=True)
+            bag_pred, _, instance_pred, features = model(im_q)
             
             instance_info.extend(unique_id) 
-            instance_features.extend(features.cpu().numpy())
             
             instance_targets.extend(instance_labels.cpu().numpy())
             # Check if fc_pred is None and handle accordingly
-            if fc_pred is None:
+            if instance_pred is None:
                 fc_predictions.extend([0] * len(instance_labels))
             else:
-                fc_predictions.extend((fc_pred).float().cpu().numpy())
+                fc_predictions.extend((instance_pred).float().cpu().numpy())
                 
     return (np.array(bag_targets), np.array(bag_predictions), 
             np.array(instance_targets), np.array(fc_predictions),
-            instance_info, np.array(instance_features))
+            instance_info)
 
 
 
@@ -69,8 +68,8 @@ if __name__ == '__main__':
     current_dir = os.path.dirname(os.path.abspath(__file__))
     
     # Config
-    model_version = '3'
-    head_name = "CADBUSI_R-MIL_64"
+    model_version = '1'
+    head_name = "Head_Palm4_CASBUSI_2"
     data_config = LesionDataConfig #FishDataConfig or LesionDataConfig
     
     output_path = get_metrics_path(head_name, model_version)
@@ -87,9 +86,13 @@ if __name__ == '__main__':
     bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_size=config['bag_batch_size'], collate_fn = collate_bag, drop_last=True)
 
     instance_dataloader_train = Instance_Dataset(bags_train, [], transform=val_transform, warmup=False, dual_output=True)
-    instance_dataloader_train = TUD.DataLoader(instance_dataloader_train, batch_size=config['instance_batch_size'], collate_fn=collate_instance, shuffle=False)
+    train_sampler = InstanceSampler(instance_dataloader_train, config['instance_batch_size'], strategy=1)
+    instance_dataloader_train = TUD.DataLoader(instance_dataloader_train, batch_sampler=train_sampler, collate_fn=collate_instance, shuffle=False)
+    
+    
     instance_dataset_test = Instance_Dataset(bags_val, [], transform=val_transform, warmup=True, dual_output=True)
-    instance_dataloader_test = TUD.DataLoader(instance_dataset_test, batch_size=config['instance_batch_size'], collate_fn=collate_instance, shuffle=False)
+    val_sampler = InstanceSampler(instance_dataset_test, config['instance_batch_size'], strategy=1)
+    instance_dataloader_test = TUD.DataLoader(instance_dataset_test, batch_sampler=val_sampler, collate_fn=collate_instance, shuffle=False)
 
     # Create Model
     model = Embeddingmodel(config['arch'], config['pretrained_arch'], num_classes = num_labels).cuda()
@@ -98,7 +101,7 @@ if __name__ == '__main__':
 
     # Test the model
     results = test_model(model, bag_dataloader_val, instance_dataloader_test)
-    bag_targets, bag_predictions, instance_targets, fc_predictions, instance_info, instance_features = results
+    bag_targets, bag_predictions, instance_targets, fc_predictions, instance_info = results
     
     
     # Create a DataFrame with targets and predictions
@@ -112,20 +115,8 @@ if __name__ == '__main__':
     results_df.to_csv(f'{output_path}/instance_predictions_test.csv', index=False)
 
     print("BAG TRAINING")
-    calculate_metrics(bag_targets, bag_predictions, save_path=f'{output_path}/bag_metrics/')
+    calculate_metrics(bag_targets, bag_predictions, save_path=f'{output_path}/bag_metrics_val/')
     
     print("\nINSTANCE TRAINING")
-    calculate_metrics(instance_targets, fc_predictions, save_path=f'{output_path}/instance_metrics/')
-    
-    
-    
-
-    # Get the model and access IWSCL
-    iwscl = model.iwscl
-    prototypes = iwscl.prototypes
-    proto_class_counts = iwscl.proto_class_counts  # Shape: [num_classes, num_classes]
-    prototype_labels = torch.argmax(proto_class_counts, dim=1)  # Shape: [num_classes]
-
-    # Visualize prototypes and instances
-    visualize_prototypes_and_instances(prototypes, prototype_labels, instance_features, instance_targets, config['dataset_name'], config['head_name'], output_path)
+    calculate_metrics(instance_targets, fc_predictions, save_path=f'{output_path}/instance_metrics_val/')
     

@@ -95,8 +95,7 @@ if __name__ == '__main__':
                 
                 train_iwscl_loss_total = AverageMeter()
                 train_ce_loss_total = AverageMeter()
-                train_pred = []
-                train_targets = []
+                train_pred = PredictionTracker()
                 
                 # Iterate over the training data
                 for idx, ((im_q, im_k), instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
@@ -138,8 +137,7 @@ if __name__ == '__main__':
                         total_samples += valid_mask.sum().item()
                         
                     # Store raw predictions and targets
-                    train_pred.append(instance_predictions.cpu().detach())
-                    train_targets.append(instance_labels.cpu().detach())
+                    train_pred.update(instance_predictions, instance_labels, unique_id)
 
                 # Calculate accuracies
                 palm_train_acc = palm_total_correct / total_samples
@@ -153,10 +151,7 @@ if __name__ == '__main__':
                 val_iwscl_loss_total = AverageMeter()
                 val_ce_loss_total = AverageMeter()
                 val_losses = AverageMeter()
-                
-                # Initialize lists to store validation predictions and targets
-                val_pred = []
-                val_targets = []
+                val_pred = PredictionTracker()
 
                 with torch.no_grad():
                     for idx, ((im_q, im_k), instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_val, total=len(instance_dataloader_val))):
@@ -183,8 +178,7 @@ if __name__ == '__main__':
                         total_samples += instance_labels.size(0)
                         
                         # Store raw predictions and targets
-                        val_pred.append(instance_predictions.cpu().detach())
-                        val_targets.append(instance_labels.cpu().detach())
+                        val_pred.update(instance_predictions, instance_labels, unique_id)
 
                 # Calculate accuracies
                 palm_val_acc = palm_total_correct / total_samples
@@ -201,7 +195,7 @@ if __name__ == '__main__':
                     state['mode'] = 'instance'
 
                     save_state(state, config, instance_train_acc, val_losses.avg, instance_val_acc, model, optimizer)
-                    save_metrics(config, state, train_targets, train_pred, val_targets, val_pred)
+                    save_metrics(config, state, train_pred, val_pred)
                     print("Saved checkpoint due to improved val_loss_instance")
             
             state['warmup'] = False

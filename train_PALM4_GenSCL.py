@@ -99,8 +99,7 @@ if __name__ == '__main__':
                 palm_total_correct = 0
                 instance_total_correct = 0
                 total_samples = 0
-                train_pred = []
-                train_targets = []
+                train_pred = PredictionTracker()
                 
                 # Iterate over the training data
                 for idx, (images, instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
@@ -157,8 +156,7 @@ if __name__ == '__main__':
                         total_samples += instance_labels.size(0)
                     
                     # Store raw predictions and targets
-                    train_pred.append(instance_predictions.cpu().detach())
-                    train_targets.append(instance_labels.cpu().detach())
+                    train_pred.update(instance_predictions, instance_labels, unique_id)
 
 
                 # Calculate accuracies
@@ -172,8 +170,7 @@ if __name__ == '__main__':
                 instance_total_correct = 0
                 total_samples = 0
                 val_losses = AverageMeter()
-                val_pred = []
-                val_targets = []
+                val_pred = PredictionTracker()
 
                 with torch.no_grad():
                     for idx, (images, instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_val, total=len(instance_dataloader_val))):
@@ -220,8 +217,7 @@ if __name__ == '__main__':
                         total_samples += instance_labels.size(0)
                         
                         # Store raw predictions and targets
-                        val_pred.append(instance_predictions.cpu().detach())
-                        val_targets.append(instance_labels.cpu().detach())
+                        val_pred.update(instance_predictions, instance_labels, unique_id)
 
                 # Calculate accuracies
                 palm_val_acc = palm_total_correct / total_samples
@@ -235,7 +231,7 @@ if __name__ == '__main__':
                 if val_losses.avg < state['val_loss_instance']:
                     state['val_loss_instance'] = val_losses.avg
                     state['mode'] = 'instance'
-                    save_metrics(config, state, train_targets, train_pred, val_targets, val_pred)
+                    save_metrics(config, state, train_pred, val_pred)
                     
                     if state['warmup']:
                         save_state(state, config, instance_train_acc, val_losses.avg, instance_val_acc, model, optimizer)
@@ -263,10 +259,9 @@ if __name__ == '__main__':
             total_acc = 0
             total = 0
             correct = 0
-            train_pred = []
-            train_targets = []
+            train_pred = PredictionTracker()
 
-            for (images, yb, instance_labels, id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)):
+            for (images, yb, instance_labels, unique_id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)):
                 num_bags = len(images)
                 optimizer.zero_grad()
 
@@ -291,11 +286,10 @@ if __name__ == '__main__':
                     split_sizes = [bag.size(0) for bag in images]
                     y_hat_per_bag = torch.split(adjusted_confidence, split_sizes, dim=0)
                     for i, y_h in enumerate(y_hat_per_bag):
-                        train_bag_logits[id[i].item()] = y_h.detach().cpu().numpy()
+                        train_bag_logits[unique_id[i].item()] = y_h.detach().cpu().numpy()
                         
                     # Store raw predictions and targets
-                    train_pred.append(bag_pred.cpu().detach())
-                    train_targets.append(yb.cpu().detach())
+                    train_pred.update(bag_pred, yb, unique_id)
 
                                 
                         
@@ -322,11 +316,10 @@ if __name__ == '__main__':
             correct = 0
             total_val_loss = 0.0
             total_val_acc = 0.0
-            val_pred = []
-            val_targets = []
+            val_pred = PredictionTracker()
 
             with torch.no_grad():
-                for (images, yb, instance_labels, id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
+                for (images, yb, instance_labels, unique_id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
 
                     # Forward pass
                     bag_pred, _, _, features = model(images, pred_on=True)
@@ -340,8 +333,7 @@ if __name__ == '__main__':
                     correct += (predicted == yb).sum().item()
 
                     # Store raw predictions and targets
-                    val_pred.append(bag_pred.cpu().detach())
-                    val_targets.append(yb.cpu().detach())
+                    val_pred.update(bag_pred, yb, unique_id)
                         
             val_loss = total_val_loss / total
             val_acc = correct / total
@@ -364,7 +356,7 @@ if __name__ == '__main__':
 
                 
                 save_state(state, config, train_acc, val_loss, val_acc, model, optimizer)
-                save_metrics(config, state, train_targets, train_pred, val_targets, val_pred)
+                save_metrics(config, state, train_pred, val_pred)
                 palm.save_state(os.path.join(target_folder, "palm_state.pkl"))
                 print("Saved checkpoint due to improved val_loss_bag")
 
