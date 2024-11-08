@@ -14,7 +14,7 @@ class BaseConfig:
 class ITS2CLRConfig(BaseConfig):
     def __init__(self):
         self.feature_extractor_train_count = 1
-        self.MIL_train_count = 1 #6
+        self.MIL_train_count = 2 #6
         self.initial_ratio = 0.3
         self.final_ratio = 1
         self.total_epochs = 100

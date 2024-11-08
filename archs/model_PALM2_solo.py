@@ -35,14 +35,14 @@ class Embeddingmodel(nn.Module):
         self.projector = nn.Sequential(
             nn.Linear(nf, 512),
             nn.ReLU(inplace=True),
-            #nn.Dropout(dropout_rate),
+            nn.Dropout(dropout_rate),
             nn.Linear(512, feat_dim)
         )
         
         self.ins_classifier = nn.Sequential(
             nn.Linear(nf, 512),
             nn.ReLU(inplace=True),
-            #nn.Dropout(dropout_rate),  # Add dropout after the first ReLU
+            nn.Dropout(dropout_rate),  # Add dropout after the first ReLU
             nn.Linear(512, num_classes),
             nn.Sigmoid()
         )
