@@ -22,6 +22,9 @@ class PredictionTracker:
         self.ids = []
     
     def update(self, predictions, targets, ids):
+        if predictions is None or targets is None or ids is None:
+            raise ValueError("Predictions, targets, and ids cannot be None")
+        
         self.predictions.append(predictions.cpu().detach())
         self.targets.append(targets.cpu().detach())
         self.ids.extend(ids)
@@ -272,7 +275,12 @@ def evaluate_model_performance(targets, predictions, target_specificity, save_pa
     plt.plot(thresholds, specificity_arr, label='Specificity')
     plt.plot(thresholds, accuracy_arr, label='Accuracy')
     plt.axvline(x=best_threshold, color='r', linestyle='--', label='Best Accuracy Threshold')
-    plt.axvline(x=target_threshold, color='g', linestyle='--', label=f'Target Specificity Threshold ({target_specificity:.0%})')
+
+    # Only plot target threshold line if a valid threshold was found
+    if target_threshold is not None:
+        plt.axvline(x=target_threshold, color='g', linestyle='--', 
+                label=f'Target Specificity Threshold ({target_specificity:.0%})')
+
     plt.xlabel('Threshold')
     plt.ylabel('Metric Value')
     plt.title('Performance Metrics vs. Threshold')
@@ -280,32 +288,44 @@ def evaluate_model_performance(targets, predictions, target_specificity, save_pa
     plt.grid(True)
     plt.savefig(f"{save_path}/Performance_metrics_graph.png")
     plt.close()
-    
+        
     
     # Plot ROC Curve
     fpr, tpr, roc_thresholds = roc_curve(targets, predictions)
-    
+
     plt.figure(figsize=(10, 10))
     plt.plot(fpr, tpr, color='blue', label=f'ROC curve (AUC = {auc:.2f})')
     plt.plot([0, 1], [0, 1], color='red', linestyle='--', label='Random Classifier')
 
-    # Find points for thresholds
-    target_fpr = 1 - target_metrics[2]
-    target_tpr = target_metrics[1]
-    
+    # Find point for threshold 0.5
     threshold_05_idx = np.argmin(np.abs(thresholds - 0.5))
     fpr_05 = 1 - specificity_arr[threshold_05_idx]
     tpr_05 = sensitivity_arr[threshold_05_idx]
 
-    # Plot threshold points
-    plt.plot(target_fpr, target_tpr, 'ro', markersize=10, label=f'Threshold at {target_specificity:.0%} Specificity')
+    # Plot threshold points and annotations
     plt.plot(fpr_05, tpr_05, 'go', markersize=10, label='Threshold at 0.5')
-
-    # Add crosshairs
-    plt.axvline(x=target_fpr, color='red', linestyle=':', alpha=0.8)
-    plt.axhline(y=target_tpr, color='red', linestyle=':', alpha=0.8)
     plt.axvline(x=fpr_05, color='green', linestyle=':', alpha=0.8)
     plt.axhline(y=tpr_05, color='green', linestyle=':', alpha=0.8)
+
+    # Only add target specificity point if target_metrics exists
+    if target_metrics is not None:
+        target_fpr = 1 - target_metrics[2]
+        target_tpr = target_metrics[1]
+        
+        plt.plot(target_fpr, target_tpr, 'ro', markersize=10, 
+                label=f'Threshold at {target_specificity:.0%} Specificity')
+        plt.axvline(x=target_fpr, color='red', linestyle=':', alpha=0.8)
+        plt.axhline(y=target_tpr, color='red', linestyle=':', alpha=0.8)
+        
+        plt.annotate(f'Threshold: {target_threshold:.2f}',
+                    xy=(target_fpr, target_tpr), xycoords='data',
+                    xytext=(10, -10), textcoords='offset points',
+                    arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=.2"))
+
+    plt.annotate(f'Threshold: 0.5',
+                xy=(fpr_05, tpr_05), xycoords='data',
+                xytext=(10, 10), textcoords='offset points',
+                arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=.2"))
 
     plt.xlim([0.0, 1.0])
     plt.ylim([0.0, 1.05])
@@ -314,17 +334,6 @@ def evaluate_model_performance(targets, predictions, target_specificity, save_pa
     plt.title('Receiver Operating Characteristic (ROC) Curve')
     plt.legend(loc="lower right")
     plt.grid(True)
-
-    # Add annotations
-    plt.annotate(f'Threshold: {target_threshold:.2f}',
-                xy=(target_fpr, target_tpr), xycoords='data',
-                xytext=(10, -10), textcoords='offset points',
-                arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=.2"))
-
-    plt.annotate(f'Threshold: 0.5',
-                xy=(fpr_05, tpr_05), xycoords='data',
-                xytext=(10, 10), textcoords='offset points',
-                arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=.2"))
 
     plt.savefig(f"{save_path}/AUC_graph.png")
     plt.close()

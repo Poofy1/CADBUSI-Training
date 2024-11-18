@@ -19,7 +19,7 @@ class Embeddingmodel(nn.Module):
             num_features = self.encoder.classifier[1].in_features
             #self.encoder.classifier[1] = nn.Linear(num_features, nf)
             self.encoder.classifier[1] = nn.Sequential(
-                nn.Dropout(0.5),
+                nn.Dropout(0.2),
                 nn.Linear(num_features, nf)
             )
         else:
@@ -31,7 +31,7 @@ class Embeddingmodel(nn.Module):
         self.nf = nf
 
         self.aggregator = Linear_Classifier(nf=self.nf, num_classes=num_classes)
-        dropout_rate=0.5
+        dropout_rate=0.2
         self.projector = nn.Sequential(
             nn.Linear(nf, 512),
             nn.ReLU(inplace=True),
@@ -39,16 +39,6 @@ class Embeddingmodel(nn.Module):
             nn.Linear(512, feat_dim)
         )
         
-        self.ins_classifier = nn.Sequential(
-            nn.Linear(nf, 512),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout_rate),  # Add dropout after the first ReLU
-            nn.Linear(512, num_classes),
-            nn.Sigmoid()
-        )
-        
-        
-        self.adaptive_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         print(f'Feature Map Size: {nf}')
 
     def forward(self, input, projector=False, pred_on = False):
@@ -60,12 +50,7 @@ class Embeddingmodel(nn.Module):
 
         # Calculate the embeddings for all images in one go
         feat = self.encoder(all_images)
-        if not self.is_efficientnet:
-            feat = self.adaptive_avg_pool(feat).squeeze()
         
-        
-        # INSTANCE CLASS
-        instance_predictions = self.ins_classifier(feat)
 
         bag_pred = None
         bag_instance_predictions = None
@@ -73,12 +58,11 @@ class Embeddingmodel(nn.Module):
             # Split the embeddings back into per-bag embeddings
             split_sizes = [bag.size(0) for bag in input]
             h_per_bag = torch.split(feat, split_sizes, dim=0)
-            y_hat_per_bag = torch.split(instance_predictions, split_sizes, dim=0)
             bag_pred = torch.empty(num_bags, self.num_classes).cuda()
             bag_instance_predictions = []
-            for i, (h, y_h) in enumerate(zip(h_per_bag, y_hat_per_bag)):
+            for i, h in enumerate(h_per_bag):
                 # Pass both h and y_hat to the aggregator
-                yhat_bag, yhat_ins = self.aggregator(h, y_h)
+                yhat_bag, yhat_ins = self.aggregator(h)
                 bag_pred[i] = yhat_bag
                 bag_instance_predictions.append(yhat_ins) 
         
@@ -86,9 +70,14 @@ class Embeddingmodel(nn.Module):
         if projector:
             proj = self.projector(feat)
             proj = F.normalize(proj, dim=1)
-            
+        
+        # Clean up large intermediate tensors
+        del feat
+        if pred_on:
+            del all_images
+                
 
-        return bag_pred, bag_instance_predictions, instance_predictions.squeeze(), proj
+        return bag_pred, bag_instance_predictions, None, proj
 
 
 class Linear_Classifier(nn.Module):
@@ -111,22 +100,26 @@ class Linear_Classifier(nn.Module):
             nn.Linear(L, 1),
         )
         
-    def reset_parameters(self):
-        # Reset the parameters of all the submodules in the Linear_Classifier
-        for module in self.modules():
-            if isinstance(module, nn.Linear):
-                module.reset_parameters()
+        # Direct classifier on weighted features
+        self.classifier = nn.Sequential(
+            nn.Linear(nf, num_classes),
+            nn.Sigmoid()
+        )
         
         
-    def forward(self, v, y_hat):
+    def forward(self, v):
         
         A_V = self.attention_V(v)  # KxL
         A_U = self.attention_U(v)  # KxL
         instance_scores = self.attention_W(A_V * A_U)  # element wise multiplication
         A = torch.transpose(instance_scores, 1, 0)  # ATTENTION_BRANCHESxK
         A = F.softmax(A, dim=1)  # softmax over K
-        # Aggregate instance-level predictions
-        Y_prob = torch.mm(A, y_hat)  # ATTENTION_BRANCHESxC
+        
+        # Weight the features
+        weighted_features = torch.mm(A, v)  # weighted average of features
+        
+        # Get bag prediction
+        Y_prob = self.classifier(weighted_features)
 
         instance_scores = torch.sigmoid(instance_scores.squeeze())
         return Y_prob, instance_scores
