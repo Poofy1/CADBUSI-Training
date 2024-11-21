@@ -4,10 +4,11 @@ from torch.utils.data import Sampler
 import cv2
 
 class Instance_Dataset(TUD.Dataset):
-    def __init__(self, bags_dict, selection_mask, transform=None, warmup=True, dual_output=False):
+    def __init__(self, bags_dict, selection_mask, transform=None, warmup=True, dual_output=False, only_negative=False):
         self.transform = transform
         self.warmup = warmup
         self.dual_output = dual_output
+        self.only_negative = only_negative
 
         self.images = []
         self.final_labels = []
@@ -30,7 +31,16 @@ class Instance_Dataset(TUD.Dataset):
             for idx, (img, labels) in enumerate(zip(images, image_labels)):
                 image_label = None
                 
-                if self.warmup:
+                
+                
+                if self.only_negative:
+                    # Only include instances with label 0
+                    if labels[0] is not None and labels[0] == 0:
+                        image_label = 0
+                    elif bag_label == 0:
+                        image_label = 0
+                        
+                elif self.warmup:
                     # Only include confident instances (selection_mask) or negative bags or instance labels
                     if labels[0] is not None:
                         image_label = labels[0]
@@ -55,6 +65,10 @@ class Instance_Dataset(TUD.Dataset):
                     # Create a unique ID combining accession_number and image index
                     unique_id = f"{acc_number_key}_{idx}"
                     self.unique_ids.append(unique_id)
+                    
+        print(f"Dataset created with {len(self.images)} images")
+        if self.only_negative:
+            print("Dataset contains only negative (label 0) images")
 
     def __getitem__(self, index):
         img_path = self.images[index]
