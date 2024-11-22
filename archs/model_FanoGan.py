@@ -68,7 +68,7 @@ class Discriminator(nn.Module):
         return self.features(img)
 
 
-class Encoder(nn.Module):
+"""class Encoder(nn.Module):
     def __init__(self, opt):
         super(Encoder, self).__init__()
         
@@ -118,3 +118,76 @@ class Encoder(nn.Module):
         latent_vector = self.fc(features)
         return latent_vector
 
+"""
+
+
+
+class ResBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, downsample=None):
+        super(ResBlock, self).__init__()
+        
+        self.conv_block = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, 3, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(out_channels, out_channels, 3, padding=1),
+            nn.BatchNorm2d(out_channels)
+        )
+        
+        # Only create skip connection if channels change
+        if in_channels != out_channels:
+            self.skip = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, 1),
+                nn.BatchNorm2d(out_channels)
+            )
+        else:
+            self.skip = nn.Identity()
+            
+        self.relu = nn.LeakyReLU(0.2, inplace=True)
+        self.downsample = downsample
+
+    def forward(self, x):
+        identity = self.skip(x)
+        out = self.conv_block(x)
+        out = out + identity
+        out = self.relu(out)
+        if self.downsample:
+            out = self.downsample(out)
+        return out
+
+
+class Encoder(nn.Module):
+    def __init__(self, opt):
+        super(Encoder, self).__init__()
+        
+        self.initial = nn.Sequential(
+            nn.Conv2d(3, 64, 4, stride=2, padding=1),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Dropout2d(0.25)
+        )
+        
+        self.layers = nn.ModuleList([
+            ResBlock(64, 128, nn.AvgPool2d(2)),
+            ResBlock(128, 256, nn.AvgPool2d(2)),
+            ResBlock(256, 512, nn.AvgPool2d(2)),
+            ResBlock(512, 512)
+        ])
+        
+        # Calculate final feature map size
+        ds_size = opt.img_size // 16  # Divided by 2^4 due to 4 downsampling operations
+        flatten_size = 512 * ds_size * ds_size
+        
+        self.final = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(flatten_size, 512),
+            nn.LeakyReLU(0.2),
+            nn.Dropout(0.25),
+            nn.Linear(512, opt.latent_dim),
+            nn.Tanh()
+        )
+
+    def forward(self, img):
+        out = self.initial(img)
+        for i, layer in enumerate(self.layers):
+            out = layer(out)
+        return self.final(out)
