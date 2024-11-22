@@ -14,6 +14,8 @@ from data.instance_loader import *
 from loss.FocalLoss import *
 from util.eval_util import *
 from config import *
+import matplotlib.pyplot as plt
+import seaborn as sns
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
@@ -48,7 +50,7 @@ def compute_diversity_loss(generated_images):
     return diversity_loss
 
 
-def train_wgangp(generator, discriminator, dataloader, num_epochs=5, latent_dim=100):
+def train_wgangp(generator, discriminator, dataloader, num_epochs=10, latent_dim=100):
     # Even smaller learning rates
     optimizer_G = torch.optim.Adam(generator.parameters(), lr=0.0001, betas=(0, 0.9))
     optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=0.0001, betas=(0, 0.9))
@@ -56,19 +58,24 @@ def train_wgangp(generator, discriminator, dataloader, num_epochs=5, latent_dim=
     generator.to(device)
     discriminator.to(device)
 
-    n_gen = 3
     lambda_gp = 10
     drift_penalty = 0.001 # keep loss values close to 0
     diversity_weight = 0.1 
     
     # Add dynamic n_gen adjustment
     def adjust_n_gen(d_loss, g_loss):
-        if abs(d_loss) > abs(g_loss) + 5:  # D too strong
-            return 3
-        elif abs(g_loss) > abs(d_loss) + 5:  # G too strong
-            return 2
-        elif abs(g_loss) > abs(d_loss) + 10:  # G way too strong
-            return 1
+        gap = d_loss - g_loss # Positive gap means D is behind
+        
+        n_gen = 2
+        if gap > 10:
+            n_gen = 1
+        elif gap > 5:
+            n_gen = 2
+        elif gap < -10:
+            n_gen = 4
+        elif gap < -5:
+            n_gen = 3
+            
         return n_gen
 
     for epoch in range(num_epochs):
@@ -135,7 +142,7 @@ def train_wgangp(generator, discriminator, dataloader, num_epochs=5, latent_dim=
     
     
 def train_encoder_izif(generator, discriminator, encoder, 
-                       dataloader, device, num_epochs=15, kappa=1.0):
+                       dataloader, device, num_epochs=10, kappa=1.0):
     generator.load_state_dict(torch.load("results/generator"))
     discriminator.load_state_dict(torch.load("results/discriminator"))
 
@@ -167,6 +174,9 @@ def train_encoder_izif(generator, discriminator, encoder,
 
             # Generate a batch of latent variables
             z = encoder(real_imgs)
+            
+            # Add latent space regularization
+            latent_reg = torch.mean(torch.abs(z))
 
             # Generate a batch of images
             fake_imgs = generator(z)
@@ -179,9 +189,10 @@ def train_encoder_izif(generator, discriminator, encoder,
             # izif architecture
             loss_imgs = criterion(fake_imgs, real_imgs)
             loss_features = criterion(fake_features, real_features)
-            e_loss = loss_imgs + kappa * loss_features
+            e_loss = loss_imgs + kappa * loss_features + 0.01 * latent_reg
 
             e_loss.backward()
+            torch.nn.utils.clip_grad_norm_(encoder.parameters(), max_norm=1.0)
             optimizer_E.step()
 
             # Output training log every n_critic steps
@@ -190,17 +201,107 @@ def train_encoder_izif(generator, discriminator, encoder,
                       f"[Batch {i:{padding_i}}/{len(dataloader)}] "
                       f"[E loss: {e_loss.item():3f}]")
 
-            if i % 400 == 0:
-                fake_z = encoder(fake_imgs)
-                reconfiguration_imgs = generator(fake_z)
-                save_image(reconfiguration_imgs.data[:25],
-                            f"results/images_e/{epoch}_{i}.png",
+            if i % 400 == 0:                
+                # Save original images
+                save_image(real_imgs[:25],
+                            f"results/images_e/{epoch}_{i}_original.png",
                             nrow=5, normalize=True)
 
+                # Save reconstructed images
+                save_image(fake_imgs.data[:25],
+                            f"results/images_e/{epoch}_{i}_reconstructed.png",
+                            nrow=5, normalize=True)
 
     torch.save(encoder.state_dict(), "results/encoder")
     
     
+    
+    
+def test_anomaly_detection(generator, discriminator, encoder,
+                           dataloader_train, prefix, device, kappa=1.0):
+    generator.load_state_dict(torch.load("results/generator"))
+    discriminator.load_state_dict(torch.load("results/discriminator"))
+    encoder.load_state_dict(torch.load("results/encoder"))
+
+    generator.to(device).eval()
+    discriminator.to(device).eval()
+    encoder.to(device).eval()
+
+    criterion = nn.MSELoss(reduction='none')
+    anomaly_scores = {'0': [], '1': []}
+    img_distances = {'0': [], '1': []}
+    z_distances = {'0': [], '1': []}
+    
+    for (imgs, instance_labels, unique_id) in tqdm(dataloader_train):
+
+        real_img = imgs.to(device)
+        real_z = encoder(real_img)
+        fake_img = generator(real_z)
+        fake_z = encoder(fake_img)
+
+        real_feature = discriminator.forward_features(real_img)
+        fake_feature = discriminator.forward_features(fake_img)
+
+        # Then calculate losses with proper dimension handling:
+        img_distance = criterion(fake_img, real_img).mean(dim=(1,2,3))  # Shape: [64]
+        loss_feature = criterion(fake_feature, real_feature).mean(dim=(1,2,3))  # Shape: [64]
+        anomaly_score = img_distance + kappa * loss_feature  # Now both are [64]
+        z_distance = criterion(fake_z, real_z).mean(dim=1)
+
+    
+
+        for i in range(len(instance_labels)):
+            label = str(instance_labels[i].item())
+            anomaly_scores[label].append(anomaly_score[i].item())
+            img_distances[label].append(img_distance[i].item()) 
+            z_distances[label].append(z_distance[i].item())
+
+    with open(f"results/metrics_{prefix}.txt", "w") as f:
+        for label in ['0', '1']:
+            f.write(f"\n{label} Labeled Images:\n")
+            f.write(f"Image Distance - Mean: {np.mean(img_distances[label]):.4f}, Std: {np.std(img_distances[label]):.4f}\n")
+            f.write(f"Anomaly Score - Mean: {np.mean(anomaly_scores[label]):.4f}, Std: {np.std(anomaly_scores[label]):.4f}\n")
+            f.write(f"Z Distance - Mean: {np.mean(z_distances[label]):.4f}, Std: {np.std(z_distances[label]):.4f}\n")
+        
+        # Overall stats
+        f.write("\nOverall Statistics:\n")
+        all_scores = anomaly_scores['0'] + anomaly_scores['1']
+        f.write(f"Total Mean Anomaly Score: {np.mean(all_scores):.4f}\n")
+        f.write(f"Min Score: {min(all_scores):.4f}\n")
+        f.write(f"Max Score: {max(all_scores):.4f}\n")
+        
+        
+    # Create distribution plots
+    plt.figure(figsize=(15, 5))
+
+    # Anomaly Score Distribution
+    plt.subplot(1, 3, 1)
+    sns.kdeplot(data=anomaly_scores['0'], label='Normal')
+    sns.kdeplot(data=anomaly_scores['1'], label='Anomaly')
+    plt.title('Anomaly Score Distribution')
+    plt.xlabel('Score')
+    plt.legend()
+
+    # Image Distance Distribution 
+    plt.subplot(1, 3, 2)
+    sns.kdeplot(data=img_distances['0'], label='Normal')
+    sns.kdeplot(data=img_distances['1'], label='Anomaly')
+    plt.title('Image Distance Distribution')
+    plt.xlabel('Distance')
+    plt.legend()
+
+    # Z Distance Distribution
+    plt.subplot(1, 3, 3)
+    sns.kdeplot(data=z_distances['0'], label='Normal')
+    sns.kdeplot(data=z_distances['1'], label='Anomaly')
+    plt.title('Z Distance Distribution')
+    plt.xlabel('Distance')
+    plt.legend()
+
+    plt.tight_layout()
+    plt.savefig(f'results/distributions_{prefix}.png')
+    plt.close()
+                
 if __name__ == '__main__':
 
     # Config
@@ -235,12 +336,19 @@ if __name__ == '__main__':
 
     # Used the instance predictions from bag training to update the Instance Dataloader
     instance_dataset_train = Instance_Dataset(bags_train, [], transform=transform, only_negative = True)
-    instance_dataset_val = Instance_Dataset(bags_val, [], transform=transform, only_negative = True)
     instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_size=config['instance_batch_size'], num_workers=4, collate_fn = collate_instance, pin_memory=True)
-    instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_size=config['instance_batch_size'], collate_fn = collate_instance)
-
+    
     # Phase 1: Train WGAN-GP
-    train_wgangp(generator, discriminator, instance_dataloader_train)
+    #train_wgangp(generator, discriminator, instance_dataloader_train)
 
     # Phase 2: Train Encoder
     train_encoder_izif(generator, discriminator, encoder, instance_dataloader_train, device)
+    
+    
+    instance_dataset_train = Instance_Dataset(bags_train, [], transform=transform, only_negative = False)
+    instance_dataset_val = Instance_Dataset(bags_val, [], transform=transform, only_negative = False)
+    instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_size=config['instance_batch_size'], num_workers=4, collate_fn = collate_instance, pin_memory=True)
+    instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_size=config['instance_batch_size'], collate_fn = collate_instance)
+    
+    test_anomaly_detection(generator, discriminator, encoder, instance_dataloader_train, 'train', device)
+    test_anomaly_detection(generator, discriminator, encoder, instance_dataloader_val, 'val', device)
