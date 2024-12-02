@@ -19,7 +19,7 @@ class ITS2CLRConfig(BaseConfig):
         self.final_ratio = 1
         self.total_epochs = 100
         self.warmup_epochs = 10
-        self.learning_rate = 0.001
+        self.learning_rate = 0.0005
         self.reset_aggregator = False
 
 class LesionDataConfig(BaseConfig):
@@ -37,7 +37,7 @@ class LesionDataConfig(BaseConfig):
 
 class FishDataConfig(BaseConfig):
     def __init__(self):
-        self.dataset_name = 'imagenette2_hard'
+        self.dataset_name = 'imagenette2'
         self.label_columns = ['Has_Fish']
         self.instance_columns = ['Has_Fish']
         self.img_size = 128
@@ -45,7 +45,7 @@ class FishDataConfig(BaseConfig):
         self.min_bag_size = 2
         self.max_bag_size = 25
         self.instance_batch_size = 25
-        self.arch = 'efficientnet'
+        self.arch = 'resnet18'
         self.pretrained_arch = False
 
 class PathConfig(BaseConfig):

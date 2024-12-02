@@ -1,3 +1,4 @@
+numpy==1.23.5
 torch==1.12.1
 torchvision==0.13.1
 fastai==2.7.12
@@ -8,3 +9,5 @@ pandas==1.5.3
 matplotlib==3.7.0
 nystrom-attention==0.0.11
 seaborn==0.12.2
+scipy==1.10.1
+git+https://github.com/Poofy1/storage-adapter.git
