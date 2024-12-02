@@ -4,23 +4,28 @@ from torch.utils.data import Sampler
 import cv2
 
 class Instance_Dataset(TUD.Dataset):
-    def __init__(self, bags_dict, selection_mask, transform=None, warmup=True, dual_output=False, only_negative=False):
+    def __init__(self, bags_dict, selection_mask, transform=None, warmup=True, 
+                 dual_output=False, only_negative=False, max_positive=None):
         self.transform = transform
         self.warmup = warmup
         self.dual_output = dual_output
         self.only_negative = only_negative
+        self.max_positive = max_positive
 
         self.images = []
         self.final_labels = []
         self.unique_ids = []
         
+        # Keep track of positive instances
+        positive_count = 0
+        temp_positive_data = []
+        
         for bag_id, bag_info in bags_dict.items():
             images = bag_info['images']
             image_labels = bag_info['image_labels']
-            bag_label = bag_info['bag_labels'][0]  # Assuming each bag has a single label
-            accession_number = bag_info['Accession_Number']  # Get accession number
+            bag_label = bag_info['bag_labels'][0]
+            accession_number = bag_info['Accession_Number']
             
-            # Use accession_number as the key for selection mask
             acc_number_key = accession_number.item() if isinstance(accession_number, torch.Tensor) else accession_number
             
             if acc_number_key in selection_mask:
@@ -31,17 +36,13 @@ class Instance_Dataset(TUD.Dataset):
             for idx, (img, labels) in enumerate(zip(images, image_labels)):
                 image_label = None
                 
-                
-                
                 if self.only_negative:
-                    # Only include instances with label 0
                     if labels[0] is not None and labels[0] == 0:
                         image_label = 0
                     elif bag_label == 0:
                         image_label = 0
                         
                 elif self.warmup:
-                    # Only include confident instances (selection_mask) or negative bags or instance labels
                     if labels[0] is not None:
                         image_label = labels[0]
                     elif bag_label == 0:
@@ -49,7 +50,6 @@ class Instance_Dataset(TUD.Dataset):
                     elif selection_mask_labels is not None and selection_mask_labels[idx] != -1:
                         image_label = selection_mask_labels[idx]
                 else:
-                    # Return all images with unknown possiblity 
                     if labels[0] is not None:
                         image_label = labels[0]
                     elif bag_label == 0:
@@ -60,15 +60,36 @@ class Instance_Dataset(TUD.Dataset):
                         image_label = -1
                 
                 if image_label is not None:
-                    self.images.append(img)
-                    self.final_labels.append(image_label)
-                    # Create a unique ID combining accession_number and image index
                     unique_id = f"{acc_number_key}_{idx}"
-                    self.unique_ids.append(unique_id)
                     
+                    if image_label == 1 and self.max_positive is not None:
+                        # Store positive instances temporarily
+                        temp_positive_data.append((img, image_label, unique_id))
+                    else:
+                        # Add negative instances directly
+                        self.images.append(img)
+                        self.final_labels.append(image_label)
+                        self.unique_ids.append(unique_id)
+
+        # Handle positive instances with cap
+        if self.max_positive is not None and temp_positive_data:
+            # Randomly shuffle and select up to max_positive instances
+            random.shuffle(temp_positive_data)
+            selected_positive = temp_positive_data[:self.max_positive]
+            
+            for img, label, unique_id in selected_positive:
+                self.images.append(img)
+                self.final_labels.append(label)
+                self.unique_ids.append(unique_id)
+            
+            print(f"Selected {len(selected_positive)} positive instances out of {len(temp_positive_data)} total positive instances")
+
         print(f"Dataset created with {len(self.images)} images")
         if self.only_negative:
             print("Dataset contains only negative (label 0) images")
+        if self.max_positive is not None:
+            positive_count = sum(1 for label in self.final_labels if label == 1)
+            print(f"Dataset contains {positive_count} positive images (capped at {self.max_positive})")
 
     def __getitem__(self, index):
         img_path = self.images[index]

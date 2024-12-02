@@ -10,6 +10,7 @@ import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from sklearn.utils import resample
 from data.transforms import *
+from storage_adapter import *
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
@@ -24,7 +25,6 @@ def create_bags(data, min_size, max_size, root_dir, label_columns, instance_colu
     bags_dict = {}  # Indexed by ID
     
     image_label_map = {}
-    
     # Check if instance_data and instance_columns are provided and valid
     if instance_data is not None and instance_columns is not None:
         # Process instance_data only if it's a valid DataFrame
@@ -102,18 +102,17 @@ def process_single_image(img_name, root_dir, output_dir, resize_and_pad):
         input_path = os.path.join(f'{root_dir}/images/', img_name)
         output_path = os.path.join(output_dir, img_name)
 
-        if os.path.exists(output_path):  # Skip images that are already processed
+        if file_exists(output_path):  # Skip images that are already processed
             return
 
-        image = Image.open(input_path)
+        image = read_image(input_path)
         image = resize_and_pad(image)
         image.save(output_path)
     except Exception as e:
         print(f"Error processing image {img_name}: {e}")
 
 def preprocess_and_save_images(data, root_dir, output_dir, image_size, fill=0):
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    make_dirs(output_dir)
 
     resize_and_pad = ResizeAndPad(image_size, fill=fill)
 
@@ -190,12 +189,12 @@ def prepare_all_data(config):
     cropped_images = f"{json_config['cropped_images']}/{config['dataset_name']}_{config['img_size']}_images"
     
     print("Preprocessing Data...")
-    data = pd.read_csv(f'{export_location}/TrainData.csv')
+    data = read_csv(f'{export_location}/TrainData.csv')
     
     instance_data_file = f'{export_location}/InstanceData.csv'
     
-    if os.path.exists(instance_data_file):
-        instance_data = pd.read_csv(instance_data_file)
+    if file_exists(instance_data_file):
+        instance_data = read_csv(instance_data_file)
     else:
         instance_data = None
        
@@ -218,7 +217,7 @@ def prepare_all_data(config):
     count_bag_labels(bags_train)
     
     
-    
-    save_bags_to_csv(bags_train, 'F:/Temp_SSD_Data/bags_testing.csv')
+    # Debug
+    #save_bags_to_csv(bags_train, 'F:/Temp_SSD_Data/bags_testing.csv')
     
     return bags_train, bags_val

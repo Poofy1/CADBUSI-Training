@@ -10,7 +10,7 @@ ML framework that supports various deep learning architectures for ultrasound im
 
 ## Usage 
 - Clone repository: `git clone https://github.com/Poofy1/CADBUSI-Training.git`
-- Install required Python packages with pip: `pip install -r requirements.txt`
+- Install required Python packages with pip: `pip install -r requirements.txt` or on GCP: `pip install --user --only-binary :all: -r requirements.txt`
 - Configure `./config.py`
 - Generate the [Test Dataset](#test-dataset) or prepare [Custom Data](#dataloader-input-format)
 - You can begin training by running one of the provided training scripts in the immediate directory. Each script has its own training loop for that specific technique
