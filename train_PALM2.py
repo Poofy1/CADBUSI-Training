@@ -198,6 +198,11 @@ if __name__ == '__main__':
                     state['val_loss_instance'] = val_losses.avg
                     state['mode'] = 'instance'
                     
+                    if state['warmup']:
+                        target_folder = state['head_folder']
+                    else:
+                        target_folder = state['model_folder']
+                    
                     save_metrics(config, state, train_pred, val_pred)
                     
                     if state['warmup']:
