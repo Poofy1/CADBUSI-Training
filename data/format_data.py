@@ -184,9 +184,8 @@ def prepare_all_data(config):
     max_bag_size = config['max_bag_size']
     
     # Path to the config file
-    json_config = load_paths()
-    export_location = f"{json_config['export_location']}/{config['dataset_name']}"
-    cropped_images = f"{json_config['cropped_images']}/{config['dataset_name']}_{config['img_size']}_images"
+    export_location = f"{config['export_location']}/{config['dataset_name']}"
+    cropped_images = f"{config['cropped_images']}/{config['dataset_name']}_{config['img_size']}_images"
     
     print("Preprocessing Data...")
     data = read_csv(f'{export_location}/TrainData.csv')

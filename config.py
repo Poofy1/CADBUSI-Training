@@ -1,6 +1,6 @@
 import torchvision.transforms as T
 from data.transforms import CLAHETransform
-
+from storage_adapter import * 
 
 class BaseConfig:
     def to_dict(self):
@@ -50,6 +50,7 @@ class FishDataConfig(BaseConfig):
 
 class PathConfig(BaseConfig):
     def __init__(self):
+        self.bucket = "" # optional - enables GCP
         self.export_location = "D:/DATA/CASBUSI/exports/"
         self.cropped_images = "F:/Temp_SSD_Data/"
         
@@ -79,20 +80,17 @@ def build_config(model_version, head_name, data_config_class):
     """Combines configs into a single dictionary"""
     its2clr_config = ITS2CLRConfig().to_dict()
     data_config = data_config_class().to_dict()
+    path_config = PathConfig().to_dict()
     
     config = {
         "head_name": head_name,
         "model_version": model_version,
         **its2clr_config,
-        **data_config
+        **data_config,
+        **path_config
     }
+    
+    # Determine storage client
+    StorageClient.get_instance(None, config['bucket'])
+    
     return config
-        
-def load_paths():
-    """Returns a dictionary of paths using PathConfig"""
-    path_config = PathConfig()
-
-    # Convert PathConfig to dictionary
-    paths = path_config.to_dict()
-    return paths
-
