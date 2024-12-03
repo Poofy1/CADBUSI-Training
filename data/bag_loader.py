@@ -1,5 +1,6 @@
 from fastai.vision.all import *
 import torch.utils.data as TUD
+from storage_adapter import * 
 
 class BagOfImagesDataset(TUD.Dataset):
 
@@ -20,7 +21,7 @@ class BagOfImagesDataset(TUD.Dataset):
         accession_number = bag_info['Accession_Number']  # Get the accession number
 
         # Process images
-        image_data = torch.stack([self.transform(Image.open(fn).convert("RGB")) for fn in files_this_bag])
+        image_data = torch.stack([self.transform(read_image(fn, use_pil=True).convert("RGB")) for fn in files_this_bag])
 
         # Convert bag labels list to a tensor
         bag_labels_tensor = torch.tensor(bag_labels, dtype=torch.float32)
@@ -161,7 +162,7 @@ class SyntheticBagDataset(TUD.Dataset):
         instance_labels = bag_info['image_labels']
         
         # Process images
-        image_data = torch.stack([self.transform(Image.open(fn).convert("RGB")) 
+        image_data = torch.stack([self.transform(read_image(fn, use_pil=True).convert("RGB")) 
                                 for fn in files_this_bag])
         
         # Convert labels to tensors
