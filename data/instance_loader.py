@@ -2,6 +2,7 @@ from fastai.vision.all import *
 import torch.utils.data as TUD
 from torch.utils.data import Sampler
 import cv2
+from storage_adapter import *
 
 class Instance_Dataset(TUD.Dataset):
     def __init__(self, bags_dict, selection_mask, transform=None, warmup=True, 
@@ -96,7 +97,7 @@ class Instance_Dataset(TUD.Dataset):
         instance_label = self.final_labels[index]
         unique_id = self.unique_ids[index]
         
-        img = cv2.imread(img_path)
+        img = read_image(img_path)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = Image.fromarray(img)
         

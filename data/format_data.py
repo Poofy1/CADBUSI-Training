@@ -105,9 +105,9 @@ def process_single_image(img_name, root_dir, output_dir, resize_and_pad):
         if file_exists(output_path):  # Skip images that are already processed
             return
 
-        image = read_image(input_path)
+        image = read_image(input_path, use_pil=True)
         image = resize_and_pad(image)
-        image.save(output_path)
+        save_data(image, output_path)
     except Exception as e:
         print(f"Error processing image {img_name}: {e}")
 
