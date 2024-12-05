@@ -12,6 +12,7 @@ from archs.model_simpleMIL import *
 from data.bag_loader import *
 from data.instance_loader import *
 from loss.FocalLoss import *
+from loss.contrastive import *
 from util.eval_util import *
 from config import *
 from torch.cuda import memory_summary
