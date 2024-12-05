@@ -15,11 +15,6 @@ from storage_adapter import *
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 
-from config import load_paths
-
-    
-
-
 
 def create_bags(data, min_size, max_size, root_dir, label_columns, instance_columns=None, instance_data=None):
     bags_dict = {}  # Indexed by ID
