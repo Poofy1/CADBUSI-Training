@@ -107,10 +107,10 @@ def count_bag_labels(bags_dict):
         print(f"Label combination {label_combination}: {count} bags")
 
 
-def process_single_image(img_path, root_dir, output_dir, resize_and_pad, is_video):
+def process_single_image(img_path, root_dir, output_dir, resize_and_pad, video_name = None):
     try:
-        if is_video:
-            input_path = os.path.join(root_dir, 'videos', img_path)
+        if video_name:
+            input_path = os.path.join(root_dir, 'videos', video_name, img_path)
         else:
             input_path = os.path.join(root_dir, 'images', img_path)
         
@@ -128,7 +128,7 @@ def process_single_image(img_path, root_dir, output_dir, resize_and_pad, is_vide
     except Exception as e:
         print(f"Error processing image {img_path}: {e}")
 
-def preprocess_and_save_images(data, root_dir, output_dir, image_size, fill=0):
+def preprocess_and_save_images(data, root_dir, output_dir, image_size, fill=0, video_data = None):
     make_dirs(output_dir)
 
     resize_and_pad = ResizeAndPad(image_size, fill=fill)
@@ -137,37 +137,36 @@ def preprocess_and_save_images(data, root_dir, output_dir, image_size, fill=0):
     regular_images = [(img_name, False) for _, row in data.iterrows() 
                      for img_name in ast.literal_eval(row['Images'])]
     
-    # Process video images
+    # Process video images using CSV
     video_images = []
-    for _, row in data.iterrows():
-        video_paths = ast.literal_eval(row['VideoPaths'])
-        for video_folder in video_paths:
-            video_dir = os.path.join(root_dir, 'videos', video_folder).replace('\\', '/')
-            if os.path.exists(video_dir):
-                video_files = [f for f in os.listdir(video_dir) 
-                             if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
-                video_images.extend([(os.path.join(video_folder, img_name).replace('\\', '/'), True) 
-                                   for img_name in video_files])
-
+    if video_data is not None:
+        for _, row in video_data.iterrows():
+            video_folder = row['video_name']
+            image_paths = ast.literal_eval(row['images'])
+            video_images.extend([
+                (os.path.basename(img_path), video_folder) 
+                for img_path in image_paths
+            ])
+            
     # Combine both image lists
     all_images = regular_images + video_images
-
+    
     with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
         futures = {
             executor.submit(
-                process_single_image, 
-                img_path, 
-                root_dir, 
-                output_dir, 
+                process_single_image,
+                img_path,
+                root_dir,
+                output_dir,
                 resize_and_pad,
-                is_video
+                video_name
             ): img_path 
-            for img_path, is_video in all_images
+            for img_path, video_name in all_images
         }
-
+        
         with tqdm(total=len(futures)) as pbar:
             for future in as_completed(futures):
-                future.result()  # This will raise any exceptions
+                future.result()
                 pbar.update()
 
 
@@ -232,6 +231,7 @@ def prepare_all_data(config):
     
     print("Preprocessing Data...")
     data = read_csv(f'{export_location}/TrainData.csv')
+    video_data = read_csv(f'{export_location}/VideoImages.csv')
     
     instance_data_file = f'{export_location}/InstanceData.csv'
     
@@ -241,7 +241,7 @@ def prepare_all_data(config):
         instance_data = None
        
     #Cropping images
-    preprocess_and_save_images(data, export_location, cropped_images, img_size)
+    preprocess_and_save_images(data, export_location, cropped_images, img_size, video_data = video_data)
     
     # Split the data into training and validation sets
     train_patient_ids = data[data['Valid'] == 0]['Accession_Number']

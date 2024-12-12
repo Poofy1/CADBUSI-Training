@@ -24,7 +24,7 @@ class ITS2CLRConfig(BaseConfig):
 
 class LesionDataConfig(BaseConfig):
     def __init__(self):
-        self.dataset_name = 'export_12_09_2024_20_17_36'
+        self.dataset_name = 'export_12_12_2024_12_34_54'
         self.label_columns = ['Has_Malignant']
         self.instance_columns = ['Malignant Lesion Present']
         self.img_size = 64
