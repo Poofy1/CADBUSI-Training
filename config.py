@@ -24,13 +24,13 @@ class ITS2CLRConfig(BaseConfig):
 
 class LesionDataConfig(BaseConfig):
     def __init__(self):
-        self.dataset_name = 'export_oneLesions'
+        self.dataset_name = 'export_12_09_2024_20_17_36'
         self.label_columns = ['Has_Malignant']
         self.instance_columns = ['Malignant Lesion Present']
         self.img_size = 64
         self.bag_batch_size = 6
         self.min_bag_size = 2
-        self.max_bag_size = 25
+        self.max_bag_size = 25000000
         self.instance_batch_size = 64
         self.arch = 'efficientnet'
         self.pretrained_arch = False
