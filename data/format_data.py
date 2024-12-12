@@ -43,22 +43,36 @@ def create_bags(data, min_size, max_size, root_dir, label_columns, instance_colu
     
     for _, row in tqdm(data.iterrows(), total=total_rows):
         image_files = ast.literal_eval(row['Images'])
+        video_prefixes = ast.literal_eval(row['VideoPaths'])
     
         bag_files = []
         image_labels = []
+        video_files = []
     
+        # Process regular images
         for img_name in image_files:
-            # Get labels from image_label_map or use default labels if not available
             labels = image_label_map.get(img_name, [None] * len(instance_columns)) if instance_columns else []
-    
             full_path = os.path.join(root_dir, img_name)
             bag_files.append(full_path)
-    
-            # Append [None] or the labels based on content
             image_labels.append(labels if any(label is not None for label in labels) else [None])
 
-        # Skip bags outside the size range
-        if not (min_size <= len(bag_files) <= max_size):
+        # Process video images by finding matching files in root_dir
+        for video_prefix in video_prefixes:
+            # Get all files in root_dir that start with this prefix
+            matching_files = [f for f in os.listdir(root_dir) 
+                            if f.startswith(video_prefix) and 
+                            f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+            
+            # Sort files based on the last number in the filename
+            matching_files.sort(key=lambda x: int(x.split('_')[-1].split('.')[0]))
+            
+            for video_file in matching_files:
+                full_path = os.path.join(root_dir, video_file)
+                video_files.append(full_path)
+
+        # Skip bags outside the size range (considering both images and videos)
+        total_files = len(bag_files) + len(video_files)
+        if not (min_size <= total_files <= max_size):
             continue
     
         # Extract labels from data
@@ -68,10 +82,11 @@ def create_bags(data, min_size, max_size, root_dir, label_columns, instance_colu
             'bag_labels': bag_labels, 
             'images': bag_files,
             'image_labels': image_labels,
+            'videos': video_files,
             'Accession_Number': row['Accession_Number']  # Add Accession_Number to the dictionary
         }
 
-    return bags_dict  # ID : {'bag_labels': [...], 'images': [...], 'image_labels': [...], 'Accession_Number': xxx}
+    return bags_dict  # ID : {'bag_labels': [...], 'images': [...], 'image_labels': [...], 'videos': [...], 'Accession_Number': xxx}
 
 
 
@@ -92,30 +107,63 @@ def count_bag_labels(bags_dict):
         print(f"Label combination {label_combination}: {count} bags")
 
 
-def process_single_image(img_name, root_dir, output_dir, resize_and_pad):
+def process_single_image(img_path, root_dir, output_dir, resize_and_pad, is_video):
     try:
-        input_path = os.path.join(f'{root_dir}/images/', img_name)
-        output_path = os.path.join(output_dir, img_name)
-
-        if file_exists(output_path):  # Skip images that are already processed
+        if is_video:
+            input_path = os.path.join(root_dir, 'videos', img_path)
+        else:
+            input_path = os.path.join(root_dir, 'images', img_path)
+        
+        output_path = os.path.join(output_dir, os.path.basename(img_path))
+        
+        if file_exists(output_path):
             return
 
         image = read_image(input_path, use_pil=True)
+        if image is None:
+            raise ValueError(f"Failed to read image: {input_path}")
+            
         image = resize_and_pad(image)
         save_data(image, output_path)
     except Exception as e:
-        print(f"Error processing image {img_name}: {e}")
+        print(f"Error processing image {img_path}: {e}")
 
 def preprocess_and_save_images(data, root_dir, output_dir, image_size, fill=0):
     make_dirs(output_dir)
 
     resize_and_pad = ResizeAndPad(image_size, fill=fill)
 
-    # Flatten the data to have a list of image names with their corresponding row data
-    flattened_data = [(img_name, row) for _, row in data.iterrows() for img_name in ast.literal_eval(row['Images'])]
+    # Process regular images
+    regular_images = [(img_name, False) for _, row in data.iterrows() 
+                     for img_name in ast.literal_eval(row['Images'])]
+    
+    # Process video images
+    video_images = []
+    for _, row in data.iterrows():
+        video_paths = ast.literal_eval(row['VideoPaths'])
+        for video_folder in video_paths:
+            video_dir = os.path.join(root_dir, 'videos', video_folder).replace('\\', '/')
+            if os.path.exists(video_dir):
+                video_files = [f for f in os.listdir(video_dir) 
+                             if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+                video_images.extend([(os.path.join(video_folder, img_name).replace('\\', '/'), True) 
+                                   for img_name in video_files])
+
+    # Combine both image lists
+    all_images = regular_images + video_images
 
     with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
-        futures = {executor.submit(process_single_image, img_name, root_dir, output_dir, resize_and_pad): (img_name, row) for img_name, row in flattened_data}
+        futures = {
+            executor.submit(
+                process_single_image, 
+                img_path, 
+                root_dir, 
+                output_dir, 
+                resize_and_pad,
+                is_video
+            ): img_path 
+            for img_path, is_video in all_images
+        }
 
         with tqdm(total=len(futures)) as pbar:
             for future in as_completed(futures):
@@ -213,5 +261,4 @@ def prepare_all_data(config):
     
     # Debug
     #save_bags_to_csv(bags_train, 'F:/Temp_SSD_Data/bags_testing.csv')
-    
     return bags_train, bags_val

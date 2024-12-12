@@ -33,8 +33,8 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "Custom_Instance5"
-    data_config = FishDataConfig  # or LesionDataConfig
+    head_name = "TEST"
+    data_config = LesionDataConfig #FishDataConfig or LesionDataConfig
     
     config = build_config(model_version, head_name, data_config)
     bags_train, bags_val = prepare_all_data(config)

@@ -24,7 +24,7 @@ if __name__ == '__main__':
     # Config
     model_version = '2'
     head_name = "TESTING3"
-    data_config = FishDataConfig  # or LesionDataConfig
+    data_config = LesionDataConfig #FishDataConfig or LesionDataConfig
     
     config = build_config(model_version, head_name, data_config)
     bags_train, bags_val = prepare_all_data(config)

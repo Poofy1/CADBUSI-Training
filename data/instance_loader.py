@@ -92,6 +92,7 @@ class Instance_Dataset(TUD.Dataset):
             positive_count = sum(1 for label in self.final_labels if label == 1)
             print(f"Dataset contains {positive_count} positive images (capped at {self.max_positive})")
 
+        
     def __getitem__(self, index):
         img_path = self.images[index]
         instance_label = self.final_labels[index]
@@ -167,6 +168,13 @@ class InstanceSampler(Sampler):
         # Calculate total number of batches possible with balanced classes
         self.total_samples = self.samples_per_class * 2  # multiply by 2 for pos and neg
         self.total_batches = self.total_samples // self.batch_size
+        
+        print("Sampler statistics:")
+        print(f"Number of positive samples: {len(self.indices_positive)}")
+        print(f"Number of negative samples: {len(self.indices_negative)}")
+        print(f"Number of unknown samples: {len(self.indices_unknown)}")
+        print(f"Batch size: {batch_size}")
+        print(f"Total batches: {self.total_batches}")
 
     def __iter__(self):
         # Randomly sample from majority class to match minority class size
