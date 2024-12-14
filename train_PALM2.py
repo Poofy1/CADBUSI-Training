@@ -23,7 +23,7 @@ if __name__ == '__main__':
 
     # Config
     model_version = '2'
-    head_name = "TESTING3"
+    head_name = "TESTING4"
     data_config = LesionDataConfig #FishDataConfig or LesionDataConfig
     
     config = build_config(model_version, head_name, data_config)
@@ -248,6 +248,7 @@ if __name__ == '__main__':
                 y_hat_per_bag = torch.split(instance_pred, split_sizes, dim=0)
                 for i, y_h in enumerate(y_hat_per_bag):
                     train_bag_logits[unique_id[i].item()] = y_h.detach().cpu().numpy()
+            
                 
                 bag_loss = BCE_loss(bag_pred, yb)
                 bag_loss.backward()

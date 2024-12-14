@@ -14,28 +14,48 @@ class Instance_Dataset(TUD.Dataset):
         self.max_positive = max_positive
 
         self.images = []
-        self.final_labels = []
+        self.output_image_labels = []
         self.unique_ids = []
         
         # Keep track of positive instances
-        positive_count = 0
         temp_positive_data = []
         
         for bag_id, bag_info in bags_dict.items():
-            images = bag_info['images']
-            image_labels = bag_info['image_labels']
+            images = bag_info['images'].copy()  # Create copies to avoid modifying original
+            image_labels = bag_info['image_labels'].copy()
+            videos = bag_info['videos']
             bag_label = bag_info['bag_labels'][0]
             accession_number = bag_info['Accession_Number']
             
+            # Debug prints
+            """print(f"\nBag {bag_id}:")
+            print(f"Number of images: {len(images)}")
+            print(f"Number of videos: {len(videos)}")
+            print(f"Total instances after combine: {len(images) + len(videos)}")"""
+
+
+            # Extend images and labels with videos
+            images.extend(videos)
+            image_labels.extend([[None]] * len(videos))  # Add empty labels for videos
+            
             acc_number_key = accession_number.item() if isinstance(accession_number, torch.Tensor) else accession_number
             
-            if acc_number_key in selection_mask:
-                selection_mask_labels, _ = selection_mask[acc_number_key]
+            if bag_id in selection_mask:
+                selection_mask_labels, _ = selection_mask[bag_id]
+                #print(f"Selection mask size for bag {bag_id}: {len(selection_mask_labels)}")
             else: 
                 selection_mask_labels = None
-
+                #print(f"No selection mask for bag {bag_id}")
+                
+            
+            
+            
+            # Process all instances (images + videos)
             for idx, (img, labels) in enumerate(zip(images, image_labels)):
                 image_label = None
+                is_video = idx >= len(bag_info['images'])  # Check if this is a video frame
+                
+            
                 
                 if self.only_negative:
                     if labels[0] is not None and labels[0] == 0:
@@ -61,41 +81,40 @@ class Instance_Dataset(TUD.Dataset):
                         image_label = -1
                 
                 if image_label is not None:
-                    unique_id = f"{acc_number_key}_{idx}"
+                    unique_id = f"{acc_number_key}_{idx}_{'vid' if is_video else 'img'}"
                     
-                    if image_label == 1 and self.max_positive is not None:
-                        # Store positive instances temporarily
+                    if image_label == 1 and self.max_positive is not None and not is_video:
+                        # Store positive instances temporarily (only for images)
                         temp_positive_data.append((img, image_label, unique_id))
                     else:
-                        # Add negative instances directly
+                        # Add instances directly
                         self.images.append(img)
-                        self.final_labels.append(image_label)
+                        self.output_image_labels.append(image_label)
                         self.unique_ids.append(unique_id)
-
+                        
         # Handle positive instances with cap
         if self.max_positive is not None and temp_positive_data:
-            # Randomly shuffle and select up to max_positive instances
             random.shuffle(temp_positive_data)
             selected_positive = temp_positive_data[:self.max_positive]
             
             for img, label, unique_id in selected_positive:
                 self.images.append(img)
-                self.final_labels.append(label)
+                self.output_image_labels.append(label)
                 self.unique_ids.append(unique_id)
             
             print(f"Selected {len(selected_positive)} positive instances out of {len(temp_positive_data)} total positive instances")
 
-        print(f"Dataset created with {len(self.images)} images")
+        print(f"Dataset created with {len(self.images)} instances")
         if self.only_negative:
-            print("Dataset contains only negative (label 0) images")
+            print("Dataset contains only negative (label 0) instances")
         if self.max_positive is not None:
-            positive_count = sum(1 for label in self.final_labels if label == 1)
-            print(f"Dataset contains {positive_count} positive images (capped at {self.max_positive})")
+            positive_count = sum(1 for label in self.output_image_labels if label == 1)
+            print(f"Dataset contains {positive_count} positive instances (capped at {self.max_positive})")
 
         
     def __getitem__(self, index):
         img_path = self.images[index]
-        instance_label = self.final_labels[index]
+        instance_label = self.output_image_labels[index]
         unique_id = self.unique_ids[index]
         
         img = read_image(img_path)
@@ -157,9 +176,9 @@ class InstanceSampler(Sampler):
         self.batch_size = batch_size
         
         # Get indices for each class
-        self.indices_positive = [i for i, label in enumerate(self.dataset.final_labels) if label == 1]
-        self.indices_negative = [i for i, label in enumerate(self.dataset.final_labels) if label == 0]
-        self.indices_unknown = [i for i, label in enumerate(self.dataset.final_labels) if label == -1]
+        self.indices_positive = [i for i, label in enumerate(self.dataset.output_image_labels) if label == 1]
+        self.indices_negative = [i for i, label in enumerate(self.dataset.output_image_labels) if label == 0]
+        self.indices_unknown = [i for i, label in enumerate(self.dataset.output_image_labels) if label == -1]
         self.indices_non_positive = self.indices_negative + self.indices_unknown
         
         # Number of positive samples determines the number of samples per class

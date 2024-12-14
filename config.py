@@ -14,17 +14,17 @@ class BaseConfig:
 class ITS2CLRConfig(BaseConfig):
     def __init__(self):
         self.feature_extractor_train_count = 1
-        self.MIL_train_count = 2 #6
+        self.MIL_train_count = 1 #6
         self.initial_ratio = 0.3
         self.final_ratio = 1
         self.total_epochs = 100
-        self.warmup_epochs = 10
+        self.warmup_epochs = 1
         self.learning_rate = 0.0005
         self.reset_aggregator = False
 
 class LesionDataConfig(BaseConfig):
     def __init__(self):
-        self.dataset_name = 'export_12_12_2024_12_34_54'
+        self.dataset_name = 'export_12_12_2024_17_35_49'
         self.label_columns = ['Has_Malignant']
         self.instance_columns = ['Malignant Lesion Present']
         self.img_size = 64
@@ -34,6 +34,7 @@ class LesionDataConfig(BaseConfig):
         self.instance_batch_size = 64
         self.arch = 'efficientnet'
         self.pretrained_arch = False
+        self.use_videos = True
 
 class FishDataConfig(BaseConfig):
     def __init__(self):
@@ -47,6 +48,7 @@ class FishDataConfig(BaseConfig):
         self.instance_batch_size = 25
         self.arch = 'resnet18'
         self.pretrained_arch = False
+        self.use_videos = False
 
 class PathConfig(BaseConfig):
     def __init__(self):

@@ -16,7 +16,13 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 
 
-def create_bags(data, min_size, max_size, root_dir, label_columns, instance_columns=None, instance_data=None):
+def create_bags(config, data, root_dir, instance_data=None):
+    
+    label_columns = config['label_columns']
+    instance_columns = config['instance_columns']
+    min_size = config['min_bag_size']
+    max_size = config['max_bag_size']
+    
     bags_dict = {}  # Indexed by ID
     
     image_label_map = {}
@@ -40,37 +46,50 @@ def create_bags(data, min_size, max_size, root_dir, label_columns, instance_colu
                 image_label_map[image_name] = labels
     
     total_rows = len(data)
+    all_files = list_files(root_dir)
+    
+    # Create a mapping of video prefixes to their matching files before the main loop
+    video_prefix_map = {}
+    use_videos = config['use_videos']
+    if use_videos:
+        for f in all_files:
+            basename = os.path.basename(f)
+            prefix = '_'.join(basename.split('_')[:-1])
+            if prefix not in video_prefix_map:
+                video_prefix_map[prefix] = []
+            video_prefix_map[prefix].append(f)
+
+        # Sort all lists in the map once
+        for prefix in video_prefix_map:
+            video_prefix_map[prefix].sort(key=lambda x: int(x.split('_')[-1].split('.')[0]))
+    
     
     for _, row in tqdm(data.iterrows(), total=total_rows):
         image_files = ast.literal_eval(row['Images'])
         video_prefixes = ast.literal_eval(row['VideoPaths'])
-    
+        
         bag_files = []
         image_labels = []
         video_files = []
-    
-        # Process regular images
+
+        video_filenames = set()
+        if use_videos:
+            for video_prefix in video_prefixes:
+                if video_prefix in video_prefix_map:
+                    video_files.extend(video_prefix_map[video_prefix])
+                    video_filenames.update(os.path.basename(f) for f in video_prefix_map[video_prefix])
+
+        # Process regular images (excluding video frames)
         for img_name in image_files:
+            # Get labels for this image first
             labels = image_label_map.get(img_name, [None] * len(instance_columns)) if instance_columns else []
-            full_path = os.path.join(root_dir, img_name)
-            bag_files.append(full_path)
-            image_labels.append(labels if any(label is not None for label in labels) else [None])
-
-        # Process video images by finding matching files in root_dir
-        for video_prefix in video_prefixes:
-            # Get all files in root_dir that start with this prefix
-            matching_files = [f for f in os.listdir(root_dir) 
-                            if f.startswith(video_prefix) and 
-                            f.lower().endswith(('.png', '.jpg', '.jpeg'))]
             
-            # Sort files based on the last number in the filename
-            matching_files.sort(key=lambda x: int(x.split('_')[-1].split('.')[0]))
-            
-            for video_file in matching_files:
-                full_path = os.path.join(root_dir, video_file)
-                video_files.append(full_path)
+            if os.path.basename(img_name) not in video_filenames:
+                full_path = os.path.join(root_dir, img_name)
+                bag_files.append(full_path)
+                image_labels.append(labels if any(label is not None for label in labels) else [None])
 
-        # Skip bags outside the size range (considering both images and videos)
+        # Skip bags outside the size range
         total_files = len(bag_files) + len(video_files)
         if not (min_size <= total_files <= max_size):
             continue
@@ -128,10 +147,10 @@ def process_single_image(img_path, root_dir, output_dir, resize_and_pad, video_n
     except Exception as e:
         print(f"Error processing image {img_path}: {e}")
 
-def preprocess_and_save_images(data, root_dir, output_dir, image_size, fill=0, video_data = None):
+def preprocess_and_save_images(config, data, root_dir, output_dir, fill=0):
     make_dirs(output_dir)
 
-    resize_and_pad = ResizeAndPad(image_size, fill=fill)
+    resize_and_pad = ResizeAndPad(config['img_size'], fill=fill)
 
     # Process regular images
     regular_images = [(img_name, False) for _, row in data.iterrows() 
@@ -139,14 +158,16 @@ def preprocess_and_save_images(data, root_dir, output_dir, image_size, fill=0, v
     
     # Process video images using CSV
     video_images = []
-    if video_data is not None:
-        for _, row in video_data.iterrows():
-            video_folder = row['video_name']
-            image_paths = ast.literal_eval(row['images'])
-            video_images.extend([
-                (os.path.basename(img_path), video_folder) 
-                for img_path in image_paths
-            ])
+    if config['use_videos']:
+        video_data = read_csv(f'{root_dir}/VideoImages.csv')
+        if video_data is not None:
+            for _, row in video_data.iterrows():
+                video_folder = row['video_name']
+                image_paths = ast.literal_eval(row['images'])
+                video_images.extend([
+                    (os.path.basename(img_path), video_folder) 
+                    for img_path in image_paths
+                ])
             
     # Combine both image lists
     all_images = regular_images + video_images
@@ -218,21 +239,14 @@ def save_bags_to_csv(bags_dict, file_path):
 
 
 def prepare_all_data(config):
-    
-    label_columns = config['label_columns']
-    instance_columns = config['instance_columns']
-    img_size = config['img_size']
-    min_bag_size = config['min_bag_size']
-    max_bag_size = config['max_bag_size']
-    
+
     # Path to the config file
     export_location = f"{config['export_location']}/{config['dataset_name']}"
     cropped_images = f"{config['cropped_images']}/{config['dataset_name']}_{config['img_size']}_images"
     
     print("Preprocessing Data...")
     data = read_csv(f'{export_location}/TrainData.csv')
-    video_data = read_csv(f'{export_location}/VideoImages.csv')
-    
+
     instance_data_file = f'{export_location}/InstanceData.csv'
     
     if file_exists(instance_data_file):
@@ -241,7 +255,7 @@ def prepare_all_data(config):
         instance_data = None
        
     #Cropping images
-    preprocess_and_save_images(data, export_location, cropped_images, img_size, video_data = video_data)
+    preprocess_and_save_images(config, data, export_location, cropped_images)
     
     # Split the data into training and validation sets
     train_patient_ids = data[data['Valid'] == 0]['Accession_Number']
@@ -249,8 +263,8 @@ def prepare_all_data(config):
     train_data = data[data['Accession_Number'].isin(train_patient_ids)].reset_index(drop=True)
     val_data = data[data['Accession_Number'].isin(val_patient_ids)].reset_index(drop=True)
     
-    bags_train = create_bags(train_data, min_bag_size, max_bag_size, cropped_images, label_columns, instance_columns, instance_data)
-    bags_val = create_bags(val_data, min_bag_size, max_bag_size, cropped_images, label_columns, instance_columns, instance_data)
+    bags_train = create_bags(config, train_data, cropped_images, instance_data)
+    bags_val = create_bags(config, val_data, cropped_images, instance_data)
     
     bags_train = upsample_minority_class(bags_train)  # Upsample the minority class in the training set
     
