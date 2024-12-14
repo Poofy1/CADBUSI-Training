@@ -16,12 +16,24 @@ class BagOfImagesDataset(TUD.Dataset):
 
         # Extract labels, image file paths, instance-level labels, and accession number
         bag_labels = bag_info['bag_labels']
-        files_this_bag = bag_info['images']
+        images_this_bag = bag_info['images']
+        videos_this_bag = bag_info['videos']
         instance_labels = bag_info['image_labels']
-        accession_number = bag_info['Accession_Number']  # Get the accession number
+        accession_number = actual_id #bag_info['Accession_Number']  # Accession number is not unique!!! :C
 
-        # Process images
-        image_data = torch.stack([self.transform(read_image(fn, use_pil=True).convert("RGB")) for fn in files_this_bag])
+        # Process regular images
+        image_data = [self.transform(read_image(fn, use_pil=True).convert("RGB")) for fn in images_this_bag]
+        
+        # Process video images if they exist
+        if videos_this_bag:
+            video_data = [self.transform(read_image(fn, use_pil=True).convert("RGB")) for fn in videos_this_bag]
+            # Add video frames to image data
+            image_data.extend(video_data)
+            # Add None labels for video frames (same length as video_data)
+            instance_labels.extend([[None]] * len(video_data))
+
+        # Stack all images together
+        image_data = torch.stack(image_data)
 
         # Convert bag labels list to a tensor
         bag_labels_tensor = torch.tensor(bag_labels, dtype=torch.float32)
@@ -29,7 +41,6 @@ class BagOfImagesDataset(TUD.Dataset):
         # Convert instance labels to a tensor, using -1 for None
         instance_labels_tensors = [torch.tensor(labels, dtype=torch.float32) if labels != [None] else torch.tensor([-1], dtype=torch.float32) for labels in instance_labels]
 
-        # Return accession_number instead of actual_id in the last position
         return image_data, bag_labels_tensor, instance_labels_tensors, accession_number
 
     
