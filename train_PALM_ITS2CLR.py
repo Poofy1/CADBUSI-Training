@@ -29,16 +29,9 @@ if __name__ == '__main__':
     data_config = FishDataConfig  # or LesionDataConfig
     
     config = build_config(model_version, head_name, data_config)
-    bags_train, bags_val = prepare_all_data(config)
+    bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)
     num_classes = len(config['label_columns']) + 1
     num_labels = len(config['label_columns'])
-
-    # Create bag datasets
-    bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
-    bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
-    bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_size=config['bag_batch_size'], collate_fn = collate_bag, drop_last=True, shuffle = True)
-    bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_size=config['bag_batch_size'], collate_fn = collate_bag, drop_last=True)
-
 
     # Create Model
     model = Embeddingmodel(config['arch'], config['pretrained_arch'], num_classes = num_labels).cuda()
