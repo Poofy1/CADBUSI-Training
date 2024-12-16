@@ -18,7 +18,7 @@ class BagOfImagesDataset(TUD.Dataset):
         bag_labels = bag_info['bag_labels']
         images_this_bag = bag_info['images']
         videos_this_bag = bag_info['videos']
-        instance_labels = bag_info['image_labels']
+        instance_labels = bag_info['image_labels'].copy() # Make a copy of instance labels to avoid modifying the original
         accession_number = actual_id #bag_info['Accession_Number']  # Accession number is not unique!!! :C
 
         # Process regular images
@@ -31,7 +31,8 @@ class BagOfImagesDataset(TUD.Dataset):
             image_data.extend(video_data)
             # Add None labels for video frames (same length as video_data)
             instance_labels.extend([[None]] * len(video_data))
-
+            
+            
         # Stack all images together
         image_data = torch.stack(image_data)
 
