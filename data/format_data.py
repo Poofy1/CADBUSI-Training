@@ -1,9 +1,8 @@
 import os
-from PIL import Image
+import torch.utils.data as TUD
 from fastai.vision.all import *
 from tqdm import tqdm
 import numpy as np
-import torchvision.transforms as T
 import ast
 import json
 import pandas as pd
@@ -11,6 +10,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from sklearn.utils import resample
 from data.transforms import *
 from storage_adapter import *
+from data.bag_loader import *
+from config import *
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
@@ -266,7 +267,7 @@ def prepare_all_data(config):
     bags_train = create_bags(config, train_data, cropped_images, instance_data)
     bags_val = create_bags(config, val_data, cropped_images, instance_data)
     
-    bags_train = upsample_minority_class(bags_train)  # Upsample the minority class in the training set
+    #bags_train = upsample_minority_class(bags_train)  # Upsample the minority class in the training set
     
     print(f'There are {len(bags_train)} files in the training data')
     print(f'There are {len(bags_val)} files in the validation data')
@@ -275,4 +276,16 @@ def prepare_all_data(config):
     
     # Debug
     #save_bags_to_csv(bags_train, 'F:/Temp_SSD_Data/bags_testing.csv')
-    return bags_train, bags_val
+    
+    
+    
+    # Create bag datasets
+    bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
+    bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform)
+    train_sampler = BalancedBagSampler(bag_dataset_train, batch_size=config['bag_batch_size'])
+    val_sampler = BalancedBagSampler(bag_dataset_val, batch_size=config['bag_batch_size'])
+    bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_sampler=train_sampler, collate_fn=collate_bag)
+    bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_sampler=val_sampler, collate_fn=collate_bag)
+
+
+    return bags_train, bags_val, bag_dataloader_train, bag_dataloader_val

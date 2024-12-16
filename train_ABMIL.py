@@ -24,32 +24,9 @@ if __name__ == '__main__':
     data_config = FishDataConfig  # or LesionDataConfig
     
     config = build_config(model_version, head_name, data_config)
-    bags_train, bags_val = prepare_all_data(config)
+    bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)
     num_classes = len(config['label_columns']) + 1
     num_labels = len(config['label_columns'])
-    
-    train_transform = T.Compose([
-                T.RandomHorizontalFlip(),
-                T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
-                T.RandomAffine(degrees=(-90, 90), translate=(0.05, 0.05), scale=(1, 1.2),),
-                CLAHETransform(),
-                T.ToTensor(),
-                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
-    
-    val_transform = T.Compose([
-                CLAHETransform(),
-                T.ToTensor(),
-                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
-
-    
-    # Create bag datasets
-    bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
-    bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
-    bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_size=config['bag_batch_size'], collate_fn = collate_bag, drop_last=True, shuffle = True)
-    bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_size=config['bag_batch_size'], collate_fn = collate_bag, drop_last=True)
-
     
     # total model
     model = Embeddingmodel(config['arch'], config['pretrained_arch'], num_classes = num_labels).cuda()

@@ -27,8 +27,8 @@ class Instance_Dataset(TUD.Dataset):
             bag_label = bag_info['bag_labels'][0]
             accession_number = bag_info['Accession_Number']
             
-            # Debug prints
-            """print(f"\nBag {bag_id}:")
+            """ #Debug prints
+            print(f"\nBag {bag_id}:")
             print(f"Number of images: {len(images)}")
             print(f"Number of videos: {len(videos)}")
             print(f"Total instances after combine: {len(images) + len(videos)}")"""

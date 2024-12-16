@@ -8,10 +8,8 @@ import torch.optim as optim
 from data.format_data import *
 from data.sudo_labels import *
 from archs.model_solo_MIL import *
-from data.bag_loader import *
 from data.instance_loader import *
 from loss.palm import PALM
-from config import *
 from util.eval_util import *
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -20,23 +18,15 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 
 
 if __name__ == '__main__':
-
     # Config
-    model_version = '2'
-    head_name = "TESTING4"
+    model_version = '1'
+    head_name = "TESTING5"
     data_config = LesionDataConfig #FishDataConfig or LesionDataConfig
     
     config = build_config(model_version, head_name, data_config)
-    bags_train, bags_val = prepare_all_data(config)
+    bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)
     num_classes = len(config['label_columns']) + 1
     num_labels = len(config['label_columns'])
-
-    # Create bag datasets
-    bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
-    bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, save_processed=False)
-    bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_size=config['bag_batch_size'], collate_fn = collate_bag, drop_last=True, shuffle = True)
-    bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_size=config['bag_batch_size'], collate_fn = collate_bag, drop_last=True)
-
 
     # Create Model
     model = Embeddingmodel(config['arch'], config['pretrained_arch'], num_classes = num_labels).cuda()
@@ -62,7 +52,7 @@ if __name__ == '__main__':
     while state['epoch'] < config['total_epochs']:
         
         
-        if not state['pickup_warmup']: # Are we resuming from a head model?
+        if False:#not state['pickup_warmup']: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
             instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=True)

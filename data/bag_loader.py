@@ -74,6 +74,71 @@ def collate_bag(batch):
     return batch_data, out_bag_labels, batch_instance_labels, out_ids
 
 
+
+class BalancedBagSampler(torch.utils.data.Sampler):
+    def __init__(self, dataset, batch_size):
+        self.dataset = dataset
+        self.batch_size = batch_size
+        
+        # Get positive and negative indices
+        self.pos_indices = []
+        self.neg_indices = []
+        
+        for idx in range(len(dataset)):
+            bag_labels = dataset.bags_dict[dataset.unique_bag_ids[idx]]['bag_labels']
+            if 1 in bag_labels:
+                self.pos_indices.append(idx)
+            else:
+                self.neg_indices.append(idx)
+                
+        self.n_pos = len(self.pos_indices)
+        self.n_neg = len(self.neg_indices)
+        
+        # Determine minority class size
+        self.min_class_size = min(self.n_pos, self.n_neg)
+        
+        # Calculate number of batches
+        self.n_samples = 2 * self.min_class_size  # Total samples will be 2 * number of minority samples
+        self.n_batches = self.n_samples // batch_size
+        if self.n_samples % batch_size != 0:
+            self.n_batches += 1
+    
+    def __iter__(self):
+        # Sample from majority class to match minority class size
+        if self.n_pos > self.n_neg:
+            sampled_pos = np.random.choice(self.pos_indices, size=self.min_class_size, replace=False)
+            all_indices = np.concatenate([sampled_pos, self.neg_indices])
+        else:
+            sampled_neg = np.random.choice(self.neg_indices, size=self.min_class_size, replace=False)
+            all_indices = np.concatenate([self.pos_indices, sampled_neg])
+        
+        # Shuffle the combined indices
+        np.random.shuffle(all_indices)
+        
+        # Create batches
+        batches = []
+        for i in range(self.n_batches):
+            start_idx = i * self.batch_size
+            end_idx = min((i + 1) * self.batch_size, self.n_samples)
+            if start_idx < self.n_samples:
+                batches.append(all_indices[start_idx:end_idx])
+        
+        return iter(batches)
+    
+    def __len__(self):
+        return self.n_batches
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
 class SyntheticBagDataset(TUD.Dataset):
     def __init__(self, bags_dict, transform=None, min_bag_size=3, max_bag_size=20, pos_instances_range=(1,3)):
         self.transform = transform
