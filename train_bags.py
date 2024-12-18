@@ -8,7 +8,7 @@ import torch.optim as optim
 import gc
 from data.format_data import *
 from data.sudo_labels import *
-from archs.model_simpleMIL import *
+from archs.model_GenSCL import *
 from data.bag_loader import *
 from data.instance_loader import *
 from loss.FocalLoss import *
@@ -41,8 +41,8 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "Custom_Bag_5"
-    data_config = LesionDataConfig  # or LesionDataConfig
+    head_name = "TEST"
+    data_config = FishDataConfig  # or LesionDataConfig
     
     config = build_config(model_version, head_name, data_config)
     bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)

@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from archs.backbone import create_timm_body
 from torchvision.models import efficientnet_b3, EfficientNet_B3_Weights
 from loss.IWSCL import *
+from archs.linear_classifier import *
 
 class Embeddingmodel(nn.Module):
     def __init__(self, arch, pretrained_arch, num_classes=1, feat_dim=128, momentum=0.999, queue_size=8192):
@@ -166,44 +167,3 @@ class Embeddingmodel(nn.Module):
                 
         return bag_pred, bag_instance_predictions, instance_predictions.squeeze(), proj_q, iwscl_loss, pseudo_labels
 
-class Linear_Classifier(nn.Module):
-    """Linear classifier"""
-    def __init__(self, nf, num_classes=1, L=64):
-        super(Linear_Classifier, self).__init__()
-        self.fc = nn.Linear(nf, num_classes)
-        
-        
-        # Attention mechanism components
-        self.attention_V = nn.Sequential(
-            nn.Linear(nf, L),
-            nn.Tanh()
-        )
-        self.attention_U = nn.Sequential(
-            nn.Linear(nf, L),
-            nn.Sigmoid()
-        )
-        self.attention_W = nn.Sequential(
-            nn.Linear(L, 1),
-        )
-        
-    def reset_parameters(self):
-        # Reset the parameters of all the submodules in the Linear_Classifier
-        for module in self.modules():
-            if isinstance(module, nn.Linear):
-                module.reset_parameters()
-        
-        
-    def forward(self, v, y_hat):
-        
-        A_V = self.attention_V(v)  # KxL
-        A_U = self.attention_U(v)  # KxL
-        instance_scores = self.attention_W(A_V * A_U)  # element wise multiplication
-        A = torch.transpose(instance_scores, 1, 0)  # ATTENTION_BRANCHESxK
-        A = F.softmax(A, dim=1)  # softmax over K
-        # Aggregate instance-level predictions
-        Y_prob = torch.mm(A, y_hat)  # ATTENTION_BRANCHESxC
-
-        instance_scores = torch.sigmoid(instance_scores.squeeze())
-        return Y_prob, instance_scores
-    
-    

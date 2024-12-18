@@ -18,41 +18,33 @@ parent_dir = os.path.dirname(current_dir)
 
 
 def create_bags(config, data, root_dir, instance_data=None):
-    
     label_columns = config['label_columns']
     instance_columns = config['instance_columns']
     min_size = config['min_bag_size']
     max_size = config['max_bag_size']
+    use_videos = config.get('use_videos', False)  # Default to False if not specified
     
-    bags_dict = {}  # Indexed by ID
-    
+    bags_dict = {}
     image_label_map = {}
-    # Check if instance_data and instance_columns are provided and valid
+    
+    # Process instance data if provided
     if instance_data is not None and instance_columns is not None:
-        # Process instance_data only if it's a valid DataFrame
         if isinstance(instance_data, pd.DataFrame):
             for _, row in instance_data.iterrows():
                 image_name = row['ImageName']
-                # Process labels, translating booleans to integers
                 labels = []
                 for col in instance_columns:
                     if col in instance_data.columns:
                         label_value = row[col]
-                        if isinstance(label_value, bool):
-                            labels.append(int(label_value))  # Convert boolean to int
-                        else:
-                            labels.append(label_value)  # Keep as is for non-boolean values
-                
-                # Store the labels
+                        labels.append(int(label_value) if isinstance(label_value, bool) else label_value)
                 image_label_map[image_name] = labels
     
     total_rows = len(data)
     all_files = list_files(root_dir)
     
-    # Create a mapping of video prefixes to their matching files before the main loop
+    # Create video prefix mapping only if videos are enabled and VideoPaths column exists
     video_prefix_map = {}
-    use_videos = config['use_videos']
-    if use_videos:
+    if use_videos and 'VideoPaths' in data.columns:
         for f in all_files:
             basename = os.path.basename(f)
             prefix = '_'.join(basename.split('_')[:-1])
@@ -60,32 +52,31 @@ def create_bags(config, data, root_dir, instance_data=None):
                 video_prefix_map[prefix] = []
             video_prefix_map[prefix].append(f)
 
-        # Sort all lists in the map once
         for prefix in video_prefix_map:
             video_prefix_map[prefix].sort(key=lambda x: int(x.split('_')[-1].split('.')[0]))
     
-    
     for _, row in tqdm(data.iterrows(), total=total_rows):
         image_files = ast.literal_eval(row['Images'])
-        video_prefixes = ast.literal_eval(row['VideoPaths'])
         
         bag_files = []
         image_labels = []
         video_files = []
-
+        
+        # Process videos only if enabled and VideoPaths column exists
         video_filenames = set()
-        if use_videos:
+        if use_videos and 'VideoPaths' in data.columns:
+            video_prefixes = ast.literal_eval(row['VideoPaths'])
             for video_prefix in video_prefixes:
                 if video_prefix in video_prefix_map:
                     video_files.extend(video_prefix_map[video_prefix])
                     video_filenames.update(os.path.basename(f) for f in video_prefix_map[video_prefix])
 
-        # Process regular images (excluding video frames)
+        # Process regular images
         for img_name in image_files:
-            # Get labels for this image first
             labels = image_label_map.get(img_name, [None] * len(instance_columns)) if instance_columns else []
             
-            if os.path.basename(img_name) not in video_filenames:
+            # Only check against video_filenames if videos are enabled
+            if not use_videos or os.path.basename(img_name) not in video_filenames:
                 full_path = os.path.join(root_dir, img_name)
                 bag_files.append(full_path)
                 image_labels.append(labels if any(label is not None for label in labels) else [None])
@@ -95,7 +86,6 @@ def create_bags(config, data, root_dir, instance_data=None):
         if not (min_size <= total_files <= max_size):
             continue
     
-        # Extract labels from data
         bag_labels = [int(row[label]) for label in label_columns if label in data.columns]
     
         bags_dict[row['ID']] = {
@@ -103,7 +93,7 @@ def create_bags(config, data, root_dir, instance_data=None):
             'images': bag_files,
             'image_labels': image_labels,
             'videos': video_files,
-            'Accession_Number': row['Accession_Number']  # Add Accession_Number to the dictionary
+            'Accession_Number': row['Accession_Number']
         }
 
     return bags_dict  # ID : {'bag_labels': [...], 'images': [...], 'image_labels': [...], 'videos': [...], 'Accession_Number': xxx}
