@@ -99,7 +99,7 @@ if __name__ == '__main__':
                     
                     # forward
                     optimizer.zero_grad()
-                    _, _, features = model(images, projector=True)
+                    _, _, _, features = model(images, projector=True)
                     zk, zq = torch.split(features, [bsz, bsz], dim=0)
                     
                     # get loss (no teacher)
@@ -151,7 +151,7 @@ if __name__ == '__main__':
             
                 optimizer.zero_grad()
                 
-                bag_pred, instance_predictions, _ = model(xb, pred_on = True)
+                bag_pred, instance_predictions, _, _ = model(xb, pred_on = True)
                 #print(outputs)
                 #print(yb)
                 bag_pred = torch.clamp(bag_pred, 0, 1) # temp fix
@@ -188,7 +188,7 @@ if __name__ == '__main__':
                 for (data, yb, instance_yb, unique_id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
                     xb, yb = data, yb.cuda()
 
-                    bag_pred, instance_predictions, _ = model(xb, pred_on = True)
+                    bag_pred, instance_predictions, _, _ = model(xb, pred_on = True)
                     #print(instance_pred)
                     bag_pred = torch.clamp(bag_pred, 0, 1) # temp fix
 
