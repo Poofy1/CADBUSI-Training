@@ -48,51 +48,61 @@ class Linear_Classifier(nn.Module):
 class Linear_Classifier_With_FC(nn.Module):
     def __init__(self, nf, num_classes=1, L=256):
         super(Linear_Classifier_With_FC, self).__init__()
-        self.fc = nn.Linear(nf, num_classes)
         
+        # Use LayerNorm instead of BatchNorm1d
+        self.input_norm = nn.LayerNorm(nf)
+        
+        # Feature transformation before attention
+        self.feature_transform = nn.Sequential(
+            nn.Linear(nf, nf),
+            nn.LayerNorm(nf),
+            nn.ReLU(),
+            nn.Dropout(0.25)
+        )
         
         # Attention mechanism components
         self.attention_V = nn.Sequential(
             nn.Linear(nf, L),
+            nn.LayerNorm(L),
             nn.Tanh()
         )
         self.attention_U = nn.Sequential(
             nn.Linear(nf, L),
+            nn.LayerNorm(L),
             nn.Sigmoid()
         )
         self.attention_W = nn.Sequential(
-            nn.Linear(L, 1),
+            nn.Linear(L, 1)
         )
         
+        # Classifier with LayerNorm
         self.classifier = nn.Sequential(
-            nn.Linear(nf, num_classes),
+            nn.Linear(nf, nf//2),
+            nn.LayerNorm(nf//2),
+            nn.ReLU(),
+            nn.Dropout(0.25),
+            nn.Linear(nf//2, num_classes),
             nn.Sigmoid()
         )
         
-        
-    def reset_parameters(self):
-        # Reset the parameters of all the submodules in the Linear_Classifier
-        for module in self.modules():
-            if isinstance(module, nn.Linear):
-                module.reset_parameters()
-        
-        
     def forward(self, v):
+        # Normalize input features
+        v = self.input_norm(v)
+        
+        # Transform features
+        v = self.feature_transform(v)
+        
+        # Attention mechanism
         A_V = self.attention_V(v)  # KxL
         A_U = self.attention_U(v)  # KxL
         instance_scores = self.attention_W(A_V * A_U)  # element wise multiplication
         A = torch.transpose(instance_scores, 1, 0)  # ATTENTION_BRANCHESxK
         A = F.softmax(A, dim=1)  # softmax over K
         
-        # Weight the features
+        # Weight the features then get bag prediction
         weighted_features = torch.mm(A, v)  # weighted average of features
-        
-        # Get bag prediction
         Y_prob = self.classifier(weighted_features)
         
-        #feat_predictions = self.classifier(v)  # KxC // May work worse than above
-        #Y_prob = torch.mm(A, feat_predictions)  # ATTENTION_BRANCHESxC
-
         instance_scores = torch.sigmoid(instance_scores.squeeze())
         return Y_prob, instance_scores
     

@@ -44,15 +44,9 @@ class Embeddingmodel(nn.Module):
         # Calculate the embeddings for all images in one go
         feat = self.encoder(all_images)
         if not self.is_efficientnet:
-            # Max pooling
-            #feat = torch.max(feat, dim=2).values
-            #feat = torch.max(feat, dim=2).values
             
             # Adaptive average pooling
             feat = self.adaptive_avg_pool(feat).squeeze()
-            
-            # Global average pooling
-            #feat = torch.mean(feat, dim=(2, 3))
 
         if pred_on:
             # Split the embeddings back into per-bag embeddings
