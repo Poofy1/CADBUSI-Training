@@ -57,6 +57,10 @@ class Linear_Classifier_With_FC(nn.Module):
             nn.Linear(nf, nf),
             nn.LayerNorm(nf),
             nn.ReLU(),
+            nn.Dropout(0.25),
+            nn.Linear(nf, nf),  # New layer
+            nn.LayerNorm(nf),
+            nn.ReLU(),
             nn.Dropout(0.25)
         )
         
