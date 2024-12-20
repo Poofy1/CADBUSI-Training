@@ -69,8 +69,8 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "TEST16"
-    data_config = FishDataConfig  # or LesionDataConfig
+    head_name = "New_Bag_Model_CADBUSI"
+    data_config = LesionDataConfig  # or LesionDataConfig
     
     config = build_config(model_version, head_name, data_config)
     bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)
