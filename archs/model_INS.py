@@ -14,23 +14,48 @@ class Embeddingmodel(nn.Module):
         self.num_classes = num_classes
         self.nf = 512
         self.momentum = momentum
-
-        # Original encoder
-        self.encoder_q = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
-        num_features = self.encoder_q.classifier[1].in_features
-        self.encoder_q.classifier[1] = nn.Linear(num_features, self.nf)
         
-        # Momentum encoder
-        self.encoder_k = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
-        self.encoder_k.classifier[1] = nn.Linear(num_features, self.nf)
+        # Get Head
+        self.is_efficientnet = "efficientnet" in arch.lower()
+        if self.is_efficientnet:
+            # Original encoder
+            self.encoder_q = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
+            num_features = self.encoder_q.classifier[1].in_features
+            self.encoder_q.classifier[1] = nn.Linear(num_features, self.nf)
+            
+            # Momentum encoder
+            self.encoder_k = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
+            self.encoder_k.classifier[1] = nn.Linear(num_features, self.nf)
+        else:
+            # Original encoder
+            encoder_q = create_timm_body(arch, pretrained=pretrained_arch)
+            self.encoder_q = nn.Sequential(
+                encoder_q,
+                nn.AdaptiveAvgPool2d((1, 1)),
+                nn.Flatten()
+            )
+            self.nf = num_features_model(encoder_q)
+            
+            # Momentum encoder
+            encoder_k = create_timm_body(arch, pretrained=pretrained_arch)
+            self.encoder_k = nn.Sequential(
+                encoder_k,
+                nn.AdaptiveAvgPool2d((1, 1)),
+                nn.Flatten()
+            )
+            self.nf = num_features_model(encoder_k)
+
+
         
         self.aggregator = Linear_Classifier(nf=self.nf, num_classes=num_classes)
+        
+        dropout_rate=0.2
         
         # Original projector
         self.projector_q = nn.Sequential(
             nn.Linear(self.nf, 512),
             nn.ReLU(inplace=True),
-            nn.Dropout(p=0.5),  # dropout here
+            nn.Dropout(dropout_rate),
             nn.Linear(512, feat_dim)
         )
         
@@ -38,13 +63,17 @@ class Embeddingmodel(nn.Module):
         self.projector_k = nn.Sequential(
             nn.Linear(self.nf, 512),
             nn.ReLU(inplace=True),
+            nn.Dropout(dropout_rate),
             nn.Linear(512, feat_dim)
         )
         
+        
         self.ins_classifier = nn.Sequential(
-            nn.Linear(self.nf, 128),
+            nn.Linear(self.nf, 512),
+            nn.BatchNorm1d(512),
             nn.ReLU(inplace=True),
-            nn.Linear(128, num_classes),
+            nn.Dropout(dropout_rate),  # Add dropout after the first ReLU
+            nn.Linear(512, num_classes),
             nn.Sigmoid()
         )
         

@@ -1,5 +1,6 @@
 import os, pickle
 from fastai.vision.all import *
+import torch.optim as optim
 import torch.utils.data as TUD
 from tqdm import tqdm
 from torch import nn
@@ -8,7 +9,8 @@ from util.Gen_ITS2CLR_util import *
 from torch.optim import Adam
 from data.format_data import *
 from data.sudo_labels import *
-from archs.model_GenSCL import *
+#from archs.model_GenSCL import *
+from archs.model_solo_MIL import *
 from data.bag_loader import *
 from data.instance_loader import *
 from loss.genSCL import GenSupConLossv2
@@ -24,7 +26,7 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "GenSCL_OFFICAL"
+    head_name = "TEST27"
     data_config = FishDataConfig  # or LesionDataConfig
     
     mix_alpha=0.2
@@ -39,7 +41,11 @@ if __name__ == '__main__':
     model = Embeddingmodel(config['arch'], config['pretrained_arch'], num_classes = num_labels).cuda()
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")    
         
-    optimizer = Adam(model.parameters(), lr=config['learning_rate'])
+    optimizer = optim.SGD(model.parameters(),
+                        lr=config['learning_rate'],
+                        momentum=0.9,
+                        nesterov=True,
+                        weight_decay=0.001) # original .001
     BCE_loss = nn.BCELoss()
     genscl = GenSupConLossv2(temperature=0.07, base_temperature=0.07)
 
@@ -131,8 +137,8 @@ if __name__ == '__main__':
             model.aggregator.reset_parameters() # Reset the model.aggregator weights before training
         
         # Freeze the encoder
-        for param in model.encoder.parameters():
-            param.requires_grad = False
+        """for param in model.encoder.parameters():
+            param.requires_grad = False"""
         
         # Training phase
         print('\nTraining Bag Aggregator')

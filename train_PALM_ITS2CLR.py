@@ -38,7 +38,7 @@ if __name__ == '__main__':
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
     
     # LOSS INIT
-    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 90, lambda_pcon=0).cuda()
+    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 90, lambda_pcon=1).cuda()
     BCE_loss = nn.BCELoss()
     
     optimizer = optim.SGD(model.parameters(),
@@ -93,7 +93,7 @@ if __name__ == '__main__':
   
                     # forward
                     optimizer.zero_grad()
-                    _, _, features = model(images, projector=True)
+                    _, _, _, features = model(images, projector=True)
                     features.to(device)
 
                     # Get loss from PALM
@@ -135,7 +135,7 @@ if __name__ == '__main__':
                         instance_labels = instance_labels.cuda(non_blocking=True)
 
                         # Forward pass
-                        _, _, features = model(images, projector=True)
+                        _, _, _, features = model(images, projector=True)
                         features.to(device)
                         
                         # Get loss
@@ -194,7 +194,7 @@ if __name__ == '__main__':
             
                 optimizer.zero_grad()
                 
-                bag_pred, instance_pred, _ = model(xb, pred_on = True)
+                bag_pred, instance_pred, _, features = model(xb, pred_on = True)
                 
                 # Calculate bag-level loss
                 loss = BCE_loss(bag_pred, yb)
@@ -228,7 +228,7 @@ if __name__ == '__main__':
                 for (data, yb, instance_yb, unique_id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
                     xb, yb = data, yb.cuda()
 
-                    bag_pred, instance_pred, _ = model(xb, pred_on = True)
+                    bag_pred, instance_pred, _, features = model(xb, pred_on = True)
                     #print(instance_pred)
 
                     # Calculate bag-level loss

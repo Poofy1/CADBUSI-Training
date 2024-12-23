@@ -20,8 +20,13 @@ class Embeddingmodel(nn.Module):
             num_features = self.encoder.classifier[1].in_features
             self.encoder.classifier[1] = nn.Linear(num_features, nf)
         else:
-            self.encoder = create_timm_body(arch, pretrained=pretrained_arch)
-            nf = num_features_model(nn.Sequential(*self.encoder.children()))
+            base_encoder = create_timm_body(arch, pretrained=pretrained_arch)
+            self.encoder = nn.Sequential(
+                base_encoder,
+                nn.AdaptiveAvgPool2d((1, 1)),
+                nn.Flatten()
+            )
+            nf = num_features_model(base_encoder)
             
             
         self.num_classes = num_classes
@@ -29,10 +34,11 @@ class Embeddingmodel(nn.Module):
         
         #self.aggregator = Saliency_Classifier(nf=self.nf, num_classes=num_classes)
         self.aggregator = Linear_Classifier_With_FC(nf=self.nf, num_classes=num_classes)
+
         self.projector = nn.Sequential(
             nn.Linear(nf, 512),
             nn.ReLU(inplace=True),
-            nn.Linear(512, 256)
+            nn.Linear(512, feat_dim)
         )
         self.adaptive_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         print(f'Feature Map Size: {nf}')
@@ -43,10 +49,6 @@ class Embeddingmodel(nn.Module):
 
         # Calculate the embeddings for all images in one go
         feat = self.encoder(all_images)
-        if not self.is_efficientnet:
-            
-            # Adaptive average pooling
-            feat = self.adaptive_avg_pool(feat).squeeze()
 
         if pred_on:
             # Split the embeddings back into per-bag embeddings
@@ -68,5 +70,8 @@ class Embeddingmodel(nn.Module):
             feat = self.projector(feat)
             feat = F.normalize(feat, dim=1)
             
-
+        # Clean up large intermediate tensors
+        if pred_on:
+            del all_images
+            
         return logits, yhat_instances, None, feat
