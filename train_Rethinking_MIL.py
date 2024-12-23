@@ -21,8 +21,8 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "CADBUSI_R-MIL_1by1"
-    data_config = LesionDataConfig #FishDataConfig or LesionDataConfig
+    head_name = "TEST28"
+    data_config = FishDataConfig #FishDataConfig or LesionDataConfig
     
     
     config = build_config(model_version, head_name, data_config)

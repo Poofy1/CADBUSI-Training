@@ -44,15 +44,19 @@ def calculate_instance_accuracy(attention_preds, instance_labels_list):
         # Get predictions for current bag
         bag_pred = attention_preds[bag_idx]
         
-        # Make sure lengths match
-        assert len(bag_label_values) == len(bag_pred), f"Mismatch in bag {bag_idx}: labels {len(bag_label_values)}, preds {len(bag_pred)}"
+        # Create mask for valid labels (not equal to -1)
+        valid_mask = bag_label_values != -1
+        
+        # Filter out -1 labels and corresponding predictions
+        valid_labels = bag_label_values[valid_mask]
+        valid_preds = bag_pred[valid_mask]
         
         # Convert to binary predictions
-        bag_pred = (bag_pred > 0.5).float()
+        valid_preds = (valid_preds > 0.5).float()
         
         # Count correct predictions
-        correct += (bag_pred == bag_label_values).sum().item()
-        total += len(bag_label_values)
+        correct += (valid_preds == valid_labels).sum().item()
+        total += len(valid_labels)
     
     return correct / total if total > 0 else 0
 
@@ -69,8 +73,8 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "New_Bag_Model_CADBUSI"
-    data_config = LesionDataConfig  # or LesionDataConfig
+    head_name = "TEST26"
+    data_config = FishDataConfig  # or LesionDataConfig
     
     config = build_config(model_version, head_name, data_config)
     bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)
@@ -98,6 +102,7 @@ if __name__ == '__main__':
 
     #BCE_loss = BCELossWithSmoothing(smoothing=config['label_smoothing']).cuda()
     BCE_loss = nn.BCELoss()
+    #BCE_loss = FocalLoss()
     
     
     # MODEL INIT

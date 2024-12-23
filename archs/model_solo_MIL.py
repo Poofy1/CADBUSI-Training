@@ -19,12 +19,14 @@ class Embeddingmodel(nn.Module):
             # Replace the last fully connected layer with a new one
             num_features = self.encoder.classifier[1].in_features
             #self.encoder.classifier[1] = nn.Linear(num_features, nf)
-            self.encoder.classifier[1] = nn.Sequential(
-                nn.Dropout(0.5),
-                nn.Linear(num_features, nf)
-            )
+            self.encoder.classifier[1] = nn.Sequential(nn.Linear(num_features, nf))
         else:
-            self.encoder = create_timm_body(arch, pretrained=pretrained_arch)
+            base_encoder = create_timm_body(arch, pretrained=pretrained_arch)
+            self.encoder = nn.Sequential(
+                base_encoder,
+                nn.AdaptiveAvgPool2d((1, 1)),
+                nn.Flatten()
+            )
             nf = num_features_model(nn.Sequential(*self.encoder.children()))
             
         
@@ -62,9 +64,6 @@ class Embeddingmodel(nn.Module):
 
         # Calculate the embeddings for all images in one go
         feat = self.encoder(all_images)
-        if not self.is_efficientnet:
-            feat = self.adaptive_avg_pool(feat).squeeze()
-        
         
         # INSTANCE CLASS
         instance_predictions = self.ins_classifier(feat)

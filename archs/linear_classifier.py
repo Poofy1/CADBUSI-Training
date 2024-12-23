@@ -7,9 +7,7 @@ import torch.nn.functional as F
 class Linear_Classifier(nn.Module):
     def __init__(self, nf, num_classes=1, L=256):
         super(Linear_Classifier, self).__init__()
-        self.fc = nn.Linear(nf, num_classes)
-        
-        
+
         # Attention mechanism components
         self.attention_V = nn.Sequential(
             nn.Linear(nf, L),

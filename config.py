@@ -13,13 +13,13 @@ class BaseConfig:
 
 class ITS2CLRConfig(BaseConfig):
     def __init__(self):
-        self.feature_extractor_train_count = 1
-        self.MIL_train_count = 1 #6
-        self.initial_ratio = 0.3
-        self.final_ratio = 1
+        self.feature_extractor_train_count = 5
+        self.MIL_train_count = 5
+        self.initial_ratio = 0.2
+        self.final_ratio = .8
         self.total_epochs = 100
-        self.warmup_epochs = 1
-        self.learning_rate = 0.0005
+        self.warmup_epochs = 10
+        self.learning_rate = 0.001
         self.reset_aggregator = False
 
 class LesionDataConfig(BaseConfig):
@@ -38,7 +38,7 @@ class LesionDataConfig(BaseConfig):
 
 class FishDataConfig(BaseConfig):
     def __init__(self):
-        self.dataset_name = 'imagenette2'
+        self.dataset_name = 'imagenette2_hard2'
         self.label_columns = ['Has_Fish']
         self.instance_columns = ['Has_Fish']
         self.img_size = 128
