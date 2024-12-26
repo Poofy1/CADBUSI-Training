@@ -25,8 +25,8 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "TEST_PALM_ITS2CLR"
-    data_config = FishDataConfig  # or LesionDataConfig
+    head_name = "TEST39"
+    data_config = LesionDataConfig  # or LesionDataConfig
     
     config = build_config(model_version, head_name, data_config)
     bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)
@@ -56,6 +56,9 @@ if __name__ == '__main__':
     while state['epoch'] < config['total_epochs']:
 
         if not state['pickup_warmup']: # Are we resuming from a head model?
+            
+            
+            torch.cuda.empty_cache()
         
             # Used the instance predictions from bag training to update the Instance Dataloader
             instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform)
@@ -158,11 +161,19 @@ if __name__ == '__main__':
                 print(f'[{iteration+1}/{target_count}] Train Loss: {losses.avg:.5f}, Train Acc: {instance_train_acc:.5f}')
                 print(f'[{iteration+1}/{target_count}] Val Loss:   {val_losses.avg:.5f}, Val Acc:   {instance_val_acc:.5f}')
 
+                # Clean up
+                torch.cuda.empty_cache()
+        
                 # Save the model
                 if val_losses.avg < state['val_loss_instance']:
                     state['val_loss_instance'] = val_losses.avg
                     state['mode'] = 'instance'
                     save_metrics(config, state, train_pred, val_pred)
+                    
+                    if state['warmup']:
+                        target_folder = state['head_folder']
+                    else:
+                        target_folder = state['model_folder']
                     
                     if state['warmup']:
                         save_state(state, config, instance_train_acc, val_losses.avg, instance_val_acc, model, optimizer)
@@ -177,6 +188,12 @@ if __name__ == '__main__':
             print("Warmup Phase Finished")
             state['warmup'] = False
         
+        # Clean up
+        del instance_dataloader_train
+        del instance_dataloader_val
+        del instance_dataset_train
+        del instance_dataset_val
+        torch.cuda.empty_cache()
         
         print('\nTraining Bag Aggregator')
         for iteration in range(config['MIL_train_count']):
@@ -257,7 +274,7 @@ if __name__ == '__main__':
                         
             
             
-            
+            torch.cuda.empty_cache()
 
             # Save the model
             if val_loss < state['val_loss_bag']:
@@ -287,4 +304,8 @@ if __name__ == '__main__':
                 # Save selection
                 with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
                     pickle.dump(state['selection_mask'], file)
+                    
+                    
+                    
+            
 

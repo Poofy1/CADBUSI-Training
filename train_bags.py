@@ -73,7 +73,7 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "TEST26"
+    head_name = "TEST37"
     data_config = FishDataConfig  # or LesionDataConfig
     
     config = build_config(model_version, head_name, data_config)
@@ -85,14 +85,7 @@ if __name__ == '__main__':
     model = Embeddingmodel(config['arch'], config['pretrained_arch'], num_classes = num_labels).cuda()
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
     
-    # LOSS INIT
-    config.update({
-        'mixup_alpha': 0.2,
-        'cutmix_alpha': 1.0,
-        'label_smoothing': 0.1,
-        'warmup_epochs': 5,
-        'cosine_schedule': True
-    })
+
 
     optimizer = optim.SGD(model.parameters(),
                         lr=config['learning_rate'],

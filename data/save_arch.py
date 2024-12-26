@@ -87,11 +87,12 @@ def save_state(state, config, train_acc, val_loss, val_acc, bagmodel, optimizer,
 
     # Save updated stats with all_fpr and all_tpr
     with open(stats_path, 'wb') as f:
+        val_loss_key = 'val_loss_instance' if state['mode'] == 'instance' else 'val_loss_bag'
         pickle.dump({
             'epoch': state['epoch'] + 1,
             'train_losses': train_losses_over_epochs,
             'valid_losses': valid_losses_over_epochs,
-            'val_loss': val_loss,
+            val_loss_key: val_loss,
             'all_fpr': all_fpr,
             'all_tpr': all_tpr
         }, f)

@@ -21,7 +21,7 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "TEST28"
+    head_name = "TEST37"
     data_config = FishDataConfig #FishDataConfig or LesionDataConfig
     
     
@@ -59,7 +59,7 @@ if __name__ == '__main__':
             instance_dataset_val = Instance_Dataset(bags_val, state['selection_mask'], transform=val_transform, warmup=True, dual_output=True)
             train_sampler = InstanceSampler(instance_dataset_train, config['instance_batch_size'], strategy=1)
             val_sampler = InstanceSampler(instance_dataset_val, config['instance_batch_size'], strategy=1)
-            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, num_workers=2, collate_fn = collate_instance, pin_memory=True)
+            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, num_workers=2, collate_fn = collate_instance)
             instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_sampler=val_sampler, collate_fn = collate_instance)
             
             if state['warmup']:
@@ -93,7 +93,7 @@ if __name__ == '__main__':
 
                     # forward
                     optimizer.zero_grad()
-                    _, _, instance_predictions, feat_q, iwscl_loss, pseudo_labels = model(im_q, im_k, true_label = instance_labels, projector=True)
+                    _, instance_predictions, _, feat_q, iwscl_loss, pseudo_labels = model(im_q, im_k, true_label = instance_labels, projector=True, bag_on=True)
                     feat_q.to(device)
                     
                     
@@ -150,7 +150,7 @@ if __name__ == '__main__':
                         instance_labels = instance_labels.cuda(non_blocking=True)
 
                         # Forward pass
-                        _, _, instance_predictions, feat_q, iwscl_loss, pseudo_labels = model(im_q, true_label = instance_labels, projector=True)
+                        _, instance_predictions, _, feat_q, iwscl_loss, pseudo_labels = model(im_q, true_label = instance_labels, projector=True, bag_on=True)
                         feat_q.to(device)
                         
                         # Calculate loss
@@ -218,7 +218,7 @@ if __name__ == '__main__':
                 optimizer.zero_grad()
 
                 # Forward pass
-                bag_pred, _, instance_pred, _, _, _ = model(images, bag_on=True)
+                bag_pred, instance_pred, _, _, _, _ = model(images, bag_on=True)
                 
                 bag_pred = torch.clamp(bag_pred, min=0.000001, max=.999999)
 

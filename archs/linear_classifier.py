@@ -8,17 +8,34 @@ class Linear_Classifier(nn.Module):
     def __init__(self, nf, num_classes=1, L=256):
         super(Linear_Classifier, self).__init__()
 
+        # Use LayerNorm instead of BatchNorm1d
+        self.input_norm = nn.LayerNorm(nf)
+
+        # Feature transformation before attention
+        self.feature_transform = nn.Sequential(
+            nn.Linear(nf, nf),
+            nn.LayerNorm(nf),
+            nn.ReLU(),
+            nn.Dropout(0.25),
+            nn.Linear(nf, nf),  # New layer
+            nn.LayerNorm(nf),
+            nn.ReLU(),
+            nn.Dropout(0.25)
+        )
+        
         # Attention mechanism components
         self.attention_V = nn.Sequential(
             nn.Linear(nf, L),
+            nn.LayerNorm(L),
             nn.Tanh()
         )
         self.attention_U = nn.Sequential(
             nn.Linear(nf, L),
+            nn.LayerNorm(L),
             nn.Sigmoid()
         )
         self.attention_W = nn.Sequential(
-            nn.Linear(L, 1),
+            nn.Linear(L, 1)
         )
         
     def reset_parameters(self):
@@ -28,6 +45,12 @@ class Linear_Classifier(nn.Module):
                 module.reset_parameters()
         
     def forward(self, x, instance_pred):
+        
+        # Normalize input features
+        x = self.input_norm(x)
+        
+        # Transform features
+        x = self.feature_transform(x)
         
         A_V = self.attention_V(x)  # KxL
         A_U = self.attention_U(x)  # KxL

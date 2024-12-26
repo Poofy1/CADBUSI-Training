@@ -26,7 +26,7 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "TEST27"
+    head_name = "TEST35"
     data_config = FishDataConfig  # or LesionDataConfig
     
     mix_alpha=0.2
@@ -59,7 +59,7 @@ if __name__ == '__main__':
         if not state['pickup_warmup']: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
-            instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=state['warmup'], dual_output=True)
+            instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=True, dual_output=True)
             
             if state['warmup']:
                 sampler = InstanceSampler(instance_dataset_train, config['instance_batch_size'])
@@ -105,7 +105,9 @@ if __name__ == '__main__':
                     
                     # forward
                     optimizer.zero_grad()
-                    _, _, _, features = model(images, projector=True)
+
+                    all_images = torch.cat(images, dim=0).cuda()  # TEMP FOR TESTING
+                    _, _, _, features = model(all_images, projector=True)
                     zk, zq = torch.split(features, [bsz, bsz], dim=0)
                     
                     # get loss (no teacher)
@@ -173,7 +175,7 @@ if __name__ == '__main__':
                 total += yb.size(0)
                 correct += (predicted == yb).sum().item()
                 
-                for instance_id, bag_id in enumerate(id):
+                for instance_id, bag_id in enumerate(unique_id):
                     train_bag_logits[bag_id] = instance_predictions[instance_id].detach().cpu().numpy()
 
                 # Store raw predictions and targets

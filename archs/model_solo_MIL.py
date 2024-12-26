@@ -14,7 +14,7 @@ class Embeddingmodel(nn.Module):
         self.is_efficientnet = "efficientnet" in arch.lower()
         
         if self.is_efficientnet:
-            self.encoder = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
+            self.encoder = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
             nf = 512
             # Replace the last fully connected layer with a new one
             num_features = self.encoder.classifier[1].in_features
