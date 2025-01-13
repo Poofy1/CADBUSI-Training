@@ -16,7 +16,7 @@ from data.format_data import *
 from data.sudo_labels import *
 from loss.palm import PALM
 from data.save_arch import *
-from archs.model_PALM import *
+from archs.model_solo_MIL import *
 from data.bag_loader import *
 from data.instance_loader import *
 
@@ -35,14 +35,14 @@ def test_model_and_collect_distances(model, palm, bag_dataloader, instance_datal
     
     with torch.no_grad():
         # Bag-level testing
-        """for images, yb, _, _ in tqdm(bag_dataloader, desc="Testing bags"):
-            bag_pred, _, _= model(images)
+        for images, yb, _, unique_id in tqdm(bag_dataloader, desc="Testing bags"):
+            bag_pred, _, _, _= model(images, pred_on=True)
             bag_targets.extend(yb.cpu().numpy())
-            bag_predictions.extend((bag_pred > 0.5).float().cpu().numpy())"""
+            bag_predictions.extend((bag_pred > 0.5).float().cpu().numpy())
         
         for images, instance_labels, unique_ids in tqdm(instance_dataloader, desc="Testing instances"):
             images = images.to(device)
-            _, fc_pred, features = model(images, projector=True)
+            _, _, fc_pred, features = model(images, projector=True)
             palm_pred, dist = palm.predict(features)
             
             distances.extend(dist.cpu().numpy())
@@ -57,7 +57,7 @@ def test_model_and_collect_distances(model, palm, bag_dataloader, instance_datal
                 fc_predictions.extend((fc_pred > 0.5).float().cpu().numpy())
             palm_predictions.extend(palm_pred.cpu().numpy())
                 
-    return (np.array(bag_targets), np.array(bag_predictions), 
+    return (np.array(bag_targets), np.array(bag_predictions),  
             np.array(instance_targets), np.array(fc_predictions), np.array(palm_predictions),
             np.array(distances), instance_info, np.array(instance_features))
 
@@ -72,21 +72,21 @@ def run_test(config):
     ])
     
     # Prepare PALM
-    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 90, lambda_pcon=0).cuda()
+    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 0, lambda_pcon=1).cuda()
     palm.load_state(palm_path)
 
     # Prepare test data
     export_location = f"D:/DATA/CASBUSI/exports/{config['dataset_name']}/"
     cropped_images = f"F:/Temp_SSD_Data/{config['dataset_name']}_{config['img_size']}_images/"
-    bags_train, bags_test = prepare_all_data(config)
+    bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)
     num_classes = len(config['label_columns']) + 1
     num_labels = len(config['label_columns'])
 
     # Create test datasets and dataloaders
-    bag_dataset_test = BagOfImagesDataset(bags_test, transform=test_transform, save_processed=False)
+    bag_dataset_test = BagOfImagesDataset(bags_val, transform=test_transform, save_processed=False)
     bag_dataloader_test = TUD.DataLoader(bag_dataset_test, batch_size=config['bag_batch_size'], collate_fn=collate_bag, shuffle=False)
 
-    instance_dataset_test = Instance_Dataset(bags_test, [], transform=test_transform, warmup=True)
+    instance_dataset_test = Instance_Dataset(bags_val, [], transform=test_transform, warmup=True)
     instance_dataloader_test = TUD.DataLoader(instance_dataset_test, batch_size=config['instance_batch_size'], collate_fn=collate_instance, shuffle=False)
 
     # Load the trained model
@@ -95,9 +95,10 @@ def run_test(config):
     
     # Load the saved model state
     if model_version:
-        model_path = f"{model_folder}/{config['head_name']}/{model_version}/model.pth"
+        save_dir = f"{model_folder}/{config['head_name']}/{model_version}"
     else:
-        model_path = f"{model_folder}/{config['head_name']}/model.pth"
+        save_dir = f"{model_folder}/{config['head_name']}"
+    model_path = os.path.join(save_dir, "model.pth")
     model.load_state_dict(torch.load(model_path))
 
     # Test the model
@@ -105,25 +106,28 @@ def run_test(config):
     bag_targets, bag_predictions, instance_targets, fc_predictions, palm_predictions, distances, instance_info, instance_features = results
 
     # Extract prototypes
-    prototypes = palm.protos.cpu().numpy()
+    prototypes = palm.protos.cpu().detach().numpy()
 
     # Calculate prototype labels based on class counts
     prototype_labels = palm.proto_class_counts.cpu().numpy().argmax(axis=1)
+    
+    save_dir = os.path.join(save_dir, 'tests')
+    os.makedirs(save_dir, exist_ok=True)
 
     # Visualize prototypes and instances
-    visualize_prototypes_and_instances(prototypes, prototype_labels, instance_features, instance_targets, config['dataset_name'], config['head_name'], f'{current_dir}/results/PALM_OOD/')
+    visualize_prototypes_and_instances(prototypes, prototype_labels, instance_features, instance_targets, config['dataset_name'], config['head_name'], save_dir)
     
      
     # Calculate and print metrics
     print(f"\nResults for dataset: {config['dataset_name']}")
     print("Bag-level Metrics:")
-    calculate_metrics(bag_targets, bag_predictions)
+    calculate_metrics(bag_targets, bag_predictions, save_path=os.path.join(save_dir, 'bag'))
 
     print("\nFC Instance-level Metrics:")
-    calculate_metrics(instance_targets, fc_predictions)
+    calculate_metrics(instance_targets, fc_predictions, instance_info, save_path=os.path.join(save_dir, 'instance'))
 
     print("\nPALM Instance-level Metrics:")
-    calculate_metrics(instance_targets, palm_predictions)
+    calculate_metrics(instance_targets, palm_predictions, instance_info, save_path=os.path.join(save_dir, 'palm'))
 
     return distances, instance_info
 
@@ -136,8 +140,8 @@ if __name__ == '__main__':
     os.makedirs(f'{current_dir}/results/PALM_OOD/', exist_ok=True)
     
     # Load the model configuration
-    head_name = "PALM_ITS2CLR_CADBUSI_6_fulltest"
-    model_version = "" #Leave "" to read HEAD
+    head_name = "TEST76"
+    model_version = "1" #Leave "" to read HEAD
     
     # loaded configuration
     model_path = os.path.join(model_folder, head_name, model_version)
@@ -149,9 +153,9 @@ if __name__ == '__main__':
     distances_1, _ = run_test(config)
     
     
-    config['dataset_name'] = 'imagenette2_hard'
-    config['label_columns'] = ['Has_Fish']
-    config['instance_columns'] = ['Has_Fish'] 
+    """config['dataset_name'] = 'imagenette_dog'
+    config['label_columns'] = ['Has_Highland']
+    config['instance_columns'] = ['Has_Highland'] 
     
     
     # Test 2: Imagenette dataset
@@ -175,3 +179,4 @@ if __name__ == '__main__':
     plt.legend()
     plt.savefig(f'{current_dir}/results/PALM_OOD/{head_name}_prototype_distribution.png')
     plt.show()
+    """

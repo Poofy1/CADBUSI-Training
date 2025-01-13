@@ -16,7 +16,7 @@ class ITS2CLRConfig(BaseConfig):
         self.feature_extractor_train_count = 5
         self.MIL_train_count = 5
         self.initial_ratio = 0.2
-        self.final_ratio = .8
+        self.final_ratio = .9
         self.total_epochs = 100
         self.warmup_epochs = 10
         self.learning_rate = 0.001
@@ -38,9 +38,23 @@ class LesionDataConfig(BaseConfig):
 
 class FishDataConfig(BaseConfig):
     def __init__(self):
-        self.dataset_name = 'imagenette2_hard2'
+        self.dataset_name = 'imagenette2_hard'
         self.label_columns = ['Has_Fish']
         self.instance_columns = ['Has_Fish']
+        self.img_size = 128
+        self.bag_batch_size = 5
+        self.min_bag_size = 2
+        self.max_bag_size = 25
+        self.instance_batch_size = 25
+        self.arch = 'resnet18'
+        self.pretrained_arch = False
+        self.use_videos = False
+        
+class DogDataConfig(BaseConfig):
+    def __init__(self):
+        self.dataset_name = 'imagenette_dog'
+        self.label_columns = ['Has_Highland']
+        self.instance_columns = ['Has_Highland']
         self.img_size = 128
         self.bag_batch_size = 5
         self.min_bag_size = 2

@@ -8,27 +8,13 @@ import shutil
 import pandas as pd
 
 output_dir = "D:\DATA\CASBUSI\exports"
-export_name = "imagenette_dog"
-positive_percentage = 0.2  # Percentage of positive instances to include 
+export_name = "imagenette_dog_hard"
+source_folder = "D:/DATA/CASBUSI/exports/ImageNet_Dog_Raw"  # Add your source folder path here
+positive_percentage = .2 #0.2
 min_bag_size = 2
 max_bag_size = 10
-target_label = 'n01440764'
-
-
-if not os.path.exists(f'{output_dir}/imagenette2.tgz'):
-    # Download the Imagenette dataset
-    url = 'https://s3.amazonaws.com/fast-ai-imageclas/imagenette2.tgz'
-    response = requests.get(url, stream=True)
-    with open(f'{output_dir}/imagenette2.tgz', 'wb') as file:
-        shutil.copyfileobj(response.raw, file)
-
-if not os.path.exists(f'{output_dir}/{export_name}'):
-    # Extract the dataset
-    with tarfile.open(f'{output_dir}/imagenette2.tgz', 'r:gz') as tar_ref:
-        tar_ref.extractall(f'{output_dir}/{export_name}')
-
-# Delete the .tgz file
-#os.remove(f'{output_dir}/imagenette2.tgz')
+target_label = 'n02098286'
+label_name = 'Has_Highland'
 
 # Set up the directories
 images_dir = f'{output_dir}/{export_name}/images'
@@ -40,23 +26,23 @@ with open(f'{output_dir}/{export_name}/image_labels.csv', 'w', newline='') as fi
     writer.writerow(['Image', 'Label'])
     
     # Get total number of files for the progress bar
-    total_files = sum([len(files) for r, d, files in os.walk(f'{output_dir}/{export_name}/imagenette2/train') if any(f.endswith('.JPEG') for f in files)])
+    total_files = sum([len(files) for r, d, files in os.walk(source_folder) if any(f.endswith(('.jpg', '.jpeg', '.png', '.JPEG')) for f in files)])
     
     # Move all images to the images directory and write image labels to the CSV file
     with tqdm(total=total_files, desc="Processing images") as pbar:
-        for label_dir in os.listdir(f'{output_dir}/{export_name}/imagenette2/train'):
-            label_path = os.path.join(f'{output_dir}/{export_name}/imagenette2/train', label_dir)
+        for label_dir in os.listdir(source_folder):
+            label_path = os.path.join(source_folder, label_dir)
             if os.path.isdir(label_path):
                 for file in os.listdir(label_path):
-                    if file.endswith('.JPEG'):
+                    if file.lower().endswith(('.jpg', '.jpeg', '.png', '.jpeg')):
                         src_path = os.path.join(label_path, file)
-                        dst_path = os.path.join(images_dir, file)
-                        shutil.move(src_path, dst_path)
-                        writer.writerow([file, label_dir])
+                        # Create a unique filename to avoid conflicts
+                        new_filename = f"{label_dir}_{file}"
+                        dst_path = os.path.join(images_dir, new_filename)
+                        shutil.copy2(src_path, dst_path)  # Using copy2 instead of move
+                        writer.writerow([new_filename, label_dir])
                         pbar.update(1)
 
-
-shutil.rmtree(f'{output_dir}/{export_name}/imagenette2/')
 
 # Read the CSV file
 df = pd.read_csv(f'{output_dir}/{export_name}/image_labels.csv')
@@ -93,8 +79,8 @@ for image_name, label in image_labels.items():
         instance_data.append([bag_id, int(has_fish), image_name])
 
 # Create DataFrames
-train_df = pd.DataFrame(train_data, columns=['Valid', 'Images', 'ID', 'Has_Fish', 'Accession_Number'])
-instance_df = pd.DataFrame(instance_data, columns=['Accession_Number', 'Has_Fish', 'ImageName'])
+train_df = pd.DataFrame(train_data, columns=['Valid', 'Images', 'ID', label_name, 'Accession_Number'])
+instance_df = pd.DataFrame(instance_data, columns=['Accession_Number', label_name, 'ImageName'])
 
 # Write DataFrames to CSV files
 train_df.to_csv(f'{output_dir}/{export_name}/TrainData.csv', index=False)

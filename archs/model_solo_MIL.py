@@ -34,6 +34,7 @@ class Embeddingmodel(nn.Module):
         self.nf = nf
 
         self.aggregator = Linear_Classifier(nf=self.nf, num_classes=num_classes)
+        #self.aggregator = Saliency_Classifier(nf=self.nf, num_classes=num_classes)
         dropout_rate=0.2
         self.projector = nn.Sequential(
             nn.Linear(nf, 512),
@@ -43,11 +44,11 @@ class Embeddingmodel(nn.Module):
         )
         
         self.ins_classifier = nn.Sequential(
-            nn.Linear(nf, 512),
-            nn.BatchNorm1d(512),
+            nn.Linear(nf, 256),
+            nn.BatchNorm1d(256),
             nn.ReLU(inplace=True),
             nn.Dropout(dropout_rate),  # Add dropout after the first ReLU
-            nn.Linear(512, num_classes),
+            nn.Linear(256, num_classes),
             nn.Sigmoid()
         )
         
