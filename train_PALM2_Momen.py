@@ -24,8 +24,8 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "PALM2_Momen_TEST_2"
-    data_config = FishDataConfig  # or LesionDataConfig
+    head_name = "TEST76"
+    data_config = DogDataConfig  # or LesionDataConfig
     
     config = build_config(model_version, head_name, data_config)
     bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)
@@ -37,9 +37,8 @@ if __name__ == '__main__':
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
     
     # LOSS INIT
-    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 90, lambda_pcon=3).cuda()
+    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 0, lambda_pcon=1).cuda()
     BCE_loss = nn.BCELoss()
-    CE_loss = nn.CrossEntropyLoss()
     
     optimizer = optim.SGD(model.parameters(),
                         lr=config['learning_rate'],
@@ -64,11 +63,10 @@ if __name__ == '__main__':
         
             # Used the instance predictions from bag training to update the Instance Dataloader
             instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=state['warmup'], dual_output=False)
-            instance_dataset_val = Instance_Dataset(bags_val, state['selection_mask'], transform=val_transform, warmup=True)
+            instance_dataset_val = Instance_Dataset(bags_val, [], transform=val_transform, warmup=True)
             train_sampler = InstanceSampler(instance_dataset_train, config['instance_batch_size'], strategy=1)
-            val_sampler = InstanceSampler(instance_dataset_val, config['instance_batch_size'], strategy=1)
-            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, num_workers=4, collate_fn = collate_instance, pin_memory=True)
-            instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_sampler=val_sampler, collate_fn = collate_instance)
+            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, collate_fn = collate_instance)
+            instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_size=config['instance_batch_size'], collate_fn = collate_instance)
             
             if state['warmup']:
                 target_count = config['warmup_epochs']
@@ -150,7 +148,7 @@ if __name__ == '__main__':
                             combined_labels[idx] = updated_label
                             
                     # Store raw predictions and targets
-                    train_pred.update(instance_predictions, instance_labels, unique_ids)
+                    train_pred.update(instance_predictions, combined_labels, unique_ids)
                     
 
                     # Calculate BCE loss for confident instances
@@ -177,6 +175,9 @@ if __name__ == '__main__':
                         instance_total_correct += instance_correct
                         
                         total_samples += instance_labels[labeled_mask].size(0)
+                        
+                    # Clean up
+                    torch.cuda.empty_cache()
 
                 # Calculate accuracies
                 palm_train_acc = palm_total_correct / total_samples
@@ -228,6 +229,9 @@ if __name__ == '__main__':
                         
                         # Store raw predictions and targets
                         val_pred.update(instance_predictions, instance_labels, unique_id)
+                        
+                        # Clean up
+                        torch.cuda.empty_cache()
 
                 # Calculate accuracies
                 palm_val_acc = palm_total_correct / total_samples if total_samples > 0 else 0
@@ -242,6 +246,11 @@ if __name__ == '__main__':
                     state['mode'] = 'instance'
                     save_metrics(config, state, train_pred, val_pred)
                     
+                    if state['warmup']:
+                        target_folder = state['head_folder']
+                    else:
+                        target_folder = state['model_folder']
+                        
                     if state['warmup']:
                         save_state(state, config, instance_train_acc, val_losses.avg, instance_val_acc, model, optimizer)
                         palm.save_state(os.path.join(target_folder, "palm_state.pkl"))
@@ -286,6 +295,9 @@ if __name__ == '__main__':
                 
                 # Store raw predictions and targets
                 train_pred.update(bag_pred, yb, unique_id)
+                
+                # Clean up
+                torch.cuda.empty_cache()
                     
             
             
@@ -317,6 +329,9 @@ if __name__ == '__main__':
 
                     # Store raw predictions and targets
                     val_pred.update(bag_pred, yb, unique_id)
+                    
+                    # Clean up
+                    torch.cuda.empty_cache()
                         
             val_loss = total_val_loss / total
             val_acc = correct / total

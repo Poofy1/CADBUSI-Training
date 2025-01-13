@@ -24,11 +24,11 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 if __name__ == '__main__':
 
     # Config
-    model_version = '2'
-    head_name = "Palm4_TESTING"
-    data_config = FishDataConfig  # or LesionDataConfig
+    model_version = '1'
+    head_name = "TEST77"
+    data_config = DogDataConfig  # or LesionDataConfig
     
-    mix_alpha=0.2  #0.2
+    mix_alpha=0.0  #0.2
     mix='mixup'
     
     config = build_config(model_version, head_name, data_config)
@@ -41,7 +41,7 @@ if __name__ == '__main__':
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
     
     
-    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 90, lambda_pcon=3).cuda() #lambda_pcon = 0 means prototypes are not moved
+    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 0, lambda_pcon=1).cuda() #lambda_pcon = 0 means prototypes are not moved
     genscl = GenSupConLossv2(temperature=0.07, base_temperature=0.07)
     BCE_loss = nn.BCELoss()
     
@@ -63,11 +63,10 @@ if __name__ == '__main__':
         
             # Used the instance predictions from bag training to update the Instance Dataloader
             instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=True, dual_output=True)
-            instance_dataset_val = Instance_Dataset(bags_val, state['selection_mask'], transform=val_transform, warmup=True, dual_output=True)
+            instance_dataset_val = Instance_Dataset(bags_val, [], transform=val_transform, warmup=True, dual_output=True)
             train_sampler = InstanceSampler(instance_dataset_train, config['instance_batch_size'], strategy=1)
-            val_sampler = InstanceSampler(instance_dataset_val, config['instance_batch_size'], strategy=1)
-            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, num_workers=4, collate_fn = collate_instance, pin_memory=True)
-            instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_sampler=val_sampler, collate_fn = collate_instance)
+            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, collate_fn = collate_instance)
+            instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_size=config['instance_batch_size'], collate_fn = collate_instance)
             
             if state['warmup']:
                 target_count = config['warmup_epochs']
@@ -101,7 +100,6 @@ if __name__ == '__main__':
                     optimizer.zero_grad()
                     _, _, instance_predictions, features = model(images, pred_on=True, projector=True)
                     features.to(device)
-                    
                     
                     # GenSCL Loss
                     bsz = instance_labels.shape[0]
@@ -149,7 +147,7 @@ if __name__ == '__main__':
                         total_samples += instance_labels.size(0)
                     
                     # Store raw predictions and targets
-                    train_pred.update(instance_predictions, instance_labels, unique_id)
+                    train_pred.update(instance_predictions[:bsz], instance_labels, unique_id)
 
 
                 # Calculate accuracies
@@ -210,7 +208,7 @@ if __name__ == '__main__':
                         total_samples += instance_labels.size(0)
                         
                         # Store raw predictions and targets
-                        val_pred.update(instance_predictions, instance_labels, unique_id)
+                        val_pred.update(instance_predictions[:bsz], instance_labels, unique_id)
 
                 # Calculate accuracies
                 palm_val_acc = palm_total_correct / total_samples
@@ -226,6 +224,11 @@ if __name__ == '__main__':
                     state['mode'] = 'instance'
                     save_metrics(config, state, train_pred, val_pred)
                     
+                    if state['warmup']:
+                        target_folder = state['head_folder']
+                    else:
+                        target_folder = state['model_folder']
+                        
                     if state['warmup']:
                         save_state(state, config, instance_train_acc, val_losses.avg, instance_val_acc, model, optimizer)
                         palm.save_state(os.path.join(target_folder, "palm_state.pkl"))

@@ -85,6 +85,7 @@ class Linear_Classifier_With_FC(nn.Module):
             nn.Dropout(0.25)
         )
         
+        
         # Attention mechanism components
         self.attention_V = nn.Sequential(
             nn.Linear(nf, L),
@@ -149,10 +150,12 @@ class Saliency_Classifier(nn.Module):
         # Attention mechanism components
         self.attention_V = nn.Sequential(
             nn.Linear(nf, L),
+            nn.LayerNorm(L),
             nn.Tanh()
         )
         self.attention_U = nn.Sequential(
             nn.Linear(nf, L),
+            nn.LayerNorm(L),
             nn.Sigmoid()
         )
         self.attention_W = nn.Sequential(

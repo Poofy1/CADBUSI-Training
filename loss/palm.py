@@ -21,7 +21,7 @@ class PALM(nn.Module):
         
         self.n_protos = n_protos
         self.proto_m = proto_m
-        self.register_buffer("protos", torch.rand(self.n_protos,feat_dim))
+        self.register_buffer("protos", torch.randn(self.n_protos,feat_dim))
         self.protos = F.normalize(self.protos, dim=-1)
         
         # Initialize class counts for each prototype
@@ -59,9 +59,6 @@ class PALM(nn.Module):
         
     def mle_loss(self, features, targets, update_prototypes=True):
         # update prototypes by EMA
-        #features = torch.cat(torch.unbind(features, dim=1), dim=0)
-        # Disabled becuase features are already correct shape?
-        
         anchor_labels = targets.contiguous().repeat(self.nviews).view(-1, 1)
         contrast_labels = torch.arange(self.num_classes).repeat(self.cache_size).view(-1,1).cuda()
         mask = torch.eq(anchor_labels, contrast_labels.T).float().cuda()

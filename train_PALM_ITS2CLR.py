@@ -25,8 +25,8 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "TEST39"
-    data_config = LesionDataConfig  # or LesionDataConfig
+    head_name = "TEST74"
+    data_config = DogDataConfig  # FishDataConfig or DogDataConfig
     
     config = build_config(model_version, head_name, data_config)
     bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)
@@ -38,7 +38,7 @@ if __name__ == '__main__':
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
     
     # LOSS INIT
-    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 90, lambda_pcon=1).cuda()
+    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 0, lambda_pcon=1).cuda()
     BCE_loss = nn.BCELoss()
     
     optimizer = optim.SGD(model.parameters(),
@@ -59,14 +59,13 @@ if __name__ == '__main__':
             
             
             torch.cuda.empty_cache()
-        
+            #state['selection_mask']
             # Used the instance predictions from bag training to update the Instance Dataloader
-            instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform)
-            instance_dataset_val = Instance_Dataset(bags_val, state['selection_mask'], transform=val_transform)
+            instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=True)
+            instance_dataset_val = Instance_Dataset(bags_val, [], transform=val_transform)
             train_sampler = InstanceSampler(instance_dataset_train, config['instance_batch_size'], strategy=1)
-            val_sampler = InstanceSampler(instance_dataset_val, config['instance_batch_size'], strategy=2)
             instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, collate_fn = collate_instance)
-            instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_sampler=val_sampler, collate_fn = collate_instance)
+            instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_size=config['instance_batch_size'], collate_fn = collate_instance)
             
             if state['warmup']:
                 target_count = config['warmup_epochs']
@@ -89,11 +88,14 @@ if __name__ == '__main__':
                 model.train()
                 train_pred = PredictionTracker()
                 
+                # Initialize dictionaries to accumulate loss components
+                train_loss_components = {}
+                
                 # Iterate over the training data
                 for idx, (images, instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
                     images = images.cuda(non_blocking=True)
                     instance_labels = instance_labels.cuda(non_blocking=True)
-  
+                    
                     # forward
                     optimizer.zero_grad()
                     _, _, _, features = model(images, projector=True)
@@ -101,11 +103,17 @@ if __name__ == '__main__':
 
                     # Get loss from PALM
                     loss, loss_dict = palm(features, instance_labels)
+                    
+                    # Accumulate loss components
+                    for key, value in loss_dict.items():
+                        if key not in train_loss_components:
+                            train_loss_components[key] = 0
+                        train_loss_components[key] += value.item() if torch.is_tensor(value) else value
 
                     # Backward pass and optimization step
-                    loss.backward()
+                    loss.backward(retain_graph=True)
                     optimizer.step()
-        
+
                     # Update the loss meter
                     losses.update(loss.item(), images[0].size(0))
                     
@@ -120,10 +128,11 @@ if __name__ == '__main__':
                     
                     # Store raw predictions and targets
                     train_pred.update(instance_predictions, instance_labels, unique_id)
+                    
+                    # Clean up
+                    torch.cuda.empty_cache()
 
                 instance_train_acc = total_correct / total_samples
-                
-                
                 
                 # Validation loop
                 model.eval()
@@ -131,6 +140,9 @@ if __name__ == '__main__':
                 val_total_correct = 0
                 val_total_samples = 0
                 val_pred = PredictionTracker()
+                
+                # Initialize dictionaries to accumulate validation loss components
+                val_loss_components = {}
 
                 with torch.no_grad():
                     for idx, (images, instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_val, total=len(instance_dataloader_val))):
@@ -143,6 +155,13 @@ if __name__ == '__main__':
                         
                         # Get loss
                         total_loss, loss_dict = palm(features, instance_labels, update_prototypes=False)
+                        
+                        # Accumulate validation loss components
+                        for key, value in loss_dict.items():
+                            if key not in val_loss_components:
+                                val_loss_components[key] = 0
+                            val_loss_components[key] += value.item() if torch.is_tensor(value) else value
+                            
                         val_losses.update(total_loss.item(), images[0].size(0))
 
                         # Get predictions from PALM
@@ -158,11 +177,23 @@ if __name__ == '__main__':
 
                 instance_val_acc = val_total_correct / val_total_samples
                 
+                # Calculate average loss components
+                train_batch_count = len(instance_dataloader_train)
+                val_batch_count = len(instance_dataloader_val)
+                
+                avg_train_components = {k: v/train_batch_count for k, v in train_loss_components.items()}
+                avg_val_components = {k: v/val_batch_count for k, v in val_loss_components.items()}
+                
                 print(f'[{iteration+1}/{target_count}] Train Loss: {losses.avg:.5f}, Train Acc: {instance_train_acc:.5f}')
+                print('Training Loss Components:')
+                for k, v in avg_train_components.items():
+                    print(f'    {k}: {v:.5f}')
+                    
                 print(f'[{iteration+1}/{target_count}] Val Loss:   {val_losses.avg:.5f}, Val Acc:   {instance_val_acc:.5f}')
-
-                # Clean up
-                torch.cuda.empty_cache()
+                print('Validation Loss Components:')
+                for k, v in avg_val_components.items():
+                    print(f'    {k}: {v:.5f}')
+                        
         
                 # Save the model
                 if val_losses.avg < state['val_loss_instance']:
@@ -229,6 +260,8 @@ if __name__ == '__main__':
                     
                 # Store raw predictions and targets
                 train_pred.update(bag_pred, yb, unique_id)
+                
+                torch.cuda.empty_cache()
 
             train_loss = total_loss / total
             train_acc = correct / total
@@ -258,6 +291,8 @@ if __name__ == '__main__':
 
                     # Store raw predictions and targets
                     val_pred.update(bag_pred, yb, unique_id)
+                    
+                    torch.cuda.empty_cache()
             
 
             val_loss = total_val_loss / total

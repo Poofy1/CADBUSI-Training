@@ -342,7 +342,7 @@ def evaluate_model_performance(targets, predictions, target_specificity, save_pa
     
     
             
-def calculate_metrics(targets, predictions, ids, target_specificity=0.80, save_path="./"):
+def calculate_metrics(targets, predictions, ids = None, target_specificity=0.80, save_path="./"):
     # Create directory if it doesn't exist
     os.makedirs(save_path, exist_ok=True)
     
@@ -365,7 +365,8 @@ def calculate_metrics(targets, predictions, ids, target_specificity=0.80, save_p
     predictions = predictions[binary_indices]
     
     # Collect worst performing labels
-    get_worse_instances(targets, predictions, ids, save_path)
+    if ids:
+        get_worse_instances(targets, predictions, ids, save_path)
     
     evaluate_model_performance(targets, predictions, target_specificity, save_path)
 
