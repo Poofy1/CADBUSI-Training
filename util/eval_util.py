@@ -405,7 +405,16 @@ def plot_distribution_analysis(targets, predictions, output_path='./'):
     # Plot prediction distributions by label
     for label in unique_labels:
         label_preds = predictions[targets == label]
-        sns.kdeplot(data=label_preds, label=f'Label {label}', ax=ax2)
+        
+        # Check if there's variance in the predictions
+        if np.var(label_preds) > 0:
+            sns.kdeplot(data=label_preds, label=f'Label {label}', ax=ax2)
+        else:
+            # If no variance, plot a single vertical line at the prediction value
+            value = label_preds[0]
+            ax2.axvline(x=value, label=f'Label {label}', linestyle='--')
+            ax2.text(value, ax2.get_ylim()[1], f'Label {label}\n(all predictions = {value:.3f})', 
+                    rotation=90, va='top', ha='right')
     
     ax2.set_title('Prediction Distribution by Label')
     ax2.set_xlabel('Prediction Value')

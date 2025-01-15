@@ -27,17 +27,31 @@ class Embeddingmodel(nn.Module):
         self.nf = nf
 
         self.aggregator = Linear_Classifier(nf=self.nf, num_classes=num_classes)
+        dropout_rate=0.2
         self.projector = nn.Sequential(
             nn.Linear(nf, 512),
             nn.ReLU(inplace=True),
+            nn.Dropout(dropout_rate),
             nn.Linear(512, feat_dim)
         )
         
-        self.upsample = nn.Upsample(scale_factor=16, mode='bilinear', align_corners=False)
         self.saliency_layer = nn.Sequential(
             nn.Conv2d(nf, num_classes, (1,1), bias = False),
             nn.Sigmoid()
         )
+        
+        """self.saliency_layer = nn.Sequential(
+            nn.Conv2d(nf, nf//2, 3, padding=1),
+            nn.BatchNorm2d(nf//2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(nf//2, nf//4, 3, padding=1),
+            nn.BatchNorm2d(nf//4),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(nf//4, num_classes, 1),
+            nn.Sigmoid()
+        )"""
+
+        self.pool_patches = 3
         
         self.adaptive_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         print(f'Feature Map Size: {nf}')
@@ -54,10 +68,9 @@ class Embeddingmodel(nn.Module):
         
         
         # SALIENCY CLASS
-        upsampled_feat = self.upsample(feat)
-        saliency_maps = self.saliency_layer(upsampled_feat)  # Generate saliency maps using a convolutional layer
+        saliency_maps = self.saliency_layer(feat)  # Generate saliency maps using a convolutional layer
         map_flatten = saliency_maps.flatten(start_dim=-2, end_dim=-1) 
-        selected_area = map_flatten.topk(3, dim=2)[0]
+        selected_area = map_flatten.topk(self.pool_patches, dim=2)[0]
         instance_predictions = selected_area.mean(dim=2).squeeze()  # Calculate the mean of the selected patches for instance predictions
 
         feat = self.adaptive_avg_pool(feat).squeeze()
