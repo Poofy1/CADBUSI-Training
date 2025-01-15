@@ -8,7 +8,7 @@ from util.Gen_ITS2CLR_util import *
 import torch.optim as optim
 from data.format_data import *
 from data.sudo_labels import *
-from archs.model_solo_MIL import *
+from archs.model_solo_MIL_saliency import *
 from data.bag_loader import *
 from data.instance_loader import *
 from loss.palm import PALM
@@ -24,8 +24,10 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "TEST76"
-    data_config = DogDataConfig  # or LesionDataConfig
+    head_name = "TEST79"
+    data_config = FishDataConfig  # or LesionDataConfig
+    
+    print(head_name)
     
     config = build_config(model_version, head_name, data_config)
     bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)

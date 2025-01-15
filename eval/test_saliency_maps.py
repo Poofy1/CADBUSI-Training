@@ -10,7 +10,7 @@ from data.format_data import *
 from data.sudo_labels import *
 from loss.palm import PALM
 from data.save_arch import *
-from archs.model_PALM2_solo_saliency import *
+from archs.model_solo_MIL_saliency import *
 from data.bag_loader import *
 from data.instance_loader import *
 from PIL import ImageDraw, ImageFont
@@ -30,7 +30,7 @@ if __name__ == '__main__':
     model_folder = os.path.join(parent_dir, "models")  
     
     # Load the model configuration
-    head_name = "Palm2_OFFICIAL_SAL_efficientnet_b0"
+    head_name = "TEST79"
     model_version = "1" #Leave "" to read HEAD
     
     # loaded configuration
@@ -41,7 +41,7 @@ if __name__ == '__main__':
     output_path = get_metrics_path(head_name, model_version)
 
     # Get Training Data
-    bags_train, bags_val = prepare_all_data(config)
+    bags_train, bags_val, _, _ = prepare_all_data(config)
     num_labels = len(config['label_columns'])
     
     val_transform = T.Compose([
@@ -74,7 +74,8 @@ if __name__ == '__main__':
     bag_labels = []
     saliency_maps_list = []
 
-
+    output_path = os.path.join(output_path, "saliency_maps")
+    os.makedirs(output_path, exist_ok=True)
 
     # Create a CSV file to store all predictions
     csv_file_path = os.path.join(output_path, 'all_predictions.csv')
