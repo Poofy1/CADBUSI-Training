@@ -25,7 +25,7 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "TEST77"
+    head_name = "TEST117"
     data_config = DogDataConfig  # or LesionDataConfig
     
     mix_alpha=0.0  #0.2
@@ -41,7 +41,7 @@ if __name__ == '__main__':
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
     
     
-    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 0, lambda_pcon=1).cuda() #lambda_pcon = 0 means prototypes are not moved
+    palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 0, lambda_pcon=0).cuda() #lambda_pcon = 0 means prototypes are not moved
     genscl = GenSupConLossv2(temperature=0.07, base_temperature=0.07)
     BCE_loss = nn.BCELoss()
     
@@ -64,9 +64,10 @@ if __name__ == '__main__':
             # Used the instance predictions from bag training to update the Instance Dataloader
             instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=True, dual_output=True)
             instance_dataset_val = Instance_Dataset(bags_val, [], transform=val_transform, warmup=True, dual_output=True)
-            train_sampler = InstanceSampler(instance_dataset_train, config['instance_batch_size'], strategy=1)
+            train_sampler = InstanceSampler(instance_dataset_train, config['instance_batch_size'])
+            val_sampler = InstanceSampler(instance_dataset_val, config['instance_batch_size'], seed=1)
             instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, collate_fn = collate_instance)
-            instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_size=config['instance_batch_size'], collate_fn = collate_instance)
+            instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_sampler=val_sampler, collate_fn = collate_instance)
             
             if state['warmup']:
                 target_count = config['warmup_epochs']
@@ -124,7 +125,7 @@ if __name__ == '__main__':
                     bce_loss_value = BCE_loss(instance_predictions[:bsz], instance_labels.float())
 
                     # Backward pass and optimization step
-                    total_loss = palm_loss + bce_loss_value + (genscl_loss * .5)
+                    total_loss = palm_loss + (genscl_loss * .1) + bce_loss_value 
                     total_loss.backward()
                     optimizer.step()
         
@@ -190,7 +191,7 @@ if __name__ == '__main__':
                         genscl_loss = genscl([zk, zq], [l_q, l_k], None)
 
                         # Calculate total loss
-                        total_loss = palm_loss + bce_loss_value + genscl_loss
+                        total_loss = palm_loss + (genscl_loss * .1) + bce_loss_value 
                         val_losses.update(total_loss.item(), im_q.size(0))
                         
                         # Get predictions
@@ -237,7 +238,7 @@ if __name__ == '__main__':
 
 
 
-        if state['pickup_warmup']: 
+        """if state['pickup_warmup']: 
             state['pickup_warmup'] = False
         if state['warmup']:
             print("Warmup Phase Finished")
@@ -366,5 +367,5 @@ if __name__ == '__main__':
                 
                 # Save selection
                 with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
-                    pickle.dump(state['selection_mask'], file)
+                    pickle.dump(state['selection_mask'], file)"""
 

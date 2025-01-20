@@ -33,8 +33,8 @@ class Embeddingmodel(nn.Module):
         self.num_classes = num_classes
         self.nf = nf
 
-        #self.aggregator = Linear_Classifier(nf=self.nf, num_classes=num_classes)
-        self.aggregator = Saliency_Classifier(nf=self.nf, num_classes=num_classes)
+        self.aggregator = Linear_Classifier(nf=self.nf, num_classes=num_classes)
+        #self.aggregator = Saliency_Classifier(nf=self.nf, num_classes=num_classes)
         dropout_rate=0.2
         self.projector = nn.Sequential(
             nn.Linear(nf, 512),
@@ -71,7 +71,7 @@ class Embeddingmodel(nn.Module):
 
         bag_pred = None
         bag_instance_predictions = None
-        if True:
+        if pred_on:
             # Split the embeddings back into per-bag embeddings
             split_sizes = [bag.size(0) for bag in input]
             h_per_bag = torch.split(feat, split_sizes, dim=0)
@@ -94,5 +94,4 @@ class Embeddingmodel(nn.Module):
         if pred_on:
             del all_images
                 
-        print(bag_instance_predictions)
         return bag_pred, bag_instance_predictions, instance_predictions.squeeze(), proj

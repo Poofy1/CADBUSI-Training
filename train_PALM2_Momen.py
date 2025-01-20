@@ -24,10 +24,8 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "TEST79"
-    data_config = FishDataConfig  # or LesionDataConfig
-    
-    print(head_name)
+    head_name = "TEST123"
+    data_config = DogDataConfig  # or LesionDataConfig
     
     config = build_config(model_version, head_name, data_config)
     bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)
@@ -42,11 +40,15 @@ if __name__ == '__main__':
     palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 0, lambda_pcon=1).cuda()
     BCE_loss = nn.BCELoss()
     
-    optimizer = optim.SGD(model.parameters(),
+    # Combine the parameters from both the embedding model and the PALM model
+    opt_params = [{'params': model.parameters(),  'lr': config['learning_rate']},          # Backbone
+                  {'params': palm.protos,         'lr': config['learning_rate'] * 0.1}]  
+    
+    optimizer = optim.SGD(opt_params,
                         lr=config['learning_rate'],
                         momentum=0.9,
                         nesterov=True,
-                        weight_decay=0.001) # original .001
+                        weight_decay=0.001)
     
     
     # MODEL INIT
@@ -66,9 +68,10 @@ if __name__ == '__main__':
             # Used the instance predictions from bag training to update the Instance Dataloader
             instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=state['warmup'], dual_output=False)
             instance_dataset_val = Instance_Dataset(bags_val, [], transform=val_transform, warmup=True)
-            train_sampler = InstanceSampler(instance_dataset_train, config['instance_batch_size'], strategy=1)
+            train_sampler = InstanceSampler(instance_dataset_train, config['instance_batch_size'])
+            val_sampler = InstanceSampler(instance_dataset_val, config['instance_batch_size'], seed=1)
             instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, collate_fn = collate_instance)
-            instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_size=config['instance_batch_size'], collate_fn = collate_instance)
+            instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_sampler=val_sampler, collate_fn = collate_instance)
             
             if state['warmup']:
                 target_count = config['warmup_epochs']
@@ -260,7 +263,7 @@ if __name__ == '__main__':
 
 
 
-        if state['pickup_warmup']: 
+        """if state['pickup_warmup']: 
             state['pickup_warmup'] = False
         if state['warmup']:
             print("Warmup Phase Finished")
@@ -363,6 +366,6 @@ if __name__ == '__main__':
                 print("Saved checkpoint due to improved val_loss_bag")
 
                 
-                state['epoch'] += 1
+                state['epoch'] += 1"""
                 
 

@@ -30,8 +30,8 @@ if __name__ == '__main__':
     model_folder = os.path.join(parent_dir, "models")  
     
     # Load the model configuration
-    head_name = "TEST79"
-    model_version = "1" #Leave "" to read HEAD
+    head_name = "TEST1000"
+    model_version = "" #Leave "" to read HEAD
     
     # loaded configuration
     model_path = os.path.join(model_folder, head_name, model_version)
@@ -90,7 +90,7 @@ if __name__ == '__main__':
                 xb, yb = data, yb.cuda()
                 bag_pred, bag_instance_predictions, instance_predictions, saliency_maps = model(xb, pred_on=True)
                 
-                print(f"Saliency maps shape: {saliency_maps.shape}")
+                #print(f"Saliency maps shape: {saliency_maps.shape}")
                 
                 for bag_index, bag in enumerate(xb):
                     for i in range(bag.size(0)):

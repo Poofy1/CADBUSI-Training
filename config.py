@@ -38,7 +38,7 @@ class LesionDataConfig(BaseConfig):
 
 class FishDataConfig(BaseConfig):
     def __init__(self):
-        self.dataset_name = 'imagenette2_hard'
+        self.dataset_name = 'imagenette2' #'imagenette2_hard'
         self.label_columns = ['Has_Fish']
         self.instance_columns = ['Has_Fish']
         self.img_size = 128
@@ -52,7 +52,7 @@ class FishDataConfig(BaseConfig):
         
 class DogDataConfig(BaseConfig):
     def __init__(self):
-        self.dataset_name = 'imagenette_dog'
+        self.dataset_name = 'imagenette_dog' #'imagenette_dog_hard'
         self.label_columns = ['Has_Highland']
         self.instance_columns = ['Has_Highland']
         self.img_size = 128
@@ -97,6 +97,8 @@ def build_config(model_version, head_name, data_config_class):
     its2clr_config = ITS2CLRConfig().to_dict()
     data_config = data_config_class().to_dict()
     path_config = PathConfig().to_dict()
+    
+    print(f'Selected model: {head_name}, version: {model_version}')
     
     config = {
         "head_name": head_name,

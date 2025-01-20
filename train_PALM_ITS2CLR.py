@@ -8,7 +8,7 @@ from util.Gen_ITS2CLR_util import *
 import torch.optim as optim
 from data.format_data import *
 from data.sudo_labels import *
-from archs.model_solo_MIL import *
+from archs.model_solo_MIL_saliency import *
 from data.bag_loader import *
 from data.instance_loader import *
 from loss.palm import PALM
@@ -17,16 +17,14 @@ from config import *
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
-    
-
 
 
 if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "TEST74"
-    data_config = DogDataConfig  # FishDataConfig or DogDataConfig
+    head_name = "TEST120"
+    data_config = FishDataConfig  # FishDataConfig or DogDataConfig
     
     config = build_config(model_version, head_name, data_config)
     bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)
@@ -41,13 +39,16 @@ if __name__ == '__main__':
     palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 0, lambda_pcon=1).cuda()
     BCE_loss = nn.BCELoss()
     
-    optimizer = optim.SGD(model.parameters(),
+    # Combine the parameters from both the embedding model and the PALM model
+    opt_params = list(model.parameters()) + list(palm.parameters())
+    
+    optimizer = optim.SGD(opt_params,
                         lr=config['learning_rate'],
                         momentum=0.9,
                         nesterov=True,
                         weight_decay=0.001)
     
-    
+
     # MODEL INIT
     model, optimizer, state = setup_model(model, config, optimizer)
     palm.load_state(state['palm_path'])
@@ -109,9 +110,9 @@ if __name__ == '__main__':
                         if key not in train_loss_components:
                             train_loss_components[key] = 0
                         train_loss_components[key] += value.item() if torch.is_tensor(value) else value
-
+                    
                     # Backward pass and optimization step
-                    loss.backward(retain_graph=True)
+                    loss.backward()
                     optimizer.step()
 
                     # Update the loss meter
@@ -212,7 +213,7 @@ if __name__ == '__main__':
                         print("Saved checkpoint due to improved val_loss_instance")
 
 
-
+        """
         if state['pickup_warmup']: 
             state['pickup_warmup'] = False
         if state['warmup']:
@@ -338,7 +339,7 @@ if __name__ == '__main__':
                 
                 # Save selection
                 with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
-                    pickle.dump(state['selection_mask'], file)
+                    pickle.dump(state['selection_mask'], file)"""
                     
                     
                     

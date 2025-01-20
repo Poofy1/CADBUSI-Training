@@ -14,7 +14,7 @@ sys.path.append(parent_dir)
 from util.eval_util import *
 from data.format_data import *
 from data.sudo_labels import *
-from loss.palm import PALM
+from loss.palm_proto_alt import PALM
 from data.save_arch import *
 from archs.model_solo_MIL import *
 from data.bag_loader import *
@@ -78,16 +78,13 @@ def run_test(config):
     # Prepare test data
     export_location = f"D:/DATA/CASBUSI/exports/{config['dataset_name']}/"
     cropped_images = f"F:/Temp_SSD_Data/{config['dataset_name']}_{config['img_size']}_images/"
-    bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)
+    bags_train, bags_val, bag_dataloader_train, bag_dataloader_test = prepare_all_data(config)
     num_classes = len(config['label_columns']) + 1
     num_labels = len(config['label_columns'])
 
-    # Create test datasets and dataloaders
-    bag_dataset_test = BagOfImagesDataset(bags_val, transform=test_transform, save_processed=False)
-    bag_dataloader_test = TUD.DataLoader(bag_dataset_test, batch_size=config['bag_batch_size'], collate_fn=collate_bag, shuffle=False)
-
+            
     instance_dataset_test = Instance_Dataset(bags_val, [], transform=test_transform, warmup=True)
-    instance_dataloader_test = TUD.DataLoader(instance_dataset_test, batch_size=config['instance_batch_size'], collate_fn=collate_instance, shuffle=False)
+    instance_dataloader_test = TUD.DataLoader(instance_dataset_test, batch_size=config['instance_batch_size'], collate_fn = collate_instance)
 
     # Load the trained model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -140,8 +137,8 @@ if __name__ == '__main__':
     os.makedirs(f'{current_dir}/results/PALM_OOD/', exist_ok=True)
     
     # Load the model configuration
-    head_name = "TEST76"
-    model_version = "1" #Leave "" to read HEAD
+    head_name = "TEST116"
+    model_version = "" #Leave "" to read HEAD
     
     # loaded configuration
     model_path = os.path.join(model_folder, head_name, model_version)

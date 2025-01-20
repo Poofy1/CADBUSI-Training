@@ -171,9 +171,10 @@ def collate_instance(batch):
 
 
 class InstanceSampler(Sampler):
-    def __init__(self, dataset, batch_size, strategy=1):
+    def __init__(self, dataset, batch_size, strategy=1, seed=None):
         self.dataset = dataset
         self.batch_size = batch_size
+        self.seed = seed
         
         # Get indices for each class
         self.indices_positive = [i for i, label in enumerate(self.dataset.output_image_labels) if label == 1]
@@ -196,13 +197,17 @@ class InstanceSampler(Sampler):
         print(f"Total batches: {self.total_batches}")"""
 
     def __iter__(self):
-        # Randomly sample from majority class to match minority class size
+        # If a seed is specified, set it for reproducible sampling
+        if self.seed is not None:
+            random.seed(self.seed)
+
+        # Randomly sample from non-positive class to match the number of positive samples
         selected_non_positive = random.sample(self.indices_non_positive, self.samples_per_class)
         
         # Create balanced dataset
         all_indices = self.indices_positive + selected_non_positive
         
-        # Shuffle initially
+        # Shuffle once before creating batches
         random.shuffle(all_indices)
         
         # Create batches ensuring at least one positive sample per batch
@@ -215,11 +220,11 @@ class InstanceSampler(Sampler):
             batch.append(pos_sample)
             remaining_size -= 1
             
-            # Fill rest of batch from shuffled indices, excluding the chosen positive sample
+            # Fill the rest of the batch from the shuffled indices, excluding the chosen positive sample
             available_indices = [idx for idx in all_indices if idx != pos_sample]
             batch.extend(random.sample(available_indices, remaining_size))
             
-            # Final shuffle of the batch
+            # Shuffle the final batch order
             random.shuffle(batch)
             
             yield batch
