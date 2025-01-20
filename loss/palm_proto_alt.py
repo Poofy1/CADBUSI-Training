@@ -33,7 +33,7 @@ class PALM(nn.Module):
         out = torch.matmul(features, self.protos.detach().T)
             
         Q = torch.exp(out.detach() / self.epsilon).t()# Q is K-by-B for consistency with notations from our paper
-        B = Q.shape[1]  # number of samples to assign
+        B = Q.shape[1] # number of samples to assign
         K = Q.shape[0] # how many prototypes
 
         # make the matrix sums to 1
@@ -114,42 +114,45 @@ class PALM(nn.Module):
         loss = -torch.mean(log_prob)
         return loss   
     
-    def proto_contra(self):
+    def proto_contra(self, features, targets, temperature=0.5):
+        total_features = features.shape[0]
         
-        protos = F.normalize(self.protos, dim=1)
-
-        proto_labels = torch.arange(self.num_classes).repeat(self.cache_size).view(-1,1).cuda()
-        mask = torch.eq(proto_labels, proto_labels.T).float().cuda()    
-
-        contrast_count = self.cache_size
-        contrast_feature = protos
-
-        anchor_feature = contrast_feature
-        anchor_count = contrast_count
-
-        # compute logits
-        anchor_dot_contrast = torch.div(
-            torch.matmul(anchor_feature, contrast_feature.T),
-            0.5)
-        # for numerical stability
+        # Create label mask
+        feature_labels = targets.contiguous().repeat(self.nviews).view(-1,1)
+        mask = torch.eq(feature_labels, feature_labels.T).float().cuda()
+        
+        # Compute similarity matrix with numerical stability fixes
+        features = F.normalize(features, dim=1)  # Ensure features are normalized
+        anchor_dot_contrast = torch.matmul(features, features.T)
+        
+        # Apply temperature scaling
+        anchor_dot_contrast = anchor_dot_contrast / temperature
+        
+        # For numerical stability
         logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
         logits = anchor_dot_contrast - logits_max.detach()
-
-        # mask-out self-contrast cases
+        
+        # Mask out self-contrast cases
         logits_mask = torch.scatter(
             torch.ones_like(mask),
             1,
-            torch.arange(self.num_classes * anchor_count).view(-1, 1).to('cuda'), # Are we sure this is right???
+            torch.arange(total_features).view(-1, 1).to('cuda'),
             0
         )
-        mask = mask*logits_mask
+        mask = mask * logits_mask
         
-        pos = torch.sum(F.normalize(mask, dim=1, p=1)*logits, dim=1)
-        neg=torch.log(torch.sum(logits_mask * torch.exp(logits), dim=1))
-        log_prob=pos-neg
-
-        # loss
-        loss = - torch.mean(log_prob)
+        # Add numerical stability checks
+        exp_logits = torch.exp(logits) * logits_mask
+        log_sum_exp = torch.log(exp_logits.sum(dim=1, keepdim=True) + 1e-6)
+        
+        # Compute pos term with mask sum clamp
+        mask_sum = mask.sum(dim=1)
+        mask_sum = torch.clamp(mask_sum, min=1e-6)  # Prevent division by zero
+        pos = torch.sum(mask * logits, dim=1) / mask_sum
+        
+        # Compute final loss with stability checks
+        log_prob = pos - log_sum_exp.squeeze()
+        loss = -torch.mean(log_prob)
         return loss
     
     
@@ -178,9 +181,10 @@ class PALM(nn.Module):
         g_con = self.mle_loss(features, targets, update_prototypes)
         loss += g_con
         loss_dict['mle'] = g_con.cpu().item()
-                    
+        
+        g_dis = 0
         if self.lambda_pcon > 0:            
-            g_dis = self.lambda_pcon * self.proto_contra()
+            g_dis = self.lambda_pcon * self.proto_contra(features, targets)
             loss += g_dis
             loss_dict['proto_contra'] = g_dis.cpu().item()
                                 

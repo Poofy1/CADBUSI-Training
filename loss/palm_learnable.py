@@ -21,8 +21,13 @@ class PALM(nn.Module):
         
         self.n_protos = n_protos
         self.proto_m = proto_m
-        self.register_buffer("protos", torch.randn(self.n_protos,feat_dim))
-        self.protos = F.normalize(self.protos, dim=-1)
+        self.protos = nn.Parameter(
+            F.normalize(
+                torch.randn(self.n_protos, feat_dim), 
+                dim=-1
+            ),
+            requires_grad=True
+        )
         
         # Initialize class counts for each prototype
         self.proto_class_counts = torch.zeros(self.n_protos, self.num_classes).cuda() # ADDED
@@ -30,33 +35,44 @@ class PALM(nn.Module):
         self.distribution_limit = 0
         
     def sinkhorn(self, features):
-        out = torch.matmul(features, self.protos.detach().T)
-            
-        Q = torch.exp(out.detach() / self.epsilon).t()# Q is K-by-B for consistency with notations from our paper
+        # Compute similarity scores
+        out = torch.matmul(features, F.normalize(self.protos, dim=1).T)
+        
+        # Apply numerical stability fixes
+        out_max, _ = torch.max(out, dim=1, keepdim=True)
+        out_scaled = out - out_max  # Subtract maximum for numerical stability
+        
+        # Compute Q with better numerical stability
+        Q = torch.exp(out_scaled / self.epsilon).t()
+        
         B = Q.shape[1]  # number of samples to assign
-        K = Q.shape[0] # how many prototypes
+        K = Q.shape[0]  # how many prototypes
 
-        # make the matrix sums to 1
+        # Normalize Q
         sum_Q = torch.sum(Q)
-        if torch.isinf(sum_Q):
-            self.protos = F.normalize(self.protos, dim=1, p=2)
-            out = torch.matmul(features, self.ws(self.protos.detach()).T)
-            Q = torch.exp(out.detach() / self.epsilon).t()# Q is K-by-B for consistency with notations from our paper
+        if torch.isinf(sum_Q) or torch.isnan(sum_Q):
+            # If we still get numerical issues, fall back to an even more stable computation
+            normalized_protos = F.normalize(self.protos, dim=1, p=2)
+            out = torch.matmul(features, normalized_protos.T)
+            out_max, _ = torch.max(out, dim=1, keepdim=True)
+            out_scaled = out - out_max
+            Q = torch.exp(out_scaled / self.epsilon).t()
             sum_Q = torch.sum(Q)
-        Q /= sum_Q
+        
+        Q = Q / sum_Q
 
         for _ in range(self.sinkhorn_iterations):
-            # normalize each row: total weight per prototype must be 1/K
+            # Row normalization
             Q = F.normalize(Q, dim=1, p=1)
-            Q /= K
-
-            # normalize each column: total weight per sample must be 1/B
+            Q = Q / K
+            
+            # Column normalization
             Q = F.normalize(Q, dim=0, p=1)
-            Q /= B
+            Q = Q / B
 
-        Q *= B
-        return Q.t()
-        
+        Q = Q * B
+        return Q.t().clone()  # Use clone() to ensure we return a new tensor
+            
     def mle_loss(self, features, targets, update_prototypes=True):
         # update prototypes by EMA
         anchor_labels = targets.contiguous().repeat(self.nviews).view(-1, 1)
@@ -79,17 +95,14 @@ class PALM(nn.Module):
         # original
         else:
             update_mask = F.normalize(F.normalize(mask * Q, dim=1, p=1),dim=0, p=1)
-        update_features = torch.matmul(update_mask.T, features)
         
         if update_prototypes:
-            self.proto_class_counts += torch.matmul(update_mask.T, F.one_hot(targets, num_classes=self.num_classes).float()) # ADDED
-            protos = self.protos
-            protos = self.proto_m * protos + (1-self.proto_m) * update_features
-            self.protos = F.normalize(protos, dim=1, p=2)
-        
-        Q = self.sinkhorn(features)
-        
-        proto_dis = torch.matmul(features, self.protos.detach().T)
+            with torch.no_grad():
+                self.proto_class_counts += torch.matmul(
+                    Q.T, F.one_hot(targets, num_classes=self.num_classes).float()
+                )
+
+        proto_dis = torch.matmul(features, F.normalize(self.protos, dim=1).T)
         anchor_dot_contrast = torch.div(proto_dis, self.temp)
         logits = anchor_dot_contrast
        
@@ -114,32 +127,26 @@ class PALM(nn.Module):
         loss = -torch.mean(log_prob)
         return loss   
     
-    def proto_contra(self):
-        
-        protos = F.normalize(self.protos, dim=1)
-
+    def proto_contra(self, proto_temp = 0.1):
         proto_labels = torch.arange(self.num_classes).repeat(self.cache_size).view(-1,1).cuda()
         mask = torch.eq(proto_labels, proto_labels.T).float().cuda()    
 
-        contrast_count = self.cache_size
-        contrast_feature = protos
-
+        contrast_feature = F.normalize(self.protos, dim=1)  # Normalize here
         anchor_feature = contrast_feature
-        anchor_count = contrast_count
 
         # compute logits
         anchor_dot_contrast = torch.div(
             torch.matmul(anchor_feature, contrast_feature.T),
-            0.5)
+            proto_temp)
         # for numerical stability
         logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
         logits = anchor_dot_contrast - logits_max.detach()
-
+        
         # mask-out self-contrast cases
         logits_mask = torch.scatter(
             torch.ones_like(mask),
             1,
-            torch.arange(self.num_classes * anchor_count).view(-1, 1).to('cuda'), # Are we sure this is right???
+            torch.arange(self.n_protos).view(-1, 1).to('cuda'),
             0
         )
         mask = mask*logits_mask
@@ -158,7 +165,7 @@ class PALM(nn.Module):
         _, proto_classes = torch.max(self.proto_class_counts, dim=1)
         
         # Compute the similarity between input features and prototypes
-        similarity = torch.matmul(features, self.protos.T)
+        similarity = torch.matmul(features, F.normalize(self.protos, dim=1).T)
         
         # Get the index of the prototype with the highest similarity
         distances, prototype_indices = torch.max(similarity, dim=1)
@@ -178,13 +185,14 @@ class PALM(nn.Module):
         g_con = self.mle_loss(features, targets, update_prototypes)
         loss += g_con
         loss_dict['mle'] = g_con.cpu().item()
-                    
+        
+        g_dis = 0     
         if self.lambda_pcon > 0:            
             g_dis = self.lambda_pcon * self.proto_contra()
             loss += g_dis
             loss_dict['proto_contra'] = g_dis.cpu().item()
-                                
-        self.protos = self.protos.detach()
+
+        #self.protos = self.protos.detach()
                 
         return loss, loss_dict
     
@@ -194,7 +202,7 @@ class PALM(nn.Module):
     # Saving / Loading State
     def save_state(self, filename, max_distance = 0):
         state = {
-            'protos': self.protos,
+            'protos': self.protos.data,
             'proto_class_counts': self.proto_class_counts,
             'num_classes': self.num_classes,
             'temp': self.temp,
@@ -218,6 +226,10 @@ class PALM(nn.Module):
             with open(filename, 'rb') as f:
                 state = pickle.load(f)
             
+            if 'protos' in state:
+                self.protos = nn.Parameter(state['protos'])
+                del state['protos']
+
             # Update all the attributes
             for key, value in state.items():
                 setattr(self, key, value)

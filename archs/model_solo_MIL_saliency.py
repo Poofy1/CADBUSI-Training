@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from fastai.vision.all import *
 import torch.nn.functional as F
-from archs.backbone import create_timm_body
+from archs.backbone import *
 from torchvision.models import efficientnet_b3, EfficientNet_B3_Weights
 from archs.linear_classifier import *
 
@@ -19,7 +19,8 @@ class Embeddingmodel(nn.Module):
             # Remove the classifier to keep spatial dimensions
             self.encoder = nn.Sequential(*list(self.encoder.children())[:-2])
         else:
-            self.encoder = create_timm_body(arch, pretrained=pretrained_arch)
+            #self.encoder = create_timm_body(arch, pretrained=pretrained_arch)
+            self.encoder, saliency_size = create_timm_body_multi(arch, pretrained=True)
             nf = num_features_model(nn.Sequential(*self.encoder.children()))
             
         
@@ -36,21 +37,9 @@ class Embeddingmodel(nn.Module):
         )
         
         self.saliency_layer = nn.Sequential(
-            nn.Conv2d(nf, num_classes, (1,1), bias = False),
+            nn.Conv2d(saliency_size, num_classes, (1,1), bias = False),
             nn.Sigmoid()
         )
-        
-        """self.saliency_layer = nn.Sequential(
-            nn.Conv2d(nf, nf//2, 3, padding=1),
-            nn.BatchNorm2d(nf//2),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(nf//2, nf//4, 3, padding=1),
-            nn.BatchNorm2d(nf//4),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(nf//4, num_classes, 1),
-            nn.Sigmoid()
-        )"""
-
         self.pool_patches = 3
         
         self.adaptive_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
@@ -64,11 +53,11 @@ class Embeddingmodel(nn.Module):
             all_images = input
 
         # Calculate the embeddings for all images in one go
-        feat = self.encoder(all_images)
+        feat, pooled_feat = self.encoder(all_images)
         
         
         # SALIENCY CLASS
-        saliency_maps = self.saliency_layer(feat)  # Generate saliency maps using a convolutional layer
+        saliency_maps = self.saliency_layer(pooled_feat)  # Generate saliency maps using a convolutional layer
         map_flatten = saliency_maps.flatten(start_dim=-2, end_dim=-1) 
         selected_area = map_flatten.topk(self.pool_patches, dim=2)[0]
         instance_predictions = selected_area.mean(dim=2).squeeze()  # Calculate the mean of the selected patches for instance predictions
