@@ -24,8 +24,8 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "TEST123"
-    data_config = DogDataConfig  # or LesionDataConfig
+    head_name = "TEST133"
+    data_config = DogDataConfig  #FishDataConfig or DogDataConfig
     
     config = build_config(model_version, head_name, data_config)
     bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)
@@ -263,7 +263,7 @@ if __name__ == '__main__':
 
 
 
-        """if state['pickup_warmup']: 
+        if state['pickup_warmup']: 
             state['pickup_warmup'] = False
         if state['warmup']:
             print("Warmup Phase Finished")
@@ -366,6 +366,6 @@ if __name__ == '__main__':
                 print("Saved checkpoint due to improved val_loss_bag")
 
                 
-                state['epoch'] += 1"""
+                state['epoch'] += 1
                 
 
