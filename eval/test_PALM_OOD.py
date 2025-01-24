@@ -16,7 +16,7 @@ from data.format_data import *
 from data.sudo_labels import *
 from loss.palm_proto_alt import PALM
 from data.save_arch import *
-from archs.model_solo_MIL import *
+from archs.model_solo_MIL_saliency import *
 from data.bag_loader import *
 from data.instance_loader import *
 
@@ -137,7 +137,7 @@ if __name__ == '__main__':
     os.makedirs(f'{current_dir}/results/PALM_OOD/', exist_ok=True)
     
     # Load the model configuration
-    head_name = "TEST116"
+    head_name = "TEST122"
     model_version = "" #Leave "" to read HEAD
     
     # loaded configuration

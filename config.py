@@ -38,7 +38,7 @@ class LesionDataConfig(BaseConfig):
 
 class FishDataConfig(BaseConfig):
     def __init__(self):
-        self.dataset_name = 'imagenette2' #'imagenette2_hard'
+        self.dataset_name = 'imagenette2_hard' #'imagenette2_hard'
         self.label_columns = ['Has_Fish']
         self.instance_columns = ['Has_Fish']
         self.img_size = 128

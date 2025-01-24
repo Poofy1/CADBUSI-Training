@@ -20,7 +20,7 @@ class Embeddingmodel(nn.Module):
             self.encoder = nn.Sequential(*list(self.encoder.children())[:-2])
         else:
             #self.encoder = create_timm_body(arch, pretrained=pretrained_arch)
-            self.encoder, saliency_size = create_timm_body_multi(arch, pretrained=True)
+            self.encoder, pooled_size = create_timm_body_multi(arch, pretrained=True)
             nf = num_features_model(nn.Sequential(*self.encoder.children()))
             
         
@@ -37,7 +37,7 @@ class Embeddingmodel(nn.Module):
         )
         
         self.saliency_layer = nn.Sequential(
-            nn.Conv2d(saliency_size, num_classes, (1,1), bias = False),
+            nn.Conv2d(pooled_size, num_classes, (1,1), bias = False),
             nn.Sigmoid()
         )
         self.pool_patches = 3
