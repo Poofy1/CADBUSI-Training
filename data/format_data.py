@@ -7,6 +7,7 @@ import ast
 import json
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from torch.utils.data.distributed import DistributedSampler
 from sklearn.utils import resample
 from data.transforms import *
 from storage_adapter import *
@@ -274,8 +275,10 @@ def prepare_all_data(config):
     bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform)
     train_sampler = BalancedBagSampler(bag_dataset_train, batch_size=config['bag_batch_size'])
     val_sampler = BalancedBagSampler(bag_dataset_val, batch_size=config['bag_batch_size'])
+    #train_sampler = DistributedBalancedBagSampler(bag_dataset_train, config['bag_batch_size'])
+    #val_sampler = DistributedBalancedBagSampler(bag_dataset_val, config['bag_batch_size'])
     bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_sampler=train_sampler, collate_fn=collate_bag)
     bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_sampler=val_sampler, collate_fn=collate_bag)
-
+    
 
     return bags_train, bags_val, bag_dataloader_train, bag_dataloader_val

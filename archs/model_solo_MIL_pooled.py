@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from fastai.vision.all import *
 import torch.nn.functional as F
-from archs.backbone import create_timm_body
+from archs.backbone import *
 from torchvision.models import efficientnet_b3, EfficientNet_B3_Weights
 from archs.linear_classifier import *
 
@@ -15,18 +15,12 @@ class Embeddingmodel(nn.Module):
         
         if self.is_efficientnet:
             self.encoder = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
-            nf = 512
-            # Replace the last fully connected layer with a new one
-            num_features = self.encoder.classifier[1].in_features
-            #self.encoder.classifier[1] = nn.Linear(num_features, nf)
-            self.encoder.classifier[1] = nn.Sequential(nn.Linear(num_features, nf))
+            nf = 1536  # EfficientNet-B3's feature map has 1536 channels
+            # Remove the classifier to keep spatial dimensions
+            self.encoder = nn.Sequential(*list(self.encoder.children())[:-2])
         else:
-            base_encoder = create_timm_body(arch, pretrained=pretrained_arch)
-            self.encoder = nn.Sequential(
-                base_encoder,
-                nn.AdaptiveAvgPool2d((1, 1)),
-                nn.Flatten()
-            )
+            #self.encoder = create_timm_body(arch, pretrained=pretrained_arch)
+            self.encoder, pooled_size = create_timm_body_multi(arch, pretrained=pretrained_arch)
             nf = num_features_model(nn.Sequential(*self.encoder.children()))
             
         
@@ -34,24 +28,21 @@ class Embeddingmodel(nn.Module):
         self.nf = nf
 
         self.aggregator = Linear_Classifier(nf=self.nf, num_classes=num_classes)
-        #self.aggregator = Saliency_Classifier(nf=self.nf, num_classes=num_classes)
         dropout_rate=0.2
         self.projector = nn.Sequential(
-            nn.Linear(nf, 512),
+            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Flatten(),
+            nn.Linear(pooled_size, 512),
             nn.ReLU(inplace=True),
             nn.Dropout(dropout_rate),
             nn.Linear(512, feat_dim)
         )
         
-        self.ins_classifier = nn.Sequential(
-            nn.Linear(nf, 256),
-            nn.BatchNorm1d(256),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout_rate),  # Add dropout after the first ReLU
-            nn.Linear(256, num_classes),
+        self.saliency_layer = nn.Sequential(
+            nn.Conv2d(pooled_size, num_classes, (1,1), bias = False),
             nn.Sigmoid()
         )
-        
+        self.pool_patches = 3
         
         self.adaptive_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         print(f'Feature Map Size: {nf}')
@@ -76,16 +67,20 @@ class Embeddingmodel(nn.Module):
             all_images = torch.cat(all_images, dim=0).cuda()  # Shape: [Total valid images, 224, 224, 3]
         else:
             all_images = bags
-        
-        
-        # Forward pass through encoder
-        feats = self.encoder(all_images)  
+
+        # Calculate the embeddings for all images in one go
+        feats, pooled_feat = self.encoder(all_images)
         if len(feats.shape) == 4:
             feats = self.adaptive_avg_pool(feats).squeeze(-1).squeeze(-1) # Output shape: [Total valid images, feature_dim]
         
         
-        # INSTANCE CLASS
-        instance_predictions = self.ins_classifier(feats)
+        
+        # SALIENCY CLASS
+        saliency_maps = self.saliency_layer(pooled_feat)  # Generate saliency maps using a convolutional layer
+        map_flatten = saliency_maps.flatten(start_dim=-2, end_dim=-1) 
+        selected_area = map_flatten.topk(self.pool_patches, dim=2)[0]
+        instance_predictions = selected_area.mean(dim=2).squeeze()  # Calculate the mean of the selected patches for instance predictions
+
 
         bag_pred = None
         bag_instance_predictions = None
@@ -97,18 +92,17 @@ class Embeddingmodel(nn.Module):
             bag_instance_predictions = []
             for i, (h, y_h) in enumerate(zip(h_per_bag, y_hat_per_bag)):
                 # Pass both h and y_hat to the aggregator
+                y_h = y_h.view(-1, 1)
                 yhat_bag, yhat_ins = self.aggregator(h, y_h)
                 bag_pred[i] = yhat_bag
                 bag_instance_predictions.append(yhat_ins) 
         
         proj = None
         if projector:
-            proj = self.projector(feats)
+            proj = self.projector(pooled_feat)
             proj = F.normalize(proj, dim=1)
-        
-        # Clean up large intermediate tensors
-        del feats
-        if pred_on:
-            del all_images
-                
+        else:
+            proj = saliency_maps
+            
+
         return bag_pred, bag_instance_predictions, instance_predictions.squeeze(), proj

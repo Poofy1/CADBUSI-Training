@@ -18,3 +18,17 @@ class FocalLoss(nn.Module):
         
         loss = -alpha_factor * (1 - pt).pow(self.gamma) * torch.log(pt + 1e-12)
         return loss.mean()
+    
+    
+    
+class BCELossWithSmoothing(nn.Module):
+    def __init__(self, smoothing=0.1):
+        super().__init__()
+        self.smoothing = smoothing
+        
+    def forward(self, pred, target):
+        # Apply label smoothing
+        target = target * (1 - self.smoothing) + 0.5 * self.smoothing
+        # Calculate BCE
+        bce = -(target * torch.log(pred + 1e-7) + (1 - target) * torch.log(1 - pred + 1e-7))
+        return bce.mean()

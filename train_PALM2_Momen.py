@@ -24,8 +24,8 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "TEST133"
-    data_config = DogDataConfig  #FishDataConfig or DogDataConfig
+    head_name = "TEST501"
+    data_config = LesionDataConfig  #FishDataConfig or DogDataConfig
     
     config = build_config(model_version, head_name, data_config)
     bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)
@@ -63,7 +63,7 @@ if __name__ == '__main__':
     while state['epoch'] < config['total_epochs']:
         
         
-        if not state['pickup_warmup']: # Are we resuming from a head model?
+        if False:#not state['pickup_warmup']: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
             instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=state['warmup'], dual_output=False)

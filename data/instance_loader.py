@@ -2,6 +2,7 @@ from fastai.vision.all import *
 import torch.utils.data as TUD
 from torch.utils.data import Sampler
 import cv2
+from torch.utils.data.distributed import DistributedSampler
 from storage_adapter import *
 
 class Instance_Dataset(TUD.Dataset):
@@ -231,4 +232,52 @@ class InstanceSampler(Sampler):
 
     def __len__(self):
         return self.total_batches
-    
+
+
+
+class DistributedInstanceSampler(DistributedSampler):
+    def __init__(self, dataset, batch_size, num_replicas=None, rank=None, seed=None):
+        super().__init__(dataset, num_replicas=num_replicas, rank=rank)
+        self.batch_size = batch_size
+        self.seed = seed
+        
+        self.indices_positive = [i for i, label in enumerate(dataset.output_image_labels) if label == 1]
+        self.indices_negative = [i for i, label in enumerate(dataset.output_image_labels) if label == 0]
+        self.indices_unknown = [i for i, label in enumerate(dataset.output_image_labels) if label == -1]
+        self.indices_non_positive = self.indices_negative + self.indices_unknown
+        
+        self.samples_per_class = len(self.indices_positive)
+        self.total_samples = self.samples_per_class * 2
+        self.total_batches = (self.total_samples // self.batch_size) // self.num_replicas
+
+    def __iter__(self):
+        if self.seed is not None:
+            random.seed(self.seed + self.epoch)
+
+        selected_non_positive = random.sample(self.indices_non_positive, self.samples_per_class)
+        all_indices = self.indices_positive + selected_non_positive
+        random.shuffle(all_indices)
+        
+        # Distribute indices across GPUs
+        indices_for_rank = all_indices[self.rank:self.total_samples:self.num_replicas]
+        batches = []
+        
+        for i in range(self.total_batches):
+            batch = []
+            remaining_size = self.batch_size
+            
+            pos_indices = [idx for idx in indices_for_rank if idx in self.indices_positive]
+            if pos_indices:
+                pos_sample = random.choice(pos_indices)
+                batch.append(pos_sample)
+                remaining_size -= 1
+            
+            available_indices = [idx for idx in indices_for_rank if idx != pos_sample]
+            batch.extend(random.sample(available_indices, remaining_size))
+            random.shuffle(batch)
+            batches.extend(batch)
+            
+        return iter(batches)
+
+    def __len__(self):
+        return self.total_batches * self.batch_size

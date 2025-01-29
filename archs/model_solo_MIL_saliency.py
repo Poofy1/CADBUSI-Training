@@ -20,7 +20,7 @@ class Embeddingmodel(nn.Module):
             self.encoder = nn.Sequential(*list(self.encoder.children())[:-2])
         else:
             #self.encoder = create_timm_body(arch, pretrained=pretrained_arch)
-            self.encoder, pooled_size = create_timm_body_multi(arch, pretrained=True)
+            self.encoder, pooled_size = create_timm_body_multi(arch, pretrained=pretrained_arch)
             nf = num_features_model(nn.Sequential(*self.encoder.children()))
             
         
@@ -45,15 +45,31 @@ class Embeddingmodel(nn.Module):
         self.adaptive_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         print(f'Feature Map Size: {nf}')
 
-    def forward(self, input, projector=False, pred_on = False):
+    def forward(self, bags, projector=False, pred_on = False):
         if pred_on:
-            num_bags = len(input) # input = [bag #, image #, channel, height, width]
-            all_images = torch.cat(input, dim=0).cuda()  # Concatenate all bags into a single tensor for batch processing
+            num_bags = len(bags)  # input = [bag #, images_per_bag (padded), 224, 224, 3]
+        
+            all_images = []
+            split_sizes = []
+            
+            for bag in bags:
+                # Remove padded images (assuming padding is represented as zero tensors)
+                valid_images = bag[~(bag == 0).all(dim=1).all(dim=1).all(dim=1)] # Shape: [valid_images, 224, 224, 3]
+                
+                split_sizes.append(valid_images.size(0))  # Track original bag sizes
+                all_images.append(valid_images)
+            
+            if len(all_images) == 0:
+                return None, None  # Handle case where no valid images exist
+            
+            all_images = torch.cat(all_images, dim=0).cuda()  # Shape: [Total valid images, 224, 224, 3]
         else:
-            all_images = input
+            all_images = bags
 
         # Calculate the embeddings for all images in one go
-        feat, pooled_feat = self.encoder(all_images)
+        feats, pooled_feat = self.encoder(all_images)
+        if len(feats.shape) == 4:
+            feats = self.adaptive_avg_pool(feats).squeeze(-1).squeeze(-1) # Output shape: [Total valid images, feature_dim]
         
         
         # SALIENCY CLASS
@@ -62,15 +78,12 @@ class Embeddingmodel(nn.Module):
         selected_area = map_flatten.topk(self.pool_patches, dim=2)[0]
         instance_predictions = selected_area.mean(dim=2).squeeze()  # Calculate the mean of the selected patches for instance predictions
 
-        feat = self.adaptive_avg_pool(feat).squeeze()
-    
 
         bag_pred = None
         bag_instance_predictions = None
         if pred_on:
             # Split the embeddings back into per-bag embeddings
-            split_sizes = [bag.size(0) for bag in input]
-            h_per_bag = torch.split(feat, split_sizes, dim=0)
+            h_per_bag = torch.split(feats, split_sizes, dim=0)
             y_hat_per_bag = torch.split(instance_predictions, split_sizes, dim=0)
             bag_pred = torch.empty(num_bags, self.num_classes).cuda()
             bag_instance_predictions = []
@@ -83,7 +96,7 @@ class Embeddingmodel(nn.Module):
         
         proj = None
         if projector:
-            proj = self.projector(feat)
+            proj = self.projector(feats)
             proj = F.normalize(proj, dim=1)
         else:
             proj = saliency_maps

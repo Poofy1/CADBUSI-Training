@@ -38,7 +38,7 @@ def test_model_and_collect_distances(model, palm, bag_dataloader, instance_datal
         for images, yb, _, unique_id in tqdm(bag_dataloader, desc="Testing bags"):
             bag_pred, _, _, _= model(images, pred_on=True)
             bag_targets.extend(yb.cpu().numpy())
-            bag_predictions.extend((bag_pred > 0.5).float().cpu().numpy())
+            bag_predictions.extend((bag_pred).float().cpu().numpy())
         
         for images, instance_labels, unique_ids in tqdm(instance_dataloader, desc="Testing instances"):
             images = images.to(device)
@@ -54,7 +54,7 @@ def test_model_and_collect_distances(model, palm, bag_dataloader, instance_datal
             if fc_pred is None:
                 fc_predictions.extend([0] * len(instance_labels))
             else:
-                fc_predictions.extend((fc_pred > 0.5).float().cpu().numpy())
+                fc_predictions.extend(fc_pred.float().cpu().numpy())
             palm_predictions.extend(palm_pred.cpu().numpy())
                 
     return (np.array(bag_targets), np.array(bag_predictions),  
@@ -137,8 +137,8 @@ if __name__ == '__main__':
     os.makedirs(f'{current_dir}/results/PALM_OOD/', exist_ok=True)
     
     # Load the model configuration
-    head_name = "TEST122"
-    model_version = "" #Leave "" to read HEAD
+    head_name = "TEST201"
+    model_version = "1" #Leave "" to read HEAD
     
     # loaded configuration
     model_path = os.path.join(model_folder, head_name, model_version)
