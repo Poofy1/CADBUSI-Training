@@ -1,5 +1,6 @@
 from fastai.vision.all import *
 import torch.utils.data as TUD
+from torch.utils.data.distributed import DistributedSampler
 from storage_adapter import * 
 
 class BagOfImagesDataset(TUD.Dataset):
@@ -54,25 +55,34 @@ class BagOfImagesDataset(TUD.Dataset):
 
 
 def collate_bag(batch):
-    batch_data = []
     batch_bag_labels = []
     batch_instance_labels = []
     batch_ids = []
 
-    for sample in batch:
-        image_data, bag_labels, instance_labels, bag_id = sample  # Updated to unpack four items
-        batch_data.append(image_data)
+    # Find the maximum number of images in any bag for this batch
+    max_bag_size = max(sample[0].shape[0] for sample in batch)  # Get max images per bag
+
+    # Extract image shape (excluding batch size)
+    _, C, H, W = batch[0][0].shape  # Channels, Height, Width
+
+    # Create a padded tensor with zeros
+    padded_images = torch.zeros((len(batch), max_bag_size, C, H, W), dtype=torch.float32)
+
+
+    for i, (image_data, bag_labels, instance_labels, bag_id) in enumerate(batch):
+        num_images = image_data.shape[0]
+        padded_images[i, :num_images] = image_data  # Copy actual image data
+
         batch_bag_labels.append(bag_labels)
         batch_instance_labels.append(instance_labels)
         batch_ids.append(bag_id)
 
-    # Use torch.stack for bag labels to handle multiple labels per bag
+    # Convert labels and IDs to tensors
     out_bag_labels = torch.stack(batch_bag_labels).cuda()
-
-    # Converting to a tensor
     out_ids = torch.tensor(batch_ids, dtype=torch.long).cuda()
+    
+    return padded_images.cuda(), out_bag_labels, batch_instance_labels, out_ids
 
-    return batch_data, out_bag_labels, batch_instance_labels, out_ids
 
 
 
@@ -128,12 +138,6 @@ class BalancedBagSampler(torch.utils.data.Sampler):
     
     def __len__(self):
         return self.n_batches
-    
-    
-    
-    
-    
-    
     
     
     

@@ -23,29 +23,42 @@ class Embeddingmodel(nn.Module):
             nf = num_features_model(nn.Sequential(*self.encoder.children()))
             
             
-        self.aggregator = Linear_Classifier(nf, num_classes=num_classes)
+        self.aggregator = Linear_Classifier_With_FC(nf, num_classes=num_classes)
+        self.adaptive_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         self.num_classes = num_classes
         print(f'Feature Map Size: {nf}')
 
-    def forward(self, input):
-        num_bags = len(input) # input = [bag #, image #, channel, height, width]
+    def forward(self, bags):
+        num_bags = len(bags)  # input = [bag #, images_per_bag (padded), 224, 224, 3]
         
-        # Concatenate all bags into a single tensor for batch processing
-        all_images = torch.cat(input, dim=0)  # Shape: [Total images in all bags, channel, height, width]
+        all_images = []
+        split_sizes = []
         
-        # Calculate the embeddings for all images in one go
-        h_all = self.encoder(all_images.cuda())
+        for bag in bags:
+            # Remove padded images (assuming padding is represented as zero tensors)
+            valid_images = bag[~(bag == 0).all(dim=1).all(dim=1).all(dim=1)] # Shape: [valid_images, 224, 224, 3]
+            
+            split_sizes.append(valid_images.size(0))  # Track original bag sizes
+            all_images.append(valid_images)
         
-        # Split the embeddings back into per-bag embeddings
-        split_sizes = [bag.size(0) for bag in input]
-        h_per_bag = torch.split(h_all, split_sizes, dim=0)
+        if len(all_images) == 0:
+            return None, None  # Handle case where no valid images exist
+        
+        # Forward pass through encoder
+        all_images = torch.cat(all_images, dim=0).cuda()  # Shape: [Total valid images, 224, 224, 3]
+        feats = self.encoder(all_images)  
+        feats = self.adaptive_avg_pool(feats).squeeze(-1).squeeze(-1) # Output shape: [Total valid images, feature_dim]
+        
+        # Split the embeddings back into per-bag groups
+        h_per_bag = torch.split(feats, split_sizes, dim=0)
+
         logits = torch.empty(num_bags, self.num_classes).cuda()
-        yhat_instances= []
+        yhat_instances = []
         
         for i, h in enumerate(h_per_bag):
-            # Receive four values from the aggregator
+            # Pass bag features through aggregator
             yhat_bag, yhat_ins = self.aggregator(h)
             logits[i] = yhat_bag
             yhat_instances.append(yhat_ins)
         
-        return logits, yhat_instances
+        return logits, yhat_instances, None, None

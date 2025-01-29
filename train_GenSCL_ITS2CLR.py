@@ -10,7 +10,7 @@ from torch.optim import Adam
 from data.format_data import *
 from data.sudo_labels import *
 #from archs.model_GenSCL import *
-from archs.model_solo_MIL import *
+from archs.model_solo_MIL_saliency import *
 from data.bag_loader import *
 from data.instance_loader import *
 from loss.genSCL import GenSupConLossv2
@@ -26,7 +26,7 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "TEST35"
+    head_name = "TEST121"
     data_config = FishDataConfig  # or LesionDataConfig
     
     mix_alpha=0.2

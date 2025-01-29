@@ -32,7 +32,7 @@ class LesionDataConfig(BaseConfig):
         self.min_bag_size = 2
         self.max_bag_size = 25
         self.instance_batch_size = 32
-        self.arch = 'efficientnet'
+        self.arch = 'resnet50'
         self.pretrained_arch = False
         self.use_videos = False
 
