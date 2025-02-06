@@ -24,8 +24,8 @@ if __name__ == '__main__':
 
     # Config
     model_version = '1'
-    head_name = "TEST501"
-    data_config = LesionDataConfig  #FishDataConfig or DogDataConfig
+    head_name = "TEST145"
+    data_config = DogDataConfig  #FishDataConfig or DogDataConfig
     
     config = build_config(model_version, head_name, data_config)
     bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)
@@ -63,10 +63,10 @@ if __name__ == '__main__':
     while state['epoch'] < config['total_epochs']:
         
         
-        if False:#not state['pickup_warmup']: # Are we resuming from a head model?
+        if not state['pickup_warmup']: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
-            instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=state['warmup'], dual_output=False)
+            instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=True, dual_output=False)
             instance_dataset_val = Instance_Dataset(bags_val, [], transform=val_transform, warmup=True)
             train_sampler = InstanceSampler(instance_dataset_train, config['instance_batch_size'])
             val_sampler = InstanceSampler(instance_dataset_val, config['instance_batch_size'], seed=1)
@@ -97,7 +97,7 @@ if __name__ == '__main__':
 
                     # forward
                     optimizer.zero_grad()
-                    _, _, instance_predictions, features = model(images, projector=True)
+                    _, _, instance_predictions, features = model(images.cuda(), projector=True)
                     features.to(device)
                     
                     # Create masks for labeled and unlabeled data
@@ -111,7 +111,7 @@ if __name__ == '__main__':
                         labeled_instance_labels = instance_labels[labeled_mask]
                                         
                         # PALM Loss
-                        palm_loss, loss_dict = palm(feat, labeled_instance_labels)
+                        palm_loss, loss_dict = palm(feat, labeled_instance_labels.long())
                     else:
                         palm_loss = torch.tensor(0.0).to(device)
 
@@ -205,7 +205,7 @@ if __name__ == '__main__':
                         instance_labels = instance_labels.cuda(non_blocking=True)
 
                         # Forward pass
-                        _, _, instance_predictions, features = model(images, projector=True)
+                        _, _, instance_predictions, features = model(images.cuda(), projector=True)
                         features.to(device)
                         
                         # PALM Loss
@@ -275,6 +275,7 @@ if __name__ == '__main__':
         print('\nTraining Bag Aggregator')
         for iteration in range(config['MIL_train_count']):
             model.train()
+            train_bag_logits = {}
             total_loss = 0.0
             total_acc = 0
             total = 0
@@ -284,10 +285,22 @@ if __name__ == '__main__':
             for (images, yb, instance_labels, unique_id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)):
                 num_bags = len(images)
                 optimizer.zero_grad()
+                images, yb = images.cuda(), yb.cuda()
 
                 # Forward pass
                 bag_pred, _, instance_pred, features = model(images, pred_on=True)
+                bag_pred = bag_pred.cuda()
                 
+                # Split the embeddings back into per-bag embeddings
+                split_sizes = []
+                for bag in images:
+                    # Remove padded images (assuming padding is represented as zero tensors)
+                    valid_images = bag[~(bag == 0).all(dim=1).all(dim=1).all(dim=1)] # Shape: [valid_images, 224, 224, 3]
+                    split_sizes.append(valid_images.size(0))
+
+                y_hat_per_bag = torch.split(instance_pred, split_sizes, dim=0)
+                for i, y_h in enumerate(y_hat_per_bag):
+                    train_bag_logits[unique_id[i].item()] = y_h.detach().cpu().numpy()
                 
                 bag_loss = BCE_loss(bag_pred, yb)
                 bag_loss.backward()
@@ -320,9 +333,10 @@ if __name__ == '__main__':
 
             with torch.no_grad():
                 for (images, yb, instance_labels, unique_id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
-
+                    images, yb = images.cuda(), yb.cuda()
                     # Forward pass
                     bag_pred, _, _, features = model(images, pred_on=True)
+                    bag_pred = bag_pred.cuda()
 
                     # Calculate bag-level loss
                     loss = BCE_loss(bag_pred, yb)
@@ -367,5 +381,14 @@ if __name__ == '__main__':
 
                 
                 state['epoch'] += 1
+                
+                # Create selection mask
+                predictions_ratio = prediction_anchor_scheduler(state['epoch'], config['total_epochs'], 0, config['initial_ratio'], config['final_ratio'])
+                state['selection_mask'] = create_selection_mask(train_bag_logits, predictions_ratio)
+                print("Created new sudo labels")
+                
+                # Save selection
+                with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
+                    pickle.dump(state['selection_mask'], file)
                 
 

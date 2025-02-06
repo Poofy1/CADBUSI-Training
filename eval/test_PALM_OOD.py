@@ -36,12 +36,13 @@ def test_model_and_collect_distances(model, palm, bag_dataloader, instance_datal
     with torch.no_grad():
         # Bag-level testing
         for images, yb, _, unique_id in tqdm(bag_dataloader, desc="Testing bags"):
+            images, yb = images.cuda(), yb.cuda()
             bag_pred, _, _, _= model(images, pred_on=True)
             bag_targets.extend(yb.cpu().numpy())
             bag_predictions.extend((bag_pred).float().cpu().numpy())
         
         for images, instance_labels, unique_ids in tqdm(instance_dataloader, desc="Testing instances"):
-            images = images.to(device)
+            images, yb = images.cuda(), yb.cuda()
             _, _, fc_pred, features = model(images, projector=True)
             palm_pred, dist = palm.predict(features)
             
@@ -137,7 +138,7 @@ if __name__ == '__main__':
     os.makedirs(f'{current_dir}/results/PALM_OOD/', exist_ok=True)
     
     # Load the model configuration
-    head_name = "TEST201"
+    head_name = "TEST148"
     model_version = "1" #Leave "" to read HEAD
     
     # loaded configuration

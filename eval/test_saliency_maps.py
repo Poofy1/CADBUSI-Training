@@ -13,7 +13,6 @@ from data.save_arch import *
 from archs.model_solo_MIL_saliency import *
 from data.bag_loader import *
 from data.instance_loader import *
-from PIL import ImageDraw, ImageFont
 from util.eval_util import *
 
 
@@ -30,7 +29,7 @@ if __name__ == '__main__':
     model_folder = os.path.join(parent_dir, "models")  
     
     # Load the model configuration
-    head_name = "TEST201"
+    head_name = "TEST171"
     model_version = "1" #Leave "" to read HEAD
     
     # loaded configuration
@@ -87,7 +86,7 @@ if __name__ == '__main__':
 
         with torch.no_grad():
             for (data, yb, instance_yb, bag_id) in tqdm(val_dl, total=len(val_dl)):
-                xb, yb = data, yb.cuda()
+                xb, yb = data.cuda(), yb.cuda()
                 bag_pred, bag_instance_predictions, instance_predictions, saliency_maps = model(xb, pred_on=True)
                 
                 #print(f"Saliency maps shape: {saliency_maps.shape}")

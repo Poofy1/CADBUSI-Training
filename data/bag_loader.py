@@ -78,10 +78,10 @@ def collate_bag(batch):
         batch_ids.append(bag_id)
 
     # Convert labels and IDs to tensors
-    out_bag_labels = torch.stack(batch_bag_labels).cuda()
-    out_ids = torch.tensor(batch_ids, dtype=torch.long).cuda()
+    out_bag_labels = torch.stack(batch_bag_labels)
+    out_ids = torch.tensor(batch_ids, dtype=torch.long)
     
-    return padded_images.cuda(), out_bag_labels, batch_instance_labels, out_ids
+    return padded_images, out_bag_labels, batch_instance_labels, out_ids
 
 
 

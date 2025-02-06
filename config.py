@@ -24,7 +24,7 @@ class ITS2CLRConfig(BaseConfig):
 
 class LesionDataConfig(BaseConfig):
     def __init__(self):
-        self.dataset_name = 'export_oneLesions' #export_12_12_2024_17_35_49'
+        self.dataset_name = 'export_oneLesions' #export_12_12_2024_17_35_49' 'export_oneLesions'
         self.label_columns = ['Has_Malignant']
         self.instance_columns = ['Malignant Lesion Present']
         self.img_size = 224
@@ -32,7 +32,7 @@ class LesionDataConfig(BaseConfig):
         self.min_bag_size = 2
         self.max_bag_size = 25
         self.instance_batch_size = 32
-        self.arch = 'resnet50'
+        self.arch = 'convnextv2_tiny'
         self.pretrained_arch = False
         self.use_videos = False
 
@@ -46,13 +46,13 @@ class FishDataConfig(BaseConfig):
         self.min_bag_size = 2
         self.max_bag_size = 25
         self.instance_batch_size = 25
-        self.arch = 'resnet18'
+        self.arch = 'convnextv2_tiny'
         self.pretrained_arch = False
         self.use_videos = False
         
 class DogDataConfig(BaseConfig):
     def __init__(self):
-        self.dataset_name = 'imagenette_dog' #'imagenette_dog_hard'
+        self.dataset_name = 'imagenette_dog_hard' #'imagenette_dog_hard'
         self.label_columns = ['Has_Highland']
         self.instance_columns = ['Has_Highland']
         self.img_size = 128

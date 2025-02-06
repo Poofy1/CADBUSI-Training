@@ -3,7 +3,6 @@ import torch.nn as nn
 from fastai.vision.all import *
 import torch.nn.functional as F
 from archs.backbone import *
-from torchvision.models import efficientnet_b3, EfficientNet_B3_Weights
 from archs.linear_classifier import *
 
 class Embeddingmodel(nn.Module):
@@ -14,36 +13,35 @@ class Embeddingmodel(nn.Module):
         self.is_efficientnet = "efficientnet" in arch.lower()
         
         if self.is_efficientnet:
-            self.encoder = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
-            nf = 1536  # EfficientNet-B3's feature map has 1536 channels
-            # Remove the classifier to keep spatial dimensions
-            self.encoder = nn.Sequential(*list(self.encoder.children())[:-2])
+            model = get_efficientnet_model(arch, pretrained_arch) 
+            self.nf = get_num_features(model)
+            self.encoder, pooled_size = create_pooled_efficientnet(model)
+                        
         else:
-            #self.encoder = create_timm_body(arch, pretrained=pretrained_arch)
-            self.encoder, pooled_size = create_timm_body_multi(arch, pretrained=pretrained_arch)
-            nf = num_features_model(nn.Sequential(*self.encoder.children()))
-            
-        
-        self.num_classes = num_classes
-        self.nf = nf
+            #self.encoder, pooled_size = create_pooled_resnet(arch, pretrained=pretrained_arch)
+            self.encoder, pooled_size = create_pooled_convnext(arch, pretrained=pretrained_arch)
+            self.nf = num_features_model(nn.Sequential(*self.encoder.children()))
 
+
+        self.num_classes = num_classes
         self.aggregator = Linear_Classifier(nf=self.nf, num_classes=num_classes)
         dropout_rate=0.2
         self.projector = nn.Sequential(
-            nn.Linear(nf, 512),
+            nn.Linear(self.nf, 512),
             nn.ReLU(inplace=True),
             nn.Dropout(dropout_rate),
             nn.Linear(512, feat_dim)
         )
         
         self.saliency_layer = nn.Sequential(
-            nn.Conv2d(pooled_size, num_classes, (1,1), bias = False),
+            nn.Conv2d(pooled_size, num_classes, (1,1), bias = True),
             nn.Sigmoid()
         )
         self.pool_patches = 3
         
         self.adaptive_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
-        print(f'Feature Map Size: {nf}')
+        print(f'Feature Map Size: {self.nf}')
+        print(f'Pooled Feature Map Size: {pooled_size}')
 
     def forward(self, bags, projector=False, pred_on = False):
         if pred_on:
@@ -62,7 +60,7 @@ class Embeddingmodel(nn.Module):
             if len(all_images) == 0:
                 return None, None  # Handle case where no valid images exist
             
-            all_images = torch.cat(all_images, dim=0).cuda()  # Shape: [Total valid images, 224, 224, 3]
+            all_images = torch.cat(all_images, dim=0)  # Shape: [Total valid images, 224, 224, 3]
         else:
             all_images = bags
 
@@ -78,14 +76,13 @@ class Embeddingmodel(nn.Module):
         selected_area = map_flatten.topk(self.pool_patches, dim=2)[0]
         instance_predictions = selected_area.mean(dim=2).squeeze()  # Calculate the mean of the selected patches for instance predictions
 
-
         bag_pred = None
         bag_instance_predictions = None
         if pred_on:
             # Split the embeddings back into per-bag embeddings
             h_per_bag = torch.split(feats, split_sizes, dim=0)
             y_hat_per_bag = torch.split(instance_predictions, split_sizes, dim=0)
-            bag_pred = torch.empty(num_bags, self.num_classes).cuda()
+            bag_pred = torch.empty(num_bags, self.num_classes)
             bag_instance_predictions = []
             for i, (h, y_h) in enumerate(zip(h_per_bag, y_hat_per_bag)):
                 # Pass both h and y_hat to the aggregator
@@ -102,4 +99,4 @@ class Embeddingmodel(nn.Module):
             proj = saliency_maps
             
 
-        return bag_pred, bag_instance_predictions, instance_predictions.squeeze(), proj
+        return bag_pred, saliency_maps, instance_predictions.squeeze(), proj

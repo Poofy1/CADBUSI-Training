@@ -68,3 +68,54 @@ def create_selection_mask(train_bag_logits, include_ratio):
         combined_dict[original_bag_id][0][original_position] = int(prob > 0.5)
 
     return combined_dict
+
+
+
+
+
+def create_momentum_predictions(train_bag_logits, previous_predictions=None, momentum=0.9):
+    """
+    Creates float predictions for all instances using momentum-based updates, starting from 0.5.
+    All predictions are clamped between 0 and 1.
+
+    Parameters:
+    train_bag_logits (dict): Dictionary with bag IDs as keys and lists/tensors of probabilities
+                            as values.
+    previous_predictions (dict): Optional. Previous predictions dictionary with the same structure
+                               as the output. If None, initializes all predictions to 0.5.
+    momentum (float): Momentum factor between 0 and 1. Higher values give more weight to
+                     previous predictions. Default is 0.9.
+
+    Returns:
+    dict: A dictionary where keys are bag IDs and values are lists containing:
+          1. A numpy array of float predictions (clamped between 0 and 1)
+          2. A list of the current input probabilities
+    """
+    combined_dict = {}
+    
+    for bag_id, probs in train_bag_logits.items():
+        bag_id_int = bag_id.item() if isinstance(bag_id, torch.Tensor) else bag_id
+        
+        # Convert current probabilities to list of floats
+        current_probs = [p.item() if hasattr(p, 'item') else p for p in probs]
+        
+        # Initialize or get previous predictions
+        if previous_predictions is None or bag_id_int not in previous_predictions:
+            # Start with 0.5 for all instances if no previous predictions
+            prev_predictions = [0.5] * len(probs)
+        else:
+            prev_predictions = previous_predictions[bag_id_int][0]
+        
+        # Apply momentum update and clamp values between 0 and 1
+        updated_predictions = [
+            np.clip(momentum * prev_pred + (1 - momentum) * curr_prob, 0, 1)
+            for prev_pred, curr_prob in zip(prev_predictions, current_probs)
+        ]
+        
+        # Store results as numpy array for predictions
+        combined_dict[bag_id_int] = [
+            np.array(updated_predictions),  # Float predictions clamped to [0,1]
+            current_probs                   # Current input probabilities
+        ]
+    
+    return combined_dict
