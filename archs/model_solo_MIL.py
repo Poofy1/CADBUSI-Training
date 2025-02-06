@@ -73,7 +73,7 @@ class Embeddingmodel(nn.Module):
             if len(all_images) == 0:
                 return None, None  # Handle case where no valid images exist
             
-            all_images = torch.cat(all_images, dim=0).cuda()  # Shape: [Total valid images, 224, 224, 3]
+            all_images = torch.cat(all_images, dim=0)  # Shape: [Total valid images, 224, 224, 3]
         else:
             all_images = bags
         
@@ -93,7 +93,7 @@ class Embeddingmodel(nn.Module):
             # Split the embeddings back into per-bag embeddings
             h_per_bag = torch.split(feats, split_sizes, dim=0)
             y_hat_per_bag = torch.split(instance_predictions, split_sizes, dim=0)
-            bag_pred = torch.empty(num_bags, self.num_classes).cuda()
+            bag_pred = torch.empty(num_bags, self.num_classes, device=feats.device)
             bag_instance_predictions = []
             for i, (h, y_h) in enumerate(zip(h_per_bag, y_hat_per_bag)):
                 # Pass both h and y_hat to the aggregator
@@ -110,5 +110,7 @@ class Embeddingmodel(nn.Module):
         del feats
         if pred_on:
             del all_images
+            
+        
                 
         return bag_pred, bag_instance_predictions, instance_predictions.squeeze(), proj

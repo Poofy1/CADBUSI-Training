@@ -57,7 +57,6 @@ class Instance_Dataset(TUD.Dataset):
                 is_video = idx >= len(bag_info['images'])  # Check if this is a video frame
                 
             
-                
                 if self.only_negative:
                     if labels[0] is not None and labels[0] == 0:
                         image_label = 0
@@ -83,7 +82,7 @@ class Instance_Dataset(TUD.Dataset):
                 
                 if image_label is not None:
                     unique_id = f"{acc_number_key}_{idx}_{'vid' if is_video else 'img'}"
-                    
+
                     if image_label == 1 and self.max_positive is not None and not is_video:
                         # Store positive instances temporarily (only for images)
                         temp_positive_data.append((img, image_label, unique_id))
@@ -152,7 +151,7 @@ def collate_instance(batch):
 
         batch_data_q = torch.stack(batch_data_q)
         batch_data_k = torch.stack(batch_data_k)
-        batch_labels = torch.tensor(batch_labels, dtype=torch.long)
+        batch_labels = torch.tensor(batch_labels, dtype=torch.float)
 
         return (batch_data_q, batch_data_k), batch_labels, batch_ids
     else:
@@ -166,7 +165,7 @@ def collate_instance(batch):
             batch_ids.append(unique_id)
 
         batch_data = torch.stack(batch_data)
-        batch_labels = torch.tensor(batch_labels, dtype=torch.long)
+        batch_labels = torch.tensor(batch_labels, dtype=torch.float)
 
         return batch_data, batch_labels, batch_ids
 
@@ -180,7 +179,7 @@ class InstanceSampler(Sampler):
         # Get indices for each class
         self.indices_positive = [i for i, label in enumerate(self.dataset.output_image_labels) if label == 1]
         self.indices_negative = [i for i, label in enumerate(self.dataset.output_image_labels) if label == 0]
-        self.indices_unknown = [i for i, label in enumerate(self.dataset.output_image_labels) if label == -1]
+        self.indices_unknown = [i for i, label in enumerate(self.dataset.output_image_labels) if label != 0 and label != 1]
         self.indices_non_positive = self.indices_negative + self.indices_unknown
         
         # Number of positive samples determines the number of samples per class
