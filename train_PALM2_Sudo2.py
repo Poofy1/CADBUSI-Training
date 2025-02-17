@@ -8,7 +8,7 @@ from util.Gen_ITS2CLR_util import *
 import torch.optim as optim
 from data.format_data import *
 from data.sudo_labels import *
-from archs.model_solo_MIL import *
+from archs.model_MIL import *
 from data.bag_loader import *
 from data.instance_loader import *
 from loss.palm import PALM

@@ -10,7 +10,7 @@ from torch.optim import Adam
 from data.format_data import *
 from data.sudo_labels import *
 #from archs.model_GenSCL import *
-from archs.model_solo_MIL_saliency import *
+from archs.model_MIL_sali import *
 from data.bag_loader import *
 from data.instance_loader import *
 from loss.genSCL import GenSupConLossv2

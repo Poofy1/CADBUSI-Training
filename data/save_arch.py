@@ -9,10 +9,13 @@ def plot_loss(train_losses, valid_losses, save_path):
         print("No loss data available to plot.")
         return
     
+    train_losses_np = [loss.detach().numpy() if torch.is_tensor(loss) else loss for loss in train_losses]
+    valid_losses_np = [loss.detach().numpy() if torch.is_tensor(loss) else loss for loss in valid_losses]
+
     # Create a plot
     plt.figure(figsize=(10, 6))
-    plt.plot(train_losses, label='Training Loss', color='blue')
-    plt.plot(valid_losses, label='Validation Loss', color='red')
+    plt.plot(train_losses_np, label='Training Loss', color='blue')
+    plt.plot(valid_losses_np, label='Validation Loss', color='red')
 
     plt.title('Bag Loss')
     plt.xlabel('Epochs')

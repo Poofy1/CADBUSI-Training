@@ -60,8 +60,8 @@ class Linear_Classifier(nn.Module):
         # Aggregate instance-level predictions
         Y_prob = torch.mm(A, instance_pred)  # ATTENTION_BRANCHESxC
 
-        instance_scores = torch.sigmoid(instance_scores.squeeze())
-        return Y_prob, instance_scores
+        #instance_scores = torch.sigmoid(instance_scores.squeeze())
+        return Y_prob, instance_scores.squeeze()
     
 
 
@@ -108,7 +108,7 @@ class Linear_Classifier_With_FC(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.25),
             nn.Linear(nf//2, num_classes),
-            nn.Sigmoid()
+            #nn.Sigmoid()
         )
         
     def forward(self, v):
@@ -129,8 +129,7 @@ class Linear_Classifier_With_FC(nn.Module):
         weighted_features = torch.mm(A, v)  # weighted average of features
         Y_prob = self.classifier(weighted_features)
         
-        instance_scores = torch.sigmoid(instance_scores.squeeze())
-        return Y_prob, instance_scores
+        return Y_prob, instance_scores.squeeze()
     
     
     

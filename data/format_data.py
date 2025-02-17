@@ -277,7 +277,7 @@ def prepare_all_data(config):
     val_sampler = BalancedBagSampler(bag_dataset_val, batch_size=config['bag_batch_size'])
     #train_sampler = DistributedBalancedBagSampler(bag_dataset_train, config['bag_batch_size'])
     #val_sampler = DistributedBalancedBagSampler(bag_dataset_val, config['bag_batch_size'])
-    bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_sampler=train_sampler, collate_fn=collate_bag)
+    bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_sampler=train_sampler, collate_fn=collate_bag, num_workers=2, pin_memory=True)
     bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_sampler=val_sampler, collate_fn=collate_bag)
     
 

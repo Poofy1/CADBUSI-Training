@@ -7,7 +7,12 @@ class BaseConfig:
         """Convert config to a dictionary with only serializable types"""
         return {k: v for k, v in self.__dict__.items()}
 
-
+""" Common models
+efficientnet_b3
+efficientnet_v2_s
+convnextv2_tiny
+resnet18
+"""
 
 ####### CONFIGURE #######
 
@@ -18,23 +23,23 @@ class ITS2CLRConfig(BaseConfig):
         self.initial_ratio = 0.2
         self.final_ratio = .9
         self.total_epochs = 100
-        self.warmup_epochs = 10
+        self.warmup_epochs = 15
         self.learning_rate = 0.001
         self.reset_aggregator = False
 
 class LesionDataConfig(BaseConfig):
     def __init__(self):
-        self.dataset_name = 'export_oneLesions' #export_12_12_2024_17_35_49' 'export_oneLesions'
+        self.dataset_name = 'export_12_12_2024_17_35_49' #export_12_12_2024_17_35_49' 'export_oneLesions'
         self.label_columns = ['Has_Malignant']
         self.instance_columns = ['Malignant Lesion Present']
-        self.img_size = 224
+        self.img_size = 224#224
         self.bag_batch_size = 5
         self.min_bag_size = 2
-        self.max_bag_size = 25
+        self.max_bag_size = 2500
         self.instance_batch_size = 32
-        self.arch = 'convnextv2_tiny'
+        self.arch = 'efficientnet_b3'
         self.pretrained_arch = False
-        self.use_videos = False
+        self.use_videos = True
 
 class FishDataConfig(BaseConfig):
     def __init__(self):
@@ -52,7 +57,7 @@ class FishDataConfig(BaseConfig):
         
 class DogDataConfig(BaseConfig):
     def __init__(self):
-        self.dataset_name = 'imagenette_dog_hard' #'imagenette_dog_hard'
+        self.dataset_name = 'imagenette_dog' #'imagenette_dog_hard'
         self.label_columns = ['Has_Highland']
         self.instance_columns = ['Has_Highland']
         self.img_size = 128
@@ -60,7 +65,7 @@ class DogDataConfig(BaseConfig):
         self.min_bag_size = 2
         self.max_bag_size = 25
         self.instance_batch_size = 25
-        self.arch = 'resnet18'
+        self.arch = 'efficientnet_b3'
         self.pretrained_arch = False
         self.use_videos = False
 

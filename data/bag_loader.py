@@ -54,34 +54,38 @@ class BagOfImagesDataset(TUD.Dataset):
 
 
 
-def collate_bag(batch):
+def collate_bag(batch, pad_bags=False):
     batch_bag_labels = []
     batch_instance_labels = []
     batch_ids = []
 
-    # Find the maximum number of images in any bag for this batch
-    max_bag_size = max(sample[0].shape[0] for sample in batch)  # Get max images per bag
+    if pad_bags:
+        # Padding mode - original behavior
+        max_bag_size = max(sample[0].shape[0] for sample in batch)
+        _, C, H, W = batch[0][0].shape
+        padded_images = torch.zeros((len(batch), max_bag_size, C, H, W), dtype=torch.float32)
 
-    # Extract image shape (excluding batch size)
-    _, C, H, W = batch[0][0].shape  # Channels, Height, Width
+        for i, (image_data, bag_labels, instance_labels, bag_id) in enumerate(batch):
+            num_images = image_data.shape[0]
+            padded_images[i, :num_images] = image_data
+            batch_bag_labels.append(bag_labels)
+            batch_instance_labels.append(instance_labels)
+            batch_ids.append(bag_id)
 
-    # Create a padded tensor with zeros
-    padded_images = torch.zeros((len(batch), max_bag_size, C, H, W), dtype=torch.float32)
+        out_bag_labels = torch.stack(batch_bag_labels)
+        out_ids = torch.tensor(batch_ids, dtype=torch.long)
+        return padded_images, out_bag_labels, batch_instance_labels, out_ids
 
-
-    for i, (image_data, bag_labels, instance_labels, bag_id) in enumerate(batch):
-        num_images = image_data.shape[0]
-        padded_images[i, :num_images] = image_data  # Copy actual image data
-
-        batch_bag_labels.append(bag_labels)
-        batch_instance_labels.append(instance_labels)
-        batch_ids.append(bag_id)
-
-    # Convert labels and IDs to tensors
-    out_bag_labels = torch.stack(batch_bag_labels)
-    out_ids = torch.tensor(batch_ids, dtype=torch.long)
-    
-    return padded_images, out_bag_labels, batch_instance_labels, out_ids
+    else:
+        # No padding mode - return original bags without padding
+        batch_images = [sample[0] for sample in batch]
+        batch_bag_labels = [sample[1] for sample in batch]
+        batch_instance_labels = [sample[2] for sample in batch]
+        batch_ids = [sample[3] for sample in batch]
+        
+        out_bag_labels = torch.stack(batch_bag_labels)
+        out_ids = torch.tensor(batch_ids, dtype=torch.long)
+        return batch_images, out_bag_labels, batch_instance_labels, out_ids
 
 
 
