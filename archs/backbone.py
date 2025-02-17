@@ -240,6 +240,7 @@ def create_pooled_efficientnet(model, n_in=3, num_hooks=3):
 def get_efficientnet_model(arch, pretrained_arch):
     # Mapping of EfficientNet model names to their corresponding torchvision functions
     efficientnet_models = {
+        # EfficientNet V1
         'efficientnet_b0': (efficientnet_b0, EfficientNet_B0_Weights),
         'efficientnet_b1': (efficientnet_b1, EfficientNet_B1_Weights),
         'efficientnet_b2': (efficientnet_b2, EfficientNet_B2_Weights),
@@ -248,6 +249,11 @@ def get_efficientnet_model(arch, pretrained_arch):
         'efficientnet_b5': (efficientnet_b5, EfficientNet_B5_Weights),
         'efficientnet_b6': (efficientnet_b6, EfficientNet_B6_Weights),
         'efficientnet_b7': (efficientnet_b7, EfficientNet_B7_Weights),
+        
+        # EfficientNet V2
+        'efficientnet_v2_s': (efficientnet_v2_s, EfficientNet_V2_S_Weights),
+        'efficientnet_v2_m': (efficientnet_v2_m, EfficientNet_V2_M_Weights),
+        'efficientnet_v2_l': (efficientnet_v2_l, EfficientNet_V2_L_Weights),
     }
     
     # Find the matching model function and weights
