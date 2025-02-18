@@ -101,7 +101,9 @@ if __name__ == '__main__':
                     current_feature_idx = 0
                     for bag_idx, bag_predictions in enumerate(instance_predictions):
                         
-                        
+                        if bag_predictions.dim() == 0:  # If it's a scalar
+                            bag_predictions = bag_predictions.unsqueeze(0)  # Add dimension
+                            
                         stretched_targets = yb[bag_idx].expand(bag_predictions.size(0))
 
                         # Calculate start and end indices for this bag's features

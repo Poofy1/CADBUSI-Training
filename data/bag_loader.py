@@ -18,7 +18,7 @@ class BagOfImagesDataset(TUD.Dataset):
         # Extract labels, image file paths, instance-level labels, and accession number
         bag_labels = bag_info['bag_labels']
         images_this_bag = bag_info['images']
-        videos_this_bag = bag_info['videos']
+        videos_this_bag = False#bag_info['videos']
         instance_labels = bag_info['image_labels'].copy() # Make a copy of instance labels to avoid modifying the original
         accession_number = actual_id #bag_info['Accession_Number']  # Accession number is not unique!!! :C
 
