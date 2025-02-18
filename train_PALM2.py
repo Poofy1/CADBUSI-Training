@@ -20,7 +20,7 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 if __name__ == '__main__':
     # Config
     model_version = '1'
-    head_name = "TEST700"
+    head_name = "TEST996"
     data_config = LesionDataConfig #FishDataConfig or LesionDataConfig
     
     config = build_config(model_version, head_name, data_config)

@@ -23,7 +23,7 @@ def create_bags(config, data, root_dir, instance_data=None):
     instance_columns = config['instance_columns']
     min_size = config['min_bag_size']
     max_size = config['max_bag_size']
-    use_videos = config.get('use_videos', False)  # Default to False if not specified
+    use_videos = config.get('use_videos', False)
     
     bags_dict = {}
     image_label_map = {}
@@ -43,7 +43,7 @@ def create_bags(config, data, root_dir, instance_data=None):
     total_rows = len(data)
     all_files = list_files(root_dir)
     
-    # Create video prefix mapping only if videos are enabled and VideoPaths column exists
+    # Create video prefix mapping
     video_prefix_map = {}
     if use_videos and 'VideoPaths' in data.columns:
         for f in all_files:
@@ -61,39 +61,48 @@ def create_bags(config, data, root_dir, instance_data=None):
         
         bag_files = []
         image_labels = []
-        video_files = []
+        available_video_frames = []
         
-        # Process videos only if enabled and VideoPaths column exists
-        video_filenames = set()
+        # First, collect all available video frames
         if use_videos and 'VideoPaths' in data.columns:
             video_prefixes = ast.literal_eval(row['VideoPaths'])
             for video_prefix in video_prefixes:
                 if video_prefix in video_prefix_map:
-                    video_files.extend(video_prefix_map[video_prefix])
-                    video_filenames.update(os.path.basename(f) for f in video_prefix_map[video_prefix])
-
+                    available_video_frames.extend(video_prefix_map[video_prefix])
+        
         # Process regular images
+        video_filenames = set(os.path.basename(f) for f in available_video_frames)
         for img_name in image_files:
             labels = image_label_map.get(img_name, [None] * len(instance_columns)) if instance_columns else []
             
-            # Only check against video_filenames if videos are enabled
             if not use_videos or os.path.basename(img_name) not in video_filenames:
                 full_path = os.path.join(root_dir, img_name)
                 bag_files.append(full_path)
                 image_labels.append(labels if any(label is not None for label in labels) else [None])
-
-        # Skip bags outside the size range
-        total_files = len(bag_files) + len(video_files)
-        if not (min_size <= total_files <= max_size):
+        
+        # If we have too few images, add video frames until we reach min_size
+        # If we have too many images, skip this bag
+        if len(bag_files) > max_size:
             continue
-    
+            
+        # Add video frames to reach maximum size if possible
+        if len(bag_files) < max_size and available_video_frames:
+            frames_needed = max_size - len(bag_files)
+            video_frames_to_add = available_video_frames[:frames_needed]
+            bag_files.extend(video_frames_to_add)
+            # Add None labels for video frames
+            image_labels.extend([[None] * (len(instance_columns) if instance_columns else 1)] * len(video_frames_to_add))
+
+        # Skip if we don't meet minimum size requirement
+        if len(bag_files) < min_size:
+            continue
+        
         bag_labels = [int(row[label]) for label in label_columns if label in data.columns]
     
         bags_dict[row['ID']] = {
             'bag_labels': bag_labels, 
             'images': bag_files,
             'image_labels': image_labels,
-            'videos': video_files,
             'Accession_Number': row['Accession_Number']
         }
 
@@ -121,7 +130,7 @@ def count_bag_labels(bags_dict):
 def process_single_image(img_path, root_dir, output_dir, resize_and_pad, video_name = None):
     try:
         if video_name:
-            input_path = os.path.join(root_dir, 'videos', video_name, img_path)
+            input_path = os.path.join(root_dir, 'videos', img_path)
         else:
             input_path = os.path.join(root_dir, 'images', img_path)
         
@@ -140,7 +149,7 @@ def process_single_image(img_path, root_dir, output_dir, resize_and_pad, video_n
         print(f"Error processing image {img_path}: {e}")
 
 def preprocess_and_save_images(config, data, root_dir, output_dir, fill=0):
-    make_dirs(output_dir)
+    make_dirs(output_dir, local_override = False)
 
     resize_and_pad = ResizeAndPad(config['img_size'], fill=fill)
 
@@ -154,10 +163,10 @@ def preprocess_and_save_images(config, data, root_dir, output_dir, fill=0):
         video_data = read_csv(f'{root_dir}/VideoImages.csv')
         if video_data is not None:
             for _, row in video_data.iterrows():
-                video_folder = row['video_name']
+                video_folder = row['video_name'].replace('\\', '/')  # Convert backslashes here
                 image_paths = ast.literal_eval(row['images'])
                 video_images.extend([
-                    (os.path.basename(img_path), video_folder) 
+                    (os.path.basename(img_path).replace('\\', '/'), video_folder) 
                     for img_path in image_paths
                 ])
             

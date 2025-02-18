@@ -24,7 +24,7 @@ class Instance_Dataset(TUD.Dataset):
         for bag_id, bag_info in bags_dict.items():
             images = bag_info['images'].copy()  # Create copies to avoid modifying original
             image_labels = bag_info['image_labels'].copy()
-            videos = bag_info['videos']
+            #videos = bag_info['videos']
             bag_label = bag_info['bag_labels'][0]
             accession_number = bag_info['Accession_Number']
             
@@ -36,8 +36,8 @@ class Instance_Dataset(TUD.Dataset):
 
 
             # Extend images and labels with videos
-            images.extend(videos)
-            image_labels.extend([[None]] * len(videos))  # Add empty labels for videos
+            #images.extend(videos)
+            #image_labels.extend([[None]] * len(videos))  # Add empty labels for videos
             
             acc_number_key = accession_number.item() if isinstance(accession_number, torch.Tensor) else accession_number
             
