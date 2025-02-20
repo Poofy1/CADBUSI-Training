@@ -276,4 +276,5 @@ def get_efficientnet_model(arch, pretrained_arch):
     model = model_func(weights=weights)
     model_features = model.features
     
+    
     return model_features

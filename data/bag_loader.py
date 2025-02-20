@@ -4,47 +4,49 @@ from torch.utils.data.distributed import DistributedSampler
 from storage_adapter import * 
 
 class BagOfImagesDataset(TUD.Dataset):
-
     def __init__(self, bags_dict, transform=None, save_processed=False):
         self.bags_dict = bags_dict
         self.unique_bag_ids = list(bags_dict.keys())
         self.save_processed = save_processed
         self.transform = transform
-    
+        
+        # Pre-process bag labels at initialization
+        self.bag_labels = {
+            bag_id: torch.tensor(info['bag_labels'], dtype=torch.float32)
+            for bag_id, info in bags_dict.items()
+        }
+
     def __getitem__(self, index):
         actual_id = self.unique_bag_ids[index]
         bag_info = self.bags_dict[actual_id]
-
-        # Extract labels, image file paths, instance-level labels, and accession number
-        bag_labels = bag_info['bag_labels']
-        images_this_bag = bag_info['images']
-        videos_this_bag = False#bag_info['videos']
-        instance_labels = bag_info['image_labels'].copy() # Make a copy of instance labels to avoid modifying the original
-        accession_number = actual_id #bag_info['Accession_Number']  # Accession number is not unique!!! :C
-
-        # Process regular images
-        image_data = [self.transform(read_image(fn, use_pil=True).convert("RGB")) for fn in images_this_bag]
         
-        # Process video images if they exist
-        if videos_this_bag:
-            video_data = [self.transform(read_image(fn, use_pil=True).convert("RGB")) for fn in videos_this_bag]
-            # Add video frames to image data
-            image_data.extend(video_data)
-            # Add None labels for video frames (same length as video_data)
-            instance_labels.extend([[None]] * len(video_data))
-            
-            
-        # Stack all images together
-        image_data = torch.stack(image_data)
-
-        # Convert bag labels list to a tensor
-        bag_labels_tensor = torch.tensor(bag_labels, dtype=torch.float32)
-
-        # Convert instance labels to a tensor, using -1 for None
-        instance_labels_tensors = [torch.tensor(labels, dtype=torch.float32) if labels != [None] else torch.tensor([-1], dtype=torch.float32) for labels in instance_labels]
-
-        return image_data, bag_labels_tensor, instance_labels_tensors, accession_number
-
+        # Use list comprehension for image loading
+        images = [read_image(fn, use_pil=True) for fn in bag_info['images'] + bag_info['videos']]
+        
+        # Batch process transformations
+        if self.transform:
+            images = [self.transform(img.convert('RGB') if img.mode != 'RGB' else img) 
+                     for img in images]
+        
+        # Stack all images at once
+        image_data = torch.stack(images)
+        
+        # Process instance labels more efficiently
+        instance_labels = (bag_info['image_labels'] + 
+                         [[None]] * len(bag_info['videos']))
+        
+        # Use list comprehension for instance labels
+        instance_labels_tensors = [
+            torch.tensor([-1] if labels == [None] else labels, dtype=torch.float32)
+            for labels in instance_labels
+        ]
+        
+        return (
+            image_data,
+            self.bag_labels[actual_id],
+            instance_labels_tensors,
+            actual_id
+        )
     
     def __len__(self):
         return len(self.unique_bag_ids)
@@ -54,22 +56,21 @@ class BagOfImagesDataset(TUD.Dataset):
 
 
 
-def collate_bag(batch, pad_bags=False):
+def collate_bag(batch, pad_bags=True, fixed_bag_size=25):
     batch_bag_labels = []
     batch_instance_labels = []
     batch_ids = []
 
     if pad_bags:
-        # Padding mode - original behavior
-        max_bag_size = max(sample[0].shape[0] for sample in batch)
+        # Use fixed padding size instead of dynamic max size
         _, C, H, W = batch[0][0].shape
-        padded_images = torch.zeros((len(batch), max_bag_size, C, H, W), dtype=torch.float32)
+        padded_images = torch.zeros((len(batch), fixed_bag_size, C, H, W), dtype=torch.float32)
 
         for i, (image_data, bag_labels, instance_labels, bag_id) in enumerate(batch):
-            num_images = image_data.shape[0]
-            padded_images[i, :num_images] = image_data
+            num_images = min(image_data.shape[0], fixed_bag_size)  # Limit to fixed size
+            padded_images[i, :num_images] = image_data[:num_images]  # Truncate if needed
             batch_bag_labels.append(bag_labels)
-            batch_instance_labels.append(instance_labels)
+            batch_instance_labels.append(instance_labels[:num_images] if num_images < len(instance_labels) else instance_labels)
             batch_ids.append(bag_id)
 
         out_bag_labels = torch.stack(batch_bag_labels)

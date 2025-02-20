@@ -6,13 +6,14 @@ from torch.utils.data.distributed import DistributedSampler
 from storage_adapter import *
 
 class Instance_Dataset(TUD.Dataset):
-    def __init__(self, bags_dict, selection_mask, transform=None, warmup=True, 
+    def __init__(self, bags_dict, selection_mask, transform=None, warmup=True, use_bag_labels=False,
                  dual_output=False, only_negative=False, max_positive=None):
         self.transform = transform
         self.warmup = warmup
         self.dual_output = dual_output
         self.only_negative = only_negative
         self.max_positive = max_positive
+        self.use_bag_labels = use_bag_labels
 
         self.images = []
         self.output_image_labels = []
@@ -24,20 +25,21 @@ class Instance_Dataset(TUD.Dataset):
         for bag_id, bag_info in bags_dict.items():
             images = bag_info['images'].copy()  # Create copies to avoid modifying original
             image_labels = bag_info['image_labels'].copy()
-            #videos = bag_info['videos']
+            videos = bag_info['videos']
             bag_label = bag_info['bag_labels'][0]
             accession_number = bag_info['Accession_Number']
             
-            """ #Debug prints
-            print(f"\nBag {bag_id}:")
+             #Debug prints
+            """print(f"\nBag {bag_id}:")
             print(f"Number of images: {len(images)}")
             print(f"Number of videos: {len(videos)}")
-            print(f"Total instances after combine: {len(images) + len(videos)}")"""
-
+            print(f"Total instances after combine: {len(images) + len(videos)}")
+            """
 
             # Extend images and labels with videos
-            #images.extend(videos)
-            #image_labels.extend([[None]] * len(videos))  # Add empty labels for videos
+            if not warmup: # do not include video data in warmup (more noise)
+                images.extend(videos)
+                image_labels.extend([[None]] * len(videos))  # Add empty labels for videos
             
             acc_number_key = accession_number.item() if isinstance(accession_number, torch.Tensor) else accession_number
             
@@ -62,7 +64,10 @@ class Instance_Dataset(TUD.Dataset):
                         image_label = 0
                     elif bag_label == 0:
                         image_label = 0
-                        
+                
+                elif self.use_bag_labels:   
+                    image_label = bag_label    
+                    
                 elif self.warmup:
                     if labels[0] is not None:
                         image_label = labels[0]
@@ -70,6 +75,7 @@ class Instance_Dataset(TUD.Dataset):
                         image_label = 0
                     elif selection_mask_labels is not None and selection_mask_labels[idx] != -1:
                         image_label = selection_mask_labels[idx]
+                        
                 else:
                     if labels[0] is not None:
                         image_label = labels[0]
@@ -202,7 +208,12 @@ class InstanceSampler(Sampler):
             random.seed(self.seed)
 
         # Randomly sample from non-positive class to match the number of positive samples
-        selected_non_positive = random.sample(self.indices_non_positive, self.samples_per_class)
+        # Safely sample from non-positive class
+        if len(self.indices_non_positive) < self.samples_per_class:
+            print(f"Warning: Not enough non-positive samples. Requested {self.samples_per_class} but only have {len(self.indices_non_positive)} available.")
+            selected_non_positive = self.indices_non_positive
+        else:
+            selected_non_positive = random.sample(self.indices_non_positive, self.samples_per_class)
         
         # Create balanced dataset
         all_indices = self.indices_positive + selected_non_positive

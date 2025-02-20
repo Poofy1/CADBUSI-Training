@@ -18,7 +18,7 @@ from data.format_data import *
 from data.sudo_labels import *
 from loss.palm import PALM
 from data.save_arch import *
-from archs.model_MIL import *
+from archs.model_MIL_sali import *
 from data.bag_loader import *
 from data.instance_loader import *
 
@@ -167,7 +167,7 @@ if __name__ == '__main__':
     current_dir = os.path.dirname(os.path.abspath(__file__))
     parent_dir = os.path.dirname(current_dir)
     model_folder = os.path.join(parent_dir, "models")  
-    head_name = "TEST191"
+    head_name = "TEST171"
     model_version = "1"  # Leave "" to read HEAD
     
     # Load the model configuration

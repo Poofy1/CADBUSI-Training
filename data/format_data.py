@@ -61,17 +61,17 @@ def create_bags(config, data, root_dir, instance_data=None):
         
         bag_files = []
         image_labels = []
-        available_video_frames = []
+        video_frames = []
         
         # First, collect all available video frames
         if use_videos and 'VideoPaths' in data.columns:
             video_prefixes = ast.literal_eval(row['VideoPaths'])
             for video_prefix in video_prefixes:
                 if video_prefix in video_prefix_map:
-                    available_video_frames.extend(video_prefix_map[video_prefix])
+                    video_frames.extend(video_prefix_map[video_prefix])
         
         # Process regular images
-        video_filenames = set(os.path.basename(f) for f in available_video_frames)
+        video_filenames = set(os.path.basename(f) for f in video_frames)
         for img_name in image_files:
             labels = image_label_map.get(img_name, [None] * len(instance_columns)) if instance_columns else []
             
@@ -80,21 +80,19 @@ def create_bags(config, data, root_dir, instance_data=None):
                 bag_files.append(full_path)
                 image_labels.append(labels if any(label is not None for label in labels) else [None])
         
-        # If we have too few images, add video frames until we reach min_size
         # If we have too many images, skip this bag
         if len(bag_files) > max_size:
             continue
-            
-        # Add video frames to reach maximum size if possible
-        if len(bag_files) < max_size and available_video_frames:
+        
+        # If we have video frames and aren't at max size yet, add some video frames (up to max_size)
+        if use_videos and len(bag_files) < max_size and video_frames:
             frames_needed = max_size - len(bag_files)
-            video_frames_to_add = available_video_frames[:frames_needed]
-            bag_files.extend(video_frames_to_add)
-            # Add None labels for video frames
-            image_labels.extend([[None] * (len(instance_columns) if instance_columns else 1)] * len(video_frames_to_add))
-
-        # Skip if we don't meet minimum size requirement
-        if len(bag_files) < min_size:
+            video_frames = video_frames[:frames_needed]
+        else: 
+            video_frames = []
+            
+        # Skip if we don't meet minimum size requirement (even with videos)
+        if len(bag_files) + len(video_frames) < min_size:
             continue
         
         bag_labels = [int(row[label]) for label in label_columns if label in data.columns]
@@ -103,6 +101,7 @@ def create_bags(config, data, root_dir, instance_data=None):
             'bag_labels': bag_labels, 
             'images': bag_files,
             'image_labels': image_labels,
+            'videos': video_frames,
             'Accession_Number': row['Accession_Number']
         }
 
@@ -286,7 +285,7 @@ def prepare_all_data(config):
     val_sampler = BalancedBagSampler(bag_dataset_val, batch_size=config['bag_batch_size'])
     #train_sampler = DistributedBalancedBagSampler(bag_dataset_train, config['bag_batch_size'])
     #val_sampler = DistributedBalancedBagSampler(bag_dataset_val, config['bag_batch_size'])
-    bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_sampler=train_sampler, collate_fn=collate_bag, num_workers=2, pin_memory=True)
+    bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_sampler=train_sampler, collate_fn=collate_bag, num_workers=12, pin_memory=True)
     bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_sampler=val_sampler, collate_fn=collate_bag)
     
 
