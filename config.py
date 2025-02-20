@@ -32,14 +32,14 @@ class LesionDataConfig(BaseConfig):
         self.dataset_name = 'export_12_12_2024_17_35_49' #export_12_12_2024_17_35_49' 'export_oneLesions'
         self.label_columns = ['Has_Malignant']
         self.instance_columns = ['Malignant Lesion Present']
-        self.img_size = 64#224
+        self.img_size = 224 #224
         self.bag_batch_size = 5
         self.min_bag_size = 2
-        self.max_bag_size = 50
+        self.max_bag_size = 25
         self.instance_batch_size = 32
-        self.arch = 'efficientnet_b3'
+        self.arch = 'convnextv2_tiny'
         self.pretrained_arch = False
-        self.use_videos = True
+        self.use_videos = False
 
 class FishDataConfig(BaseConfig):
     def __init__(self):

@@ -15,12 +15,13 @@ torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 
+from torch.amp import autocast, GradScaler
 
 
 if __name__ == '__main__':
     # Config
     model_version = '1'
-    head_name = "TEST996"
+    head_name = "TEST300"
     data_config = LesionDataConfig #FishDataConfig or LesionDataConfig
     
     config = build_config(model_version, head_name, data_config)
@@ -46,7 +47,7 @@ if __name__ == '__main__':
     # MODEL INIT
     model, optimizer, state = setup_model(model, config, optimizer)
     palm.load_state(state['palm_path'])
-
+    scaler = GradScaler('cuda')
     
     # Training loop
     while state['epoch'] < config['total_epochs']:
@@ -55,11 +56,11 @@ if __name__ == '__main__':
         if not state['pickup_warmup']: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
-            instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=True)
+            instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=True, use_bag_labels=config['warmup'])
             instance_dataset_val = Instance_Dataset(bags_val, [], transform=val_transform, warmup=True)
             train_sampler = InstanceSampler(instance_dataset_train, config['instance_batch_size'], strategy=1)
             val_sampler = InstanceSampler(instance_dataset_val, config['instance_batch_size'], seed=1)
-            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, collate_fn = collate_instance)
+            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, collate_fn = collate_instance, num_workers=6, pin_memory=True)
             instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_sampler=val_sampler, collate_fn = collate_instance)
             
             if state['warmup']:
@@ -86,11 +87,12 @@ if __name__ == '__main__':
                 for idx, (images, instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
                     images = images.cuda(non_blocking=True)
                     instance_labels = instance_labels.cuda(non_blocking=True)
-
+    
                     # forward
                     optimizer.zero_grad()
-                    _, _, instance_predictions, features = model(images, projector=True)
-                    features.to(device)
+                    with autocast('cuda'):
+                        _, _, instance_predictions, features = model(images, projector=True)
+                        features.to(device)
                     
                     # Get loss from PALM
                     palm_loss, loss_dict = palm(features, instance_labels.long())
@@ -100,8 +102,9 @@ if __name__ == '__main__':
 
                     # Backward pass and optimization step
                     total_loss = 0 + bce_loss_value
-                    total_loss.backward()
-                    optimizer.step()
+                    scaler.scale(total_loss).backward()
+                    scaler.step(optimizer)
+                    scaler.update()
         
                     # Update the loss meter
                     losses.update(total_loss.item(), images[0].size(0))
@@ -148,8 +151,9 @@ if __name__ == '__main__':
                         instance_labels = instance_labels.cuda(non_blocking=True)
 
                         # Forward pass
-                        _, _, instance_predictions, features = model(images, projector=True)
-                        features.to(device)
+                        with autocast('cuda'):
+                            _, _, instance_predictions, features = model(images, projector=True)
+                            features.to(device)
                         
                         # Get loss
                         palm_loss, loss_dict = palm(features, instance_labels, update_prototypes=False)
@@ -241,8 +245,9 @@ if __name__ == '__main__':
                     yb = yb.cuda()
         
                 # Forward pass
-                bag_pred, _, instance_pred, _ = model(images, pred_on=True)
-                bag_pred = bag_pred.cuda()
+                with autocast('cuda'):
+                    bag_pred, _, instance_pred, _ = model(images, pred_on=True)
+                    bag_pred = bag_pred.cuda()
     
                 # Split the embeddings back into per-bag embeddings
                 #split_sizes = [bag.size(0) for bag in images]
@@ -251,8 +256,9 @@ if __name__ == '__main__':
                     train_bag_logits[unique_id[i].item()] = y_h.detach().cpu().numpy()
                 
                 bag_loss = BCE_loss(bag_pred, yb)
-                bag_loss.backward()
-                optimizer.step()
+                scaler.scale(bag_loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
                 
                 total_loss += bag_loss.item() * yb.size(0)
                 predicted = (bag_pred > 0.5).float()
@@ -291,8 +297,9 @@ if __name__ == '__main__':
                         
                         
                     # Forward pass
-                    bag_pred, _, _, features = model(images, pred_on=True)
-                    bag_pred = bag_pred.cuda()
+                    with autocast('cuda'):
+                        bag_pred, _, _, features = model(images, pred_on=True)
+                        bag_pred = bag_pred.cuda()
 
                     # Calculate bag-level loss
                     loss = BCE_loss(bag_pred, yb)
