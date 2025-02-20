@@ -56,7 +56,7 @@ class BagOfImagesDataset(TUD.Dataset):
 
 
 
-def collate_bag(batch, pad_bags=True, fixed_bag_size=25):
+def collate_bag(batch, pad_bags=False, fixed_bag_size=25):
     batch_bag_labels = []
     batch_instance_labels = []
     batch_ids = []

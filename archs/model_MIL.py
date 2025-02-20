@@ -40,34 +40,32 @@ class Embeddingmodel(nn.Module):
 
     def forward(self, bags, projector=False, pred_on = False):
         if pred_on:
-            num_bags = len(bags)
-            bag_pred = torch.empty(num_bags, self.num_classes, device=bags.device)
-            bag_instance_predictions = []
-            
-            # Process each bag separately to avoid large concatenation
-            for i, bag in enumerate(bags):
-                # Remove padded images
-                valid_images = bag[~(bag == 0).all(dim=1).all(dim=1).all(dim=1)]
-                if valid_images.size(0) == 0:
-                    continue
-                    
-                # Process just this bag
-                feats = self.encoder(valid_images)
-                if len(feats.shape) == 4:
-                    feats = self.adaptive_avg_pool(feats).squeeze(-1).squeeze(-1)
-                    
-                # Get predictions for this bag
-                yhat_bag, yhat_ins = self.aggregator(feats)
-                bag_pred[i] = yhat_bag
-                bag_instance_predictions.append(yhat_ins)
-                
-
-            return bag_pred, None, bag_instance_predictions, None
-        else:
-            all_images = bags
-            split_sizes = [1] * bags.size(0)
-            num_bags = bags.size(0)
+            num_bags = len(bags)  # input = [bag #, images_per_bag (padded), 224, 224, 3]
         
+            all_images = []
+            split_sizes = []
+            
+            for bag in bags:
+                # Remove padded images (assuming padding is represented as zero tensors)
+                valid_images = bag[~(bag == 0).all(dim=1).all(dim=1).all(dim=1)] # Shape: [valid_images, 224, 224, 3]
+                
+                split_sizes.append(valid_images.size(0))  # Track original bag sizes
+                all_images.append(valid_images)
+            
+            if len(all_images) == 0:
+                return None, None  # Handle case where no valid images exist
+            
+            all_images = torch.cat(all_images, dim=0)  # Shape: [Total valid images, 224, 224, 3]
+        else:
+            #all_images = bags
+            #split_sizes = [1] * bags.size(0)
+            #num_bags = bags.size(0)
+        
+        
+            split_sizes = [bag.size(0) for bag in bags]
+            all_images = torch.cat(bags, dim=0)
+            num_bags = len(bags)
+                        
         # Forward pass through encoder
         feats = self.encoder(all_images)  
         if len(feats.shape) == 4:
@@ -99,8 +97,8 @@ class Embeddingmodel(nn.Module):
             del all_images
             
         
-        if not pred_on:
-            bag_instance_predictions = torch.stack(bag_instance_predictions)
+        """if not pred_on:
+            bag_instance_predictions = torch.stack(bag_instance_predictions)"""
             
             
         return bag_pred, None, bag_instance_predictions, proj

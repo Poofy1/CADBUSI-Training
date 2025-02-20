@@ -19,7 +19,7 @@ resnet18
 class ITS2CLRConfig(BaseConfig):
     def __init__(self):
         self.feature_extractor_train_count = 5
-        self.MIL_train_count = 5
+        self.MIL_train_count = 8
         self.initial_ratio = 0.2
         self.final_ratio = .9
         self.total_epochs = 100
@@ -35,7 +35,7 @@ class LesionDataConfig(BaseConfig):
         self.img_size = 224 #224
         self.bag_batch_size = 5
         self.min_bag_size = 2
-        self.max_bag_size = 25
+        self.max_bag_size = 50
         self.instance_batch_size = 32
         self.arch = 'convnextv2_tiny'
         self.pretrained_arch = False
