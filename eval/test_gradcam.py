@@ -18,7 +18,7 @@ from data.format_data import *
 from data.sudo_labels import *
 from loss.palm import PALM
 from data.save_arch import *
-from archs.model_MIL_sali import *
+from archs.model_MIL import *
 from data.bag_loader import *
 from data.instance_loader import *
 
@@ -167,7 +167,7 @@ if __name__ == '__main__':
     current_dir = os.path.dirname(os.path.abspath(__file__))
     parent_dir = os.path.dirname(current_dir)
     model_folder = os.path.join(parent_dir, "models")  
-    head_name = "TEST171"
+    head_name = "TEST300"
     model_version = "1"  # Leave "" to read HEAD
     
     # Load the model configuration
@@ -185,8 +185,10 @@ if __name__ == '__main__':
     # Load the saved model state
     if model_version:
         model_path = f"{model_folder}/{head_name}/{model_version}/model.pth"
+        save_dir = f"{model_folder}/{config['head_name']}/{model_version}"
     else:
         model_path = f"{model_folder}/{head_name}/model.pth"
+        save_dir = f"{model_folder}/{config['head_name']}"
     model.load_state_dict(torch.load(model_path))
     model.eval()
     
@@ -203,7 +205,7 @@ if __name__ == '__main__':
     grad_cam = GradCAM(model, target_layer)
 
     # Create output directory
-    output_path = os.path.join(current_dir, "results", f"{head_name}_GradCAM++")
+    output_path = os.path.join(save_dir, 'tests', 'GradCam')
     os.makedirs(output_path, exist_ok=True)
 
     # Create CSV file for predictions
