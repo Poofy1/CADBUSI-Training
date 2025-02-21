@@ -59,14 +59,13 @@ if __name__ == '__main__':
         if not state['pickup_warmup']: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
-            instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=True, dual_output=True)
+            instance_dataloader_train, instance_dataloader_val = get_instance_loaders(bags_train, bags_val, 
+                                                                                      state, config, 
+                                                                                      warmup=True, dual_output=True)
             
             if state['warmup']:
-                sampler = InstanceSampler(instance_dataset_train, config['instance_batch_size'])
-                instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=sampler, collate_fn = collate_instance)
                 target_count = config['warmup_epochs']
             else:
-                instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_size=config['instance_batch_size'], collate_fn = collate_instance, drop_last=True, shuffle = True)
                 target_count = config['feature_extractor_train_count']
             
 
