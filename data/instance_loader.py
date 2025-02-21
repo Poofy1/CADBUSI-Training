@@ -4,6 +4,7 @@ from torch.utils.data import Sampler
 import cv2
 from torch.utils.data.distributed import DistributedSampler
 from storage_adapter import *
+from config import train_transform, val_transform
 
 class Instance_Dataset(TUD.Dataset):
     def __init__(self, bags_dict, selection_mask, transform=None, warmup=True, use_bag_labels=False,
@@ -123,7 +124,7 @@ class Instance_Dataset(TUD.Dataset):
         instance_label = self.output_image_labels[index]
         unique_id = self.unique_ids[index]
         
-        img = read_image(img_path)
+        img = read_image(img_path, local_override=True)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = Image.fromarray(img)
         
@@ -140,8 +141,31 @@ class Instance_Dataset(TUD.Dataset):
         return len(self.images)
     
     
+def get_instance_loaders(bags_train, bags_val, state, config, warmup=True, use_bag_labels=False, dual_output=False, only_negative=False, max_positive=None):
+    # Used the instance predictions from bag training to update the Instance Dataloader
+    instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=warmup, 
+                                              use_bag_labels=use_bag_labels,
+                                              dual_output=dual_output,
+                                              only_negative=only_negative,
+                                              max_positive=max_positive)
+    instance_dataset_val = Instance_Dataset(bags_val, [], transform=val_transform, warmup=True,
+                                            use_bag_labels=use_bag_labels,
+                                            dual_output=dual_output,
+                                            only_negative=only_negative,
+                                            max_positive=max_positive)
+    train_sampler = InstanceSampler(instance_dataset_train, config['instance_batch_size'], strategy=1)
+    val_sampler = InstanceSampler(instance_dataset_val, config['instance_batch_size'], seed=1)
     
+    if platform.system() == 'Windows': #Windows works better on its own
+        instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, collate_fn = collate_instance)
+    else:
+        instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, collate_fn = collate_instance, num_workers=8, pin_memory=True)
+    instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_sampler=val_sampler, collate_fn = collate_instance)
     
+    return instance_dataloader_train, instance_dataloader_val
+
+
+
 def collate_instance(batch):
     if isinstance(batch[0][0], tuple):  # Check if it's dual output
         batch_data_q = []

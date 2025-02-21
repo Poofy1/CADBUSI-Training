@@ -13,6 +13,7 @@ from data.transforms import *
 from storage_adapter import *
 from data.bag_loader import *
 from config import *
+import platform
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
@@ -134,8 +135,7 @@ def process_single_image(img_path, root_dir, output_dir, resize_and_pad, video_n
             input_path = os.path.join(root_dir, 'images', img_path)
         
         output_path = os.path.join(output_dir, os.path.basename(img_path))
-        
-        if file_exists(output_path):
+        if os.path.exists(output_path):
             return
 
         image = read_image(input_path, use_pil=True)
@@ -143,7 +143,8 @@ def process_single_image(img_path, root_dir, output_dir, resize_and_pad, video_n
             raise ValueError(f"Failed to read image: {input_path}")
             
         image = resize_and_pad(image)
-        save_data(image, output_path)
+        image.save(output_path)
+        #save_data(image, output_path, local_override=True)
     except Exception as e:
         print(f"Error processing image {img_path}: {e}")
 
@@ -285,7 +286,12 @@ def prepare_all_data(config):
     val_sampler = BalancedBagSampler(bag_dataset_val, batch_size=config['bag_batch_size'])
     #train_sampler = DistributedBalancedBagSampler(bag_dataset_train, config['bag_batch_size'])
     #val_sampler = DistributedBalancedBagSampler(bag_dataset_val, config['bag_batch_size'])
-    bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_sampler=train_sampler, collate_fn=collate_bag, num_workers=8, pin_memory=True)
+    
+    if platform.system() == 'Windows': #Windows works better on its own
+        bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_sampler=train_sampler, collate_fn=collate_bag)
+    else: #linux needs workers defined
+        bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_sampler=train_sampler, collate_fn=collate_bag, num_workers=8, pin_memory=True)
+        
     bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_sampler=val_sampler, collate_fn=collate_bag)
     
 
