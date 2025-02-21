@@ -49,6 +49,7 @@ if __name__ == '__main__':
     palm.load_state(state['palm_path'])
     scaler = GradScaler('cuda')
     
+    
     # Training loop
     while state['epoch'] < config['total_epochs']:
         
@@ -60,7 +61,7 @@ if __name__ == '__main__':
             instance_dataset_val = Instance_Dataset(bags_val, [], transform=val_transform, warmup=True)
             train_sampler = InstanceSampler(instance_dataset_train, config['instance_batch_size'], strategy=1)
             val_sampler = InstanceSampler(instance_dataset_val, config['instance_batch_size'], seed=1)
-            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, collate_fn = collate_instance, num_workers=6, pin_memory=True)
+            instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, collate_fn = collate_instance)
             instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_sampler=val_sampler, collate_fn = collate_instance)
             
             if state['warmup']:
@@ -248,7 +249,7 @@ if __name__ == '__main__':
         
                 # Forward pass
                 with autocast('cuda'):
-                    bag_pred, _, instance_pred, _ = model(images)#, pred_on=True)
+                    bag_pred, _, instance_pred, _ = model(images, pred_on=True)
                     bag_pred = bag_pred.cuda()
     
                 # Split the embeddings back into per-bag embeddings
@@ -307,7 +308,7 @@ if __name__ == '__main__':
                         
                     # Forward pass
                     with autocast('cuda'):
-                        bag_pred, _, _, features = model(images)#, pred_on=True)
+                        bag_pred, _, _, features = model(images, pred_on=True)
                         bag_pred = bag_pred.cuda()
 
                     # Calculate bag-level loss
@@ -362,4 +363,3 @@ if __name__ == '__main__':
                 # Save selection
                 with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
                     pickle.dump(state['selection_mask'], file)
-
