@@ -124,9 +124,11 @@ class Instance_Dataset(TUD.Dataset):
         instance_label = self.output_image_labels[index]
         unique_id = self.unique_ids[index]
         
-        img = read_image(img_path, local_override=True)
+        """img = read_image(img_path, local_override=True)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = Image.fromarray(img)
+        img = Image.fromarray(img)"""
+        
+        img = Image.open(img_path).convert("RGB")
         
         if self.dual_output:
             image_data_q = self.transform(img)
@@ -159,7 +161,7 @@ def get_instance_loaders(bags_train, bags_val, state, config, warmup=True, use_b
     if platform.system() == 'Windows': #Windows works better on its own
         instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, collate_fn = collate_instance)
     else:
-        instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, collate_fn = collate_instance, num_workers=8, pin_memory=True)
+        instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, collate_fn = collate_instance, num_workers=8, pin_memory=True, persistent_workers=True)
     instance_dataloader_val = TUD.DataLoader(instance_dataset_val, batch_sampler=val_sampler, collate_fn = collate_instance)
     
     return instance_dataloader_train, instance_dataloader_val
