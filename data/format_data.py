@@ -290,7 +290,7 @@ def prepare_all_data(config):
     if platform.system() == 'Windows': #Windows works better on its own
         bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_sampler=train_sampler, collate_fn=collate_bag)
     else: #linux needs workers defined
-        bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_sampler=train_sampler, collate_fn=collate_bag, num_workers=8, pin_memory=True)
+        bag_dataloader_train = TUD.DataLoader(bag_dataset_train, batch_sampler=train_sampler, collate_fn=collate_bag, num_workers=8, pin_memory=True, persistent_workers=True)
         
     bag_dataloader_val = TUD.DataLoader(bag_dataset_val, batch_sampler=val_sampler, collate_fn=collate_bag)
     

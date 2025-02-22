@@ -16,12 +16,13 @@ device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 
 from torch.amp import autocast, GradScaler
-
+import torch.multiprocessing as mp
+mp.set_sharing_strategy('file_system')
 
 if __name__ == '__main__':
     # Config
     model_version = '1'
-    head_name = "TEST300"
+    head_name = "TEST302"
     data_config = LesionDataConfig #FishDataConfig or LesionDataConfig
     
     config = build_config(model_version, head_name, data_config)

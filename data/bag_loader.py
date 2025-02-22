@@ -21,11 +21,11 @@ class BagOfImagesDataset(TUD.Dataset):
         bag_info = self.bags_dict[actual_id]
         
         # Use list comprehension for image loading
-        images = [read_image(fn, use_pil=True) for fn in bag_info['images'] + bag_info['videos']]
+        images = [Image.open(fn).convert("RGB") for fn in bag_info['images'] + bag_info['videos']]
         
         # Batch process transformations
         if self.transform:
-            images = [self.transform(img.convert('RGB') if img.mode != 'RGB' else img) 
+            images = [self.transform(img) 
                      for img in images]
         
         # Stack all images at once
