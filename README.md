@@ -16,34 +16,22 @@ ML framework that supports various deep learning architectures for ultrasound im
 - You can begin training by running one of the provided training scripts in the immediate directory. Each script has its own training loop for that specific technique
      - If you are running a training script on newly processed data, the script will crop and save the images into a temporary `cropped_images` directory
      - This will automatically continue training if a model exists under the specified name already
-     - This will automatically unbalanced data by upsampling the minority class until they are balanced (Only when training on 2 classes)
+     - This will automatically unbalanced data by downsampling the majority class until they are balanced (Only when training on 2 classes)
      - Trained models will be saved in the `./models/` dir with your 
 
-## Test Dataset
 
-We use a modified version of [ImageNet](https://paperswithcode.com/dataset/imagenet), specifically the ImageNette subset, to test our MIL architectures. The `./util/create_imagenet.py` script automatically generates this dataset by:
-
-- Downloading the ImageNette dataset (a 10-class subset of ImageNet)
-- Creating bags of 2-10 images each
-- Generating both bag-level and instance-level labels
-- Converting the data into our required format (TrainData.csv and InstanceData.csv)
-- Organizing images into the expected directory structure
-
-The script creates a binary classification problem where the target class is 'n01440764', with approximately 20% of bags containing positive instances. The dataset is automatically split with 80% for training and 20% for validation.
-
-This synthetic dataset provides a controlled environment for testing MIL architectures before deploying them on medical imaging data.
 
 
 ## Model Format
 
 ### Warmup Phase
 - Instance-level training only
-- Checkpoints saved in immediate directory
+- Checkpoints saved in immediate model directory
 
 ### Post-Warmup Training
-- Alternates between instance and MIL-level learning
-- Builds on warmup checkpoint
-- Often involves using sudo labels to some degree
+- Alternates between instance and MIL-level learning ([ITS2CLR](https://arxiv.org/pdf/2210.09452.pdf))
+- Finetunes the warmup checkpoint
+- Often involves generating / using sudo labels
 
 ### Versioning Structure
 ```
@@ -56,17 +44,24 @@ This synthetic dataset provides a controlled environment for testing MIL archite
          └── ...               # Additional state information
 ```
 
-This structure allows multiple training iterations to branch from the same warmup checkpoint, enabling experimentation with different strategies while maintaining a common foundation. Within this direcotry is other metric data like accuracy logs, loss graphs, roc graphs, and confuision matrices.
+This structure allows multiple training iterations to branch from the same warmup checkpoint, enabling experimentation with different strategies while maintaining a common foundation. Within this direcotry are other metric data like accuracy logs, loss graphs, roc graphs, and confuision matrices.
+
 
 
 ## Model Testing
 
-Testing scripts reside in the `./eval/` folder, these scripts test the performace of trained models. Please note that these evaluation scripts are currently not actively maintained and may require modifications to work with your setup.
+Testing scripts reside in the `./eval/` folder, these scripts test the performace of trained models. These evaluation scripts are currently not actively maintained and may require modifications to work with your setup.
 
 
 
 ## Supported Architectures
 Our model trainer has a configurable backbone encoder, such as ResNet18. This backbone acts as a feature extractor. All architectures support both ABMIL and ITS2CLR-style training, with additional modifications based on their specific approach. Each architecture extends the base ABMIL and ITS2CLR capabilities with its own unique improvements and methodologies.
+
+### Supported Encoders Families
+- resnet
+- convnextv2
+- efficientnet
+- efficientnet_v2
 
 ### ABMIL + ITS2CLR (Base architecture)
 - ABMIL: https://arxiv.org/pdf/1802.04712.pdf
@@ -85,6 +80,32 @@ Our model trainer has a configurable backbone encoder, such as ResNet18. This ba
 
 
 
+## Lead Model
+Our current direction is to include PALM in the instance training of our ABMIL + ITS2CLR framework. The bag training generates sudo labels that will be used in the instance training after warmup. PALM will move unknown instances to their closest prototype after warmup.
+
+
+### Results
+- Val Instance Acc:
+- Val Instance AUC:
+
+- Val Palm Acc:
+  
+- Val Bag Acc:
+- Val Bag AUC:
+
+## Test Dataset
+
+We use a modified version of [ImageNet](https://paperswithcode.com/dataset/imagenet), specifically the ImageNette subset, to test our MIL architectures. The `./util/create_imagenet.py` script automatically generates this dataset by:
+
+- Downloading the ImageNette dataset (a 10-class subset of ImageNet)
+- Creating bags of 2-10 images each
+- Generating both bag-level and instance-level labels
+- Converting the data into our required format (TrainData.csv and InstanceData.csv)
+- Organizing images into the expected directory structure
+
+The script creates a binary classification problem where the target class is 'n01440764', with approximately 20% of bags containing positive instances. The dataset is automatically split with 80% for training and 20% for validation.
+
+This synthetic dataset provides a controlled environment for testing MIL architectures before deploying them on medical imaging data.
 
 ## Dataloader Input Format
 
