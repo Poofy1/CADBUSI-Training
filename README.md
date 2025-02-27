@@ -7,6 +7,7 @@ ML framework that supports various deep learning architectures for ultrasound im
 - Python 3.8
 - Nvidia GPU
 - CUDA 11.3 or greater
+- Custom storage package: [storage-adapter](https://github.com/Poofy1/storage-adapter.git) (automatically installed via requirements.txt)
 
 ## Usage 
 - Clone repository: `git clone https://github.com/Poofy1/CADBUSI-Training.git`
