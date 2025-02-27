@@ -10,6 +10,7 @@ class PALM(nn.Module):
         self.temp = temp  # temperature scaling
         self.nviews = nviews
         self.cache_size = int(n_protos / num_classes)
+        self.unlabeled_weight = .5
         
         self.lambda_pcon = lambda_pcon
         
@@ -80,7 +81,7 @@ class PALM(nn.Module):
         else:
             update_mask = F.normalize(F.normalize(mask * Q, dim=1, p=1),dim=0, p=1)
         update_features = torch.matmul(update_mask.T, features)
-        
+
         if update_prototypes:
             self.proto_class_counts += torch.matmul(update_mask.T, F.one_hot(targets, num_classes=self.num_classes).float()) # ADDED
             protos = self.protos
@@ -170,8 +171,22 @@ class PALM(nn.Module):
         distances = 2 - 2 * distances
         
         return predicted_classes, distances
+    
+    
+    def unlabeled_loss(self, features):
+        # Compute similarities between features and prototypes
+        similarities = torch.matmul(features, self.protos.T)
+        
+        # Find the closest prototype for each feature
+        closest_proto_idx = torch.argmax(similarities, dim=1)
+        
+        # Compute the loss as 1 minus cosine similarity to the closest prototype
+        closest_similarities = similarities[torch.arange(features.size(0)), closest_proto_idx]
+        loss = 1 - closest_similarities
+        
+        return loss.mean()  # Average loss per feature
 
-    def forward(self, features, targets, update_prototypes=True):
+    def forward(self, features, targets, update_prototypes=True, unlabeled_features=None):
         loss = 0
         loss_dict = {}
 
@@ -183,7 +198,15 @@ class PALM(nn.Module):
             g_dis = self.lambda_pcon * self.proto_contra()
             loss += g_dis
             loss_dict['proto_contra'] = g_dis.cpu().item()
-                                
+        
+        
+        # Unlabeled data loss
+        if unlabeled_features is not None and unlabeled_features.numel() > 0:
+            u_loss = self.unlabeled_weight * self.unlabeled_loss(unlabeled_features)
+            loss += u_loss
+            #print(u_loss)
+            loss_dict['unlabeled'] = u_loss.cpu().item()                
+            
         self.protos = self.protos.detach()
                 
         return loss, loss_dict

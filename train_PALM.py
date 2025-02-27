@@ -7,7 +7,6 @@ from util.Gen_ITS2CLR_util import *
 import torch.optim as optim
 from data.format_data import *
 from data.sudo_labels import *
-from archs.model_MIL import *
 from data.instance_loader import *
 from loss.palm import PALM
 from util.eval_util import *
@@ -18,11 +17,12 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 from torch.amp import autocast, GradScaler
 import torch.multiprocessing as mp
 mp.set_sharing_strategy('file_system')
+import gc
 
 if __name__ == '__main__':
     # Config
     model_version = '1'
-    head_name = "TEST302"
+    head_name = "TEST305"
     data_config = LesionDataConfig #FishDataConfig or LesionDataConfig
     
     config = build_config(model_version, head_name, data_config)
@@ -31,8 +31,7 @@ if __name__ == '__main__':
     num_labels = len(config['label_columns'])
 
     # Create Model
-    model = Embeddingmodel(config['arch'], config['pretrained_arch'], num_classes = num_labels).cuda()
-    print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
+    model = build_model(config)    
     
     # LOSS INIT
     palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 0, lambda_pcon=1).cuda()
@@ -60,7 +59,7 @@ if __name__ == '__main__':
             # Used the instance predictions from bag training to update the Instance Dataloader
             instance_dataloader_train, instance_dataloader_val = get_instance_loaders(bags_train, bags_val, 
                                                                                       state, config, 
-                                                                                      warmup=True, use_bag_labels=state['warmup'])
+                                                                                      warmup=state['warmup'], use_bag_labels=False)
             
             if state['warmup']:
                 target_count = config['warmup_epochs']
@@ -93,11 +92,20 @@ if __name__ == '__main__':
                         _, _, instance_predictions, features = model(images, projector=True)
                         features.to(device)
 
+                    # Separate labeled and unlabeled data
+                    labeled_mask = instance_labels != -1
+                    unlabeled_mask = instance_labels == -1
+                    labeled_instance_labels = instance_labels[labeled_mask]
+                    labeled_features = features[labeled_mask]
+                    unlabeled_features = features[unlabeled_mask]
+                    labeled_instance_predictions = instance_predictions[labeled_mask]
+                    
                     # Get loss from PALM
-                    palm_loss, loss_dict = palm(features, instance_labels.long())
+                    palm_loss, loss_dict = palm(labeled_features, labeled_instance_labels.long(), unlabeled_features=unlabeled_features, update_prototypes=True)
+                    #print(palm_loss)
                     
                     # Calculate BCE loss
-                    bce_loss_value = BCE_loss(instance_predictions, instance_labels.float())
+                    bce_loss_value = BCE_loss(labeled_instance_predictions, labeled_instance_labels.float())
 
                     # Backward pass and optimization step
                     total_loss = palm_loss + bce_loss_value
@@ -232,7 +240,7 @@ if __name__ == '__main__':
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-            for (images, yb, instance_labels, unique_id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)):
+            for batch_idx, (images, yb, instance_labels, unique_id) in enumerate(tqdm(bag_dataloader_train, total=len(bag_dataloader_train))):
                 num_bags = len(images)
                 optimizer.zero_grad()
                 #images, yb = images.cuda(), yb.cuda()
@@ -257,7 +265,7 @@ if __name__ == '__main__':
                     valid_images = bag[~(bag == 0).all(dim=1).all(dim=1).all(dim=1)] # Shape: [valid_images, 224, 224, 3]
                     split_sizes.append(valid_images.size(0))
 
-                instance_pred = torch.cat(instance_pred, dim=0)
+                #instance_pred = torch.cat(instance_pred, dim=0)
                 y_hat_per_bag = torch.split(torch.sigmoid(instance_pred), split_sizes, dim=0)
                 for i, y_h in enumerate(y_hat_per_bag):
                     train_bag_logits[unique_id[i].item()] = y_h.detach().cpu().numpy()
@@ -276,8 +284,25 @@ if __name__ == '__main__':
                 # Store raw predictions and targets
                 train_pred.update(bag_pred, yb, unique_id)
                 
+                
+                ### It seems that GCP requires this cleanup?
+                
+                # Make sure we're explicitly cleaning up
+                if isinstance(images, list):
+                    for img in images:
+                        img.detach()
+                        del img
+                else:
+                    images.detach()
+                    del images
+
+                del instance_pred
+                del y_hat_per_bag
+                del bag_pred
+
                 # Clean up
                 torch.cuda.empty_cache()
+                gc.collect()
                     
             
             

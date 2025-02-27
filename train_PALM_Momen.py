@@ -8,7 +8,6 @@ from util.Gen_ITS2CLR_util import *
 import torch.optim as optim
 from data.format_data import *
 from data.sudo_labels import *
-from archs.model_MIL_sali import *
 from data.bag_loader import *
 from data.instance_loader import *
 from loss.palm import PALM
@@ -33,8 +32,7 @@ if __name__ == '__main__':
     num_labels = len(config['label_columns'])
 
     # Create Model
-    model = Embeddingmodel(config['arch'], config['pretrained_arch'], num_classes = num_labels).cuda()
-    print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
+    model = build_model(config)       
     
     # LOSS INIT
     palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 0, lambda_pcon=1).cuda()
