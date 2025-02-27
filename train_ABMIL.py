@@ -6,7 +6,6 @@ from torch import nn
 from data.save_arch import *
 from torch.optim import Adam
 from data.format_data import *
-from archs.model_ABMIL import *
 from data.bag_loader import *
 from util.eval_util import *
 from config import *
@@ -28,9 +27,8 @@ if __name__ == '__main__':
     num_classes = len(config['label_columns']) + 1
     num_labels = len(config['label_columns'])
     
-    # total model
-    model = Embeddingmodel(config['arch'], config['pretrained_arch'], num_classes = num_labels).cuda()
-    print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}") 
+    # Create Model
+    model = build_model(config)
         
         
     optimizer = Adam(model.parameters(), lr=config['learning_rate'])

@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 from fastai.vision.all import *
 import shutil
+from storage_adapter import * 
 
     
 def plot_loss(train_losses, valid_losses, save_path):
@@ -208,6 +209,9 @@ def load_model_config(folder_path):
     # Load and return the configuration
     with open(config_path, 'r') as f:
         config = json.load(f)
+    
+    # Determine storage client   
+    StorageClient.get_instance(None, config['bucket'])
     
     return config
 

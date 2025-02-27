@@ -144,8 +144,8 @@ if __name__ == '__main__':
     os.makedirs(f'{current_dir}/results/PALM_OOD/', exist_ok=True)
     
     # Load the model configuration
-    head_name = "TEST1000"
-    model_version = "" #Leave "" to read HEAD
+    head_name = "TEST305"
+    model_version = "1" #Leave "" to read HEAD
     
     # loaded configuration
     model_path = os.path.join(model_folder, head_name, model_version)

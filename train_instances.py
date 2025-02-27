@@ -7,7 +7,6 @@ from util.Gen_ITS2CLR_util import *
 import torch.optim as optim
 from data.format_data import *
 from data.sudo_labels import *
-from archs.model_GenSCL import *
 from data.bag_loader import *
 from data.instance_loader import *
 from config import *
@@ -56,8 +55,7 @@ if __name__ == '__main__':
 
 
     # Create Model
-    model = Embeddingmodel(config['arch'], config['pretrained_arch'], num_classes = num_labels).cuda()
-    print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
+    model = build_model(config)     
     
     # LOSS INIT
     BCE_loss = nn.BCELoss()

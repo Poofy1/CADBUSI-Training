@@ -9,7 +9,6 @@ from data.save_arch import *
 from util.Gen_ITS2CLR_util import *
 from data.format_data import *
 from data.sudo_labels import *
-from archs.model_ABMIL import *
 from data.bag_loader import *
 from data.instance_loader import *
 from loss.FocalLoss import *
@@ -43,8 +42,7 @@ if __name__ == '__main__':
     num_labels = len(config['label_columns'])
 
     # Create Model
-    model = Embeddingmodel(config['arch'], config['pretrained_arch'], num_classes=num_labels)
-    model = model.to(device)  # Move model to device
+    model = build_model(config)
 
     # Wrap model in DataParallel if multiple GPUs are available
     if torch.cuda.device_count() > 1:

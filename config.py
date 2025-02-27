@@ -1,6 +1,7 @@
 import torchvision.transforms as T
 from data.transforms import CLAHETransform
 from storage_adapter import * 
+from archs.factory import get_model
 
 class BaseConfig:
     def to_dict(self):
@@ -14,7 +15,7 @@ convnextv2_tiny   - images 224
 resnet18
 """
 
-####### CONFIGURE #######
+####### ITS2CLR CONFIG #######
 
 class ITS2CLRConfig(BaseConfig):
     def __init__(self):
@@ -27,17 +28,36 @@ class ITS2CLRConfig(BaseConfig):
         self.learning_rate = 0.001
         self.reset_aggregator = False
 
+
+
+####### MODEL #######
+
+def build_model(config):
+    model = get_model(
+        model_type= config['arch'],
+        arch=config['encoder'],
+        pretrained_arch=config['pretrained_arch'],
+        num_classes = len(config['label_columns'])
+        # Add any other parameters your model needs
+    )
+    print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")   
+    return model.cuda()
+
+####### DATASETS #######
+
+
 class LesionDataConfig(BaseConfig):
     def __init__(self):
-        self.dataset_name = 'export_12_12_2024_17_35_49' #export_12_12_2024_17_35_49' 'export_oneLesions'
+        self.dataset_name = 'export_oneLesions' #export_12_12_2024_17_35_49' 'export_oneLesions'
         self.label_columns = ['Has_Malignant']
         self.instance_columns = ['Malignant Lesion Present']
-        self.img_size = 300 #224
+        self.img_size = 224 #224
         self.bag_batch_size = 5
         self.min_bag_size = 2
         self.max_bag_size = 50
         self.instance_batch_size = 32
-        self.arch = 'efficientnet_b3'
+        self.encoder = 'convnextv2_tiny'
+        self.arch = "MIL_ins"
         self.pretrained_arch = False
         self.use_videos = False
 
@@ -51,7 +71,8 @@ class FishDataConfig(BaseConfig):
         self.min_bag_size = 2
         self.max_bag_size = 25
         self.instance_batch_size = 25
-        self.arch = 'convnextv2_tiny'
+        self.encoder = 'efficientnet_b3'
+        self.arch = "MIL"
         self.pretrained_arch = False
         self.use_videos = False
         
@@ -65,9 +86,12 @@ class DogDataConfig(BaseConfig):
         self.min_bag_size = 2
         self.max_bag_size = 25
         self.instance_batch_size = 25
-        self.arch = 'efficientnet_b3'
+        self.encoder = 'efficientnet_b3'
+        self.arch = "MIL"
         self.pretrained_arch = False
         self.use_videos = False
+
+####### PATHS #######
 
 class PathConfig(BaseConfig):
     def __init__(self):
@@ -76,9 +100,8 @@ class PathConfig(BaseConfig):
         self.cropped_images = "F:/Temp_SSD_Data/"
         
         
+####### Augmentations #######
         
-        
-# Augmentations 
 train_transform = T.Compose([
             T.RandomHorizontalFlip(),
             T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
