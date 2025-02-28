@@ -57,7 +57,7 @@ class LesionDataConfig(BaseConfig):
         self.max_bag_size = 50
         self.instance_batch_size = 32
         self.encoder = 'convnextv2_tiny'
-        self.arch = "MIL_ins"
+        self.arch = "model_MIL_ins"
         self.pretrained_arch = False
         self.use_videos = False
 

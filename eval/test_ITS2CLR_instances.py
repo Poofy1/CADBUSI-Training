@@ -10,7 +10,6 @@ sys.path.append(parent_dir)
 
 from fastai.vision.all import *
 from archs.model_ABMIL import *
-from train_GenSCL_ITS2CLR import *
 from data.format_data import *
 import matplotlib.pyplot as plt
 
@@ -192,20 +191,8 @@ if __name__ == '__main__':
             bag_data = pickle.load(f)
     else:
         
-        # Get Model
-        if use_efficient_net:
-            encoder = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
-            nf = 512
-            # Replace the last fully connected layer with a new one
-            num_features = encoder.classifier[1].in_features
-            encoder.classifier[1] = nn.Linear(num_features, nf)
-            
-        else:
-            encoder = create_timm_body("resnet18")
-            nf = num_features_model( nn.Sequential(*encoder.children()))
-        
-
-        model = Embeddingmodel(encoder = encoder, nf = nf, num_classes = num_labels, efficient_net = use_efficient_net).cuda()
+        # Create Model
+        model = build_model(config)    
         
         
         

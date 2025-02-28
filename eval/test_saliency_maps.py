@@ -10,7 +10,6 @@ from data.format_data import *
 from data.sudo_labels import *
 from loss.palm import PALM
 from data.save_arch import *
-from archs.model_solo_MIL_saliency import *
 from data.bag_loader import *
 from data.instance_loader import *
 from util.eval_util import *
@@ -56,7 +55,8 @@ if __name__ == '__main__':
     
     # Load the trained model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = Embeddingmodel(config['arch'], config['pretrained_arch'], num_classes=num_labels).to(device)
+    # Create Model
+    model = build_model(config)    
     
     # Load the saved model state
     if model_version:

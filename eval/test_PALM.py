@@ -16,7 +16,6 @@ from data.format_data import *
 from data.sudo_labels import *
 from loss.palm_proto_alt import PALM
 from data.save_arch import *
-from archs.model_MIL import *
 from data.bag_loader import *
 from data.instance_loader import *
 
@@ -95,7 +94,8 @@ def run_test(config):
 
     # Load the trained model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = Embeddingmodel(config['arch'], config['pretrained_arch'], num_classes=num_labels).to(device)
+    # Create Model
+    model = build_model(config)    
     
     # Load the saved model state
     if model_version:

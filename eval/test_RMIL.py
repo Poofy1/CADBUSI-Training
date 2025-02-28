@@ -13,7 +13,6 @@ from util.eval_util import *
 from data.format_data import *
 from data.sudo_labels import *
 from data.save_arch import *
-from archs.model_PALM2_solo import *
 from data.bag_loader import *
 from data.instance_loader import *
 from config import *
@@ -95,7 +94,7 @@ if __name__ == '__main__':
     instance_dataloader_test = TUD.DataLoader(instance_dataset_test, batch_sampler=val_sampler, collate_fn=collate_instance, shuffle=False)
 
     # Create Model
-    model = Embeddingmodel(config['arch'], config['pretrained_arch'], num_classes = num_labels).cuda()
+    model = build_model(config)    
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")        
     model, optimizer, state = setup_model(model, config)
 
