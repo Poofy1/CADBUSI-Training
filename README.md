@@ -85,14 +85,34 @@ Our model trainer has a configurable backbone encoder, such as ResNet18. This ba
 Our current direction is to include PALM in the instance training of our ABMIL + ITS2CLR framework. The bag training generates sudo labels that will be used in the instance training after warmup. PALM will move unknown instances to their closest prototype after warmup.
 
 
-### Results
-- Val Instance Acc:
-- Val Instance AUC:
 
-- Val Palm Acc:
-  
-- Val Bag Acc:
-- Val Bag AUC:
+### Validation Results (WIP)
+- Bag Acc: 83.72%
+- Bag AUC: 90.75%
+- Instance Acc: 67.32%
+- Instance AUC: 74.05%
+- Palm Acc: 64.61%
+
+## Helpful Methods
+
+These are helpful methods that are used to easily load and prepare systems for use. 
+- `config = build_config(model_version, head_name, data_config)`
+     - Loads config data from `config.py`
+- `config = load_model_config(model_path)`
+     - Loads config data from the model
+- `bags_train, bags_val, bag_dl_train, bag_dl_val = prepare_all_data(config)`
+     - Preloads all data and bag dataloaders 
+- `model = build_model(config)`
+     - Generates selected model architecture
+- `model, optimizer, state = setup_model(model, config, optimizer = None)`
+     - Generates or loads (if exists) current model state
+- `palm.load_state(state['palm_path'])` or `palm.save_state(state['palm_path'])`
+     - Uses model state to save/load PALM state
+- `save_metrics(config, state, train_pred, val_pred)`
+     - Evaluate and generate metrics of model performance
+- `save_state(state, config, instance_train_acc, val_losses.avg, instance_val_acc, model, optimizer)`
+     - Save current model state
+
 
 ## Test Dataset
 
