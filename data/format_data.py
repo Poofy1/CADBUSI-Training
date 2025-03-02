@@ -137,7 +137,7 @@ def process_single_image(img_path, root_dir, output_dir, resize_and_pad, video_n
         output_path = os.path.join(output_dir, os.path.basename(img_path))
         if os.path.exists(output_path):
             return
-
+        
         image = read_image(input_path, use_pil=True)
         if image is None:
             raise ValueError(f"Failed to read image: {input_path}")
@@ -149,7 +149,7 @@ def process_single_image(img_path, root_dir, output_dir, resize_and_pad, video_n
         print(f"Error processing image {img_path}: {e}")
 
 def preprocess_and_save_images(config, data, root_dir, output_dir, fill=0):
-    make_dirs(output_dir, local_override = False)
+    os.makedirs(output_dir, exist_ok=True)
 
     resize_and_pad = ResizeAndPad(config['img_size'], fill=fill)
 
