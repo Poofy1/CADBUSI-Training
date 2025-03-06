@@ -22,7 +22,7 @@ import gc
 if __name__ == '__main__':
     # Config
     model_version = '1'
-    head_name = "TEST305"
+    head_name = "TEST304"
     data_config = LesionDataConfig #FishDataConfig or LesionDataConfig
     
     config = build_config(model_version, head_name, data_config)
@@ -54,7 +54,7 @@ if __name__ == '__main__':
     while state['epoch'] < config['total_epochs']:
         
         
-        if not state['pickup_warmup']: # Are we resuming from a head model?
+        if False:#not state['pickup_warmup']: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
             instance_dataloader_train, instance_dataloader_val = get_instance_loaders(bags_train, bags_val, 
@@ -255,9 +255,9 @@ if __name__ == '__main__':
         
                 # Forward pass
                 with autocast('cuda'):
-                    bag_pred, _, instance_pred, _ = model(images, pred_on=True)
+                    bag_pred, bag_instance_pred, _, _ = model(images, pred_on=True)
                     bag_pred = bag_pred.cuda()
-    
+                    
                 # Split the embeddings back into per-bag embeddings
                 split_sizes = []
                 for bag in images:
@@ -266,7 +266,7 @@ if __name__ == '__main__':
                     split_sizes.append(valid_images.size(0))
 
                 #instance_pred = torch.cat(instance_pred, dim=0)
-                y_hat_per_bag = torch.split(torch.sigmoid(instance_pred), split_sizes, dim=0)
+                y_hat_per_bag = torch.split(torch.sigmoid(bag_instance_pred), split_sizes, dim=0)
                 for i, y_h in enumerate(y_hat_per_bag):
                     train_bag_logits[unique_id[i].item()] = y_h.detach().cpu().numpy()
                 
