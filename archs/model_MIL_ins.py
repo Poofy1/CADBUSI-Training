@@ -95,6 +95,8 @@ class Embeddingmodel(nn.Module):
                 yhat_bag, yhat_ins = self.aggregator(h, y_h)
                 bag_pred[i] = yhat_bag
                 bag_instance_predictions.append(yhat_ins) 
+                
+            bag_instance_predictions = torch.cat(bag_instance_predictions, dim=0).squeeze()
         
         proj = None
         if projector:
