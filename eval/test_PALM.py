@@ -145,7 +145,7 @@ if __name__ == '__main__':
     
     # Load the model configuration
     head_name = "TEST305"
-    model_version = "1" #Leave "" to read HEAD
+    model_version = "" #Leave "" to read HEAD
     
     # loaded configuration
     model_path = os.path.join(model_folder, head_name, model_version)
