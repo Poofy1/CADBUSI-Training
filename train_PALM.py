@@ -54,7 +54,7 @@ if __name__ == '__main__':
     while state['epoch'] < config['total_epochs']:
         
         
-        if False:#not state['pickup_warmup']: # Are we resuming from a head model?
+        if not state['pickup_warmup']: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
             instance_dataloader_train, instance_dataloader_val = get_instance_loaders(bags_train, bags_val, 
@@ -296,7 +296,7 @@ if __name__ == '__main__':
                     images.detach()
                     del images
 
-                del instance_pred
+                del bag_instance_pred
                 del y_hat_per_bag
                 del bag_pred
 

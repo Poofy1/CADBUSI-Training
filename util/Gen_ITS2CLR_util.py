@@ -37,9 +37,14 @@ def mix_fn(x, y, alpha, kind):
 
 
 def mix_target(y_a, y_b, lam, num_classes):
-    l1 = F.one_hot(y_a, num_classes)
-    l2 = F.one_hot(y_b, num_classes)
-    return lam * l1 + (1 - lam) * l2
+    # Check if inputs are already one-hot encoded
+    if y_a.dim() > 1 and y_a.size(1) == num_classes:
+        return lam * y_a + (1 - lam) * y_b
+    else:
+        # Convert to one-hot if they're indices
+        l1 = F.one_hot(y_a.long(), num_classes)
+        l2 = F.one_hot(y_b.long(), num_classes)
+        return lam * l1 + (1 - lam) * l2
 
 
 

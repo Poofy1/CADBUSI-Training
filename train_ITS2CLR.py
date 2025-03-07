@@ -223,7 +223,7 @@ if __name__ == '__main__':
         
                 # Forward pass
                 with autocast('cuda'):
-                    bag_pred, _, instance_pred, _ = model(images, pred_on=True)
+                    bag_pred, bag_instance_pred, instance_pred, _ = model(images, pred_on=True)
                     bag_pred = bag_pred.cuda()
     
                 # Split the embeddings back into per-bag embeddings
@@ -234,7 +234,7 @@ if __name__ == '__main__':
                     split_sizes.append(valid_images.size(0))
 
                 #instance_pred = torch.cat(instance_pred, dim=0)
-                y_hat_per_bag = torch.split(torch.sigmoid(instance_pred), split_sizes, dim=0)
+                y_hat_per_bag = torch.split(torch.sigmoid(bag_instance_pred), split_sizes, dim=0)
                 for i, y_h in enumerate(y_hat_per_bag):
                     train_bag_logits[unique_id[i].item()] = y_h.detach().cpu().numpy()
                 
@@ -340,7 +340,6 @@ if __name__ == '__main__':
                 
                 save_state(state, config, train_acc, val_loss, val_acc, model, optimizer,)
                 save_metrics(config, state, train_pred, val_pred)
-                palm.save_state(os.path.join(target_folder, "palm_state.pkl"))
                 print("Saved checkpoint due to improved val_loss_bag")
 
                 
