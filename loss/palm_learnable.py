@@ -178,7 +178,7 @@ class PALM(nn.Module):
         
         return predicted_classes, distances
 
-    def forward(self, features, targets, update_prototypes=True):
+    def forward(self, features, targets, update_prototypes=True, unlabeled_features=None):
         loss = 0
         loss_dict = {}
 

@@ -234,7 +234,7 @@ if __name__ == '__main__':
                     split_sizes.append(valid_images.size(0))
 
                 #instance_pred = torch.cat(instance_pred, dim=0)
-                y_hat_per_bag = torch.split(torch.sigmoid(bag_instance_pred), split_sizes, dim=0)
+                y_hat_per_bag = torch.split(torch.sigmoid(instance_pred), split_sizes, dim=0)
                 for i, y_h in enumerate(y_hat_per_bag):
                     train_bag_logits[unique_id[i].item()] = y_h.detach().cpu().numpy()
                 

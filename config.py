@@ -24,8 +24,8 @@ class ITS2CLRConfig(BaseConfig):
         self.initial_ratio = 0.2
         self.final_ratio = .9
         self.total_epochs = 100
-        self.warmup_epochs = 15
-        self.learning_rate = 0.001
+        self.warmup_epochs = 150
+        self.learning_rate = 0.005
         self.reset_aggregator = False
 
 
@@ -71,8 +71,8 @@ class FishDataConfig(BaseConfig):
         self.min_bag_size = 2
         self.max_bag_size = 25
         self.instance_batch_size = 25
-        self.encoder = 'efficientnet_b3'
-        self.arch = "MIL"
+        self.encoder = 'efficientnet_b0'
+        self.arch = "model_MIL_ins"
         self.pretrained_arch = False
         self.use_videos = False
         
@@ -86,8 +86,8 @@ class DogDataConfig(BaseConfig):
         self.min_bag_size = 2
         self.max_bag_size = 25
         self.instance_batch_size = 25
-        self.encoder = 'efficientnet_b3'
-        self.arch = "MIL"
+        self.encoder = 'efficientnet_b0'
+        self.arch = "model_MIL_ins"
         self.pretrained_arch = False
         self.use_videos = False
 
