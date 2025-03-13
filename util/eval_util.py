@@ -365,7 +365,7 @@ def calculate_metrics(targets, predictions, ids = None, target_specificity=0.80,
     predictions = predictions[binary_indices]
     
     # Collect worst performing labels
-    if ids:
+    if ids is not None and len(ids) > 0:
         get_worse_instances(targets, predictions, ids, save_path)
     
     evaluate_model_performance(targets, predictions, target_specificity, save_path)

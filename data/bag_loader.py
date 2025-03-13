@@ -5,15 +5,22 @@ from storage_adapter import *
 
 class BagOfImagesDataset(TUD.Dataset):
     def __init__(self, bags_dict, transform=None, save_processed=False):
-        self.bags_dict = bags_dict
-        self.unique_bag_ids = list(bags_dict.keys())
+        # Create a new dictionary using Accession_Number as keys
+        self.original_ids = list(bags_dict.keys())
+        self.bags_dict = {
+            bags_dict[id]['Accession_Number']: bags_dict[id]
+            for id in self.original_ids
+        }
+        
+        # Now use these new keys
+        self.unique_bag_ids = list(self.bags_dict.keys())
         self.save_processed = save_processed
         self.transform = transform
         
         # Pre-process bag labels at initialization
         self.bag_labels = {
             bag_id: torch.tensor(info['bag_labels'], dtype=torch.float32)
-            for bag_id, info in bags_dict.items()
+            for bag_id, info in self.bags_dict.items()
         }
 
     def __getitem__(self, index):

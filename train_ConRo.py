@@ -8,7 +8,7 @@ import torch.optim as optim
 from data.format_data import *
 from data.sudo_labels import *
 from data.instance_loader import *
-from loss.palm import PALM
+from loss.ConRo import *
 from util.eval_util import *
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -22,7 +22,7 @@ import gc
 if __name__ == '__main__':
     # Config
     model_version = '1'
-    head_name = "TEST410"
+    head_name = "TEST401"
     data_config = DogDataConfig #FishDataConfig or LesionDataConfig
     
     config = build_config(model_version, head_name, data_config)
@@ -34,19 +34,20 @@ if __name__ == '__main__':
     model = build_model(config)    
     
     # LOSS INIT
-    palm = PALM(nviews = 1, num_classes=2, n_protos=10, k = 0, lambda_pcon=1).cuda()
+    stage1_loss = ConRoLoss(temperature=0.7, alternating=True)
+    stage2_loss = ConRoStage2Loss(temperature=0.7)
     BCE_loss = nn.BCEWithLogitsLoss()
     
     optimizer = optim.SGD(model.parameters(),
                         lr=config['learning_rate'],
                         momentum=0.9,
                         nesterov=True,
-                        weight_decay=0.001) # original .001
+                        weight_decay=0.001)
     
+    #optimizer = optim.Adam(model.parameters(), lr=config['learning_rate'])
     
     # MODEL INIT
     model, optimizer, state = setup_model(model, config, optimizer)
-    palm.load_state(state['palm_path'])
     scaler = GradScaler('cuda')
     
     
@@ -59,7 +60,7 @@ if __name__ == '__main__':
             # Used the instance predictions from bag training to update the Instance Dataloader
             instance_dataloader_train, instance_dataloader_val = get_instance_loaders(bags_train, bags_val, 
                                                                                       state, config, 
-                                                                                      warmup=state['warmup'], use_bag_labels=False)
+                                                                                      warmup=True, use_bag_labels=False)
             
             if state['warmup']:
                 target_count = config['warmup_epochs']
@@ -75,7 +76,6 @@ if __name__ == '__main__':
             
             for iteration in range(target_count): 
                 losses = AverageMeter()
-                palm_total_correct = 0
                 instance_total_correct = 0
                 total_samples = 0
                 train_pred = PredictionTracker()
@@ -90,25 +90,16 @@ if __name__ == '__main__':
                     optimizer.zero_grad()
                     with autocast('cuda'):
                         _, _, instance_predictions, features = model(images, projector=True)
-                        features.to(device)
 
-                    # Separate labeled and unlabeled data
-                    labeled_mask = instance_labels != -1
-                    unlabeled_mask = instance_labels == -1
-                    labeled_instance_labels = instance_labels[labeled_mask]
-                    labeled_features = features[labeled_mask]
-                    unlabeled_features = features[unlabeled_mask]
-                    labeled_instance_predictions = instance_predictions[labeled_mask]
-                    
-                    # Get loss from PALM
-                    palm_loss, loss_dict = palm(labeled_features, labeled_instance_labels.long(), unlabeled_features=unlabeled_features, update_prototypes=True)
-                    #print(palm_loss)
-                    
                     # Calculate BCE loss
-                    bce_loss_value = BCE_loss(labeled_instance_predictions, labeled_instance_labels.float())
+                    bce_loss_value = BCE_loss(instance_predictions, instance_labels.float())
+                    
+                    # Calculate ConRo Stage 1 loss (alternating between contrastive and SVDD)
+                    # Since we don't have auxiliary data, we pass None for auxiliary_embeddings and auxiliary_labels
+                    conro_loss_value = stage1_loss(features, instance_labels, None, None)
 
                     # Backward pass and optimization step
-                    total_loss = palm_loss + bce_loss_value
+                    total_loss = 0 + conro_loss_value
                     scaler.scale(total_loss).backward()
                     scaler.step(optimizer)
                     scaler.update()
@@ -119,13 +110,8 @@ if __name__ == '__main__':
                     # Get predictions from PALM
                     instance_predictions = torch.sigmoid(instance_predictions)
                     with torch.no_grad():
-                        palm_predicted_classes, dist = palm.predict(features)
                         instance_predicted_classes = (instance_predictions) > 0.5
 
-                        # Calculate accuracy for PALM predictions
-                        palm_correct = (palm_predicted_classes == instance_labels).sum().item()
-                        palm_total_correct += palm_correct
-                        
                         # Calculate accuracy for instance predictions
                         instance_correct = (instance_predicted_classes == instance_labels).sum().item()
                         instance_total_correct += instance_correct
@@ -140,14 +126,12 @@ if __name__ == '__main__':
                     torch.cuda.empty_cache()
 
                 # Calculate accuracies
-                palm_train_acc = palm_total_correct / total_samples
                 instance_train_acc = instance_total_correct / total_samples
                                 
                 
                 
                 # Validation loop
                 model.eval()
-                palm_total_correct = 0
                 instance_total_correct = 0
                 total_samples = 0
                 val_losses = AverageMeter()
@@ -161,22 +145,17 @@ if __name__ == '__main__':
                         # Forward pass
                         with autocast('cuda'):
                             _, _, instance_predictions, features = model(images, projector=True)
-                            features.to(device)
                         
                         # Get loss
-                        palm_loss, loss_dict = palm(features, instance_labels, update_prototypes=False)
                         bce_loss_value = BCE_loss(instance_predictions, instance_labels.float())
-                        total_loss = palm_loss + bce_loss_value
+                        conro_loss_value = stage1_loss(features, instance_labels, None, None)
+                        
+                        total_loss = 0 + conro_loss_value
                         val_losses.update(total_loss.item(), images[0].size(0))
 
                         # Get predictions
                         instance_predictions = torch.sigmoid(instance_predictions)
-                        palm_predicted_classes, _ = palm.predict(features)
                         instance_predicted_classes = (instance_predictions) > 0.5
-
-                        # Calculate accuracy for PALM predictions
-                        palm_correct = (palm_predicted_classes == instance_labels).sum().item()
-                        palm_total_correct += palm_correct
                         
                         # Calculate accuracy for instance predictions
                         instance_correct = (instance_predicted_classes == instance_labels).sum().item()
@@ -191,11 +170,10 @@ if __name__ == '__main__':
                         torch.cuda.empty_cache()
 
                 # Calculate accuracies
-                palm_val_acc = palm_total_correct / total_samples
                 instance_val_acc = instance_total_correct / total_samples
                 
-                print(f'[{iteration+1}/{target_count}] Train Loss: {losses.avg:.5f}, Train Palm Acc: {palm_train_acc:.5f}, Train FC Acc: {instance_train_acc:.5f}')
-                print(f'[{iteration+1}/{target_count}] Val Loss:   {val_losses.avg:.5f}, Val Palm Acc: {palm_val_acc:.5f}, Val FC Acc: {instance_val_acc:.5f}')
+                print(f'[{iteration+1}/{target_count}] Train Loss: {losses.avg:.5f}, Train FC Acc: {instance_train_acc:.5f}')
+                print(f'[{iteration+1}/{target_count}] Val Loss:   {val_losses.avg:.5f}, Val FC Acc: {instance_val_acc:.5f}')
                 
                 # Save the model
                 if val_losses.avg < state['val_loss_instance']:
@@ -211,7 +189,6 @@ if __name__ == '__main__':
                     
                     if state['warmup']:
                         save_state(state, config, instance_train_acc, val_losses.avg, instance_val_acc, model, optimizer)
-                        palm.save_state(os.path.join(target_folder, "palm_state.pkl"))
                         print("Saved checkpoint due to improved val_loss_instance")
 
 
@@ -227,7 +204,7 @@ if __name__ == '__main__':
 
         
             
-        print('\nTraining Bag Aggregator')
+        """print('\nTraining Bag Aggregator')
         for iteration in range(config['MIL_train_count']):
             model.train()
             train_bag_logits = {}
@@ -257,12 +234,12 @@ if __name__ == '__main__':
                 with autocast('cuda'):
                     bag_pred, bag_instance_pred, instance_pred, _ = model(images, pred_on=True)
                     bag_pred = bag_pred.cuda()
-                    
+    
                 # Split the embeddings back into per-bag embeddings
                 split_sizes = []
-                for image in images:
+                for bag in images:
                     # Remove padded images (assuming padding is represented as zero tensors)
-                    valid_images = image[~(image == 0).all(dim=1).all(dim=1).all(dim=1)] # Shape: [valid_images, 224, 224, 3]
+                    valid_images = bag[~(bag == 0).all(dim=1).all(dim=1).all(dim=1)] # Shape: [valid_images, 224, 224, 3]
                     split_sizes.append(valid_images.size(0))
 
                 #instance_pred = torch.cat(instance_pred, dim=0)
@@ -296,7 +273,7 @@ if __name__ == '__main__':
                     images.detach()
                     del images
 
-                del bag_instance_pred
+                del instance_pred
                 del y_hat_per_bag
                 del bag_pred
 
@@ -372,7 +349,6 @@ if __name__ == '__main__':
                 
                 save_state(state, config, train_acc, val_loss, val_acc, model, optimizer,)
                 save_metrics(config, state, train_pred, val_pred)
-                palm.save_state(os.path.join(target_folder, "palm_state.pkl"))
                 print("Saved checkpoint due to improved val_loss_bag")
 
                 
@@ -385,4 +361,4 @@ if __name__ == '__main__':
                 
                 # Save selection
                 with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
-                    pickle.dump(state['selection_mask'], file)
+                    pickle.dump(state['selection_mask'], file)"""

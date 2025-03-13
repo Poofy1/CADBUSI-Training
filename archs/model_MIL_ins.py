@@ -34,11 +34,14 @@ class Embeddingmodel(nn.Module):
         dropout_rate=0.2
         self.projector = nn.Sequential(
             nn.Linear(self.nf, 512),
+            nn.BatchNorm1d(512),
             nn.ReLU(inplace=True),
-            nn.Dropout(dropout_rate),
-            nn.Linear(512, feat_dim)
+            nn.Linear(512, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(inplace=True),
+            nn.Linear(256, feat_dim)
         )
-        
+                
         self.ins_classifier = nn.Sequential(
             nn.Linear(self.nf, 256),
             nn.BatchNorm1d(256),
