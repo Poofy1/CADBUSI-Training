@@ -61,15 +61,15 @@ if __name__ == '__main__':
     BCE_loss = nn.BCELoss()
 
     
-    optimizer = optim.SGD(model.parameters(),
+    ops = {}
+    ops['inst_optimizer'] = optim.SGD(model.parameters(),
                         lr=config['learning_rate'],
                         momentum=0.9,
                         nesterov=True,
-                        weight_decay=0.001) # original .001
-    
-    
+                        weight_decay=0.001)
+
     # MODEL INIT
-    model, optimizer, state = setup_model(model, config, optimizer)
+    model, ops, state = setup_model(model, config, ops)
     
     # Training loop
     while state['epoch'] < config['total_epochs']:
@@ -113,7 +113,7 @@ if __name__ == '__main__':
                     )
                     
                     # Forward pass with mixed images
-                    optimizer.zero_grad()
+                    ops['inst_optimizer'].zero_grad()
                     _, _, instance_predictions, features = model(mixed_images, projector=True)
                     features = features.to(device)
 
@@ -130,7 +130,7 @@ if __name__ == '__main__':
                     
                 else:
                     # Standard forward pass without mixup
-                    optimizer.zero_grad()
+                    ops['inst_optimizer'].zero_grad()
                     _, _, instance_predictions, features = model(images, projector=True)
                     features = features.to(device)
 
@@ -144,7 +144,7 @@ if __name__ == '__main__':
                 # Common steps for both cases
                 total_loss = bce_loss_value
                 total_loss.backward()
-                optimizer.step()
+                ops['inst_optimizer'].step()
 
                 # Update metrics
                 losses.update(total_loss.item(), images.size(0))
@@ -201,7 +201,7 @@ if __name__ == '__main__':
                 state['val_loss_instance'] = val_losses.avg
                 state['mode'] = 'instance'
                 
-                save_state(state, config, instance_train_acc, val_losses.avg, instance_val_acc, model, optimizer)
+                save_state(state, config, instance_train_acc, val_losses.avg, instance_val_acc, model, ops)
                 save_metrics(config, state, train_pred, val_pred)
                 print("Saved checkpoint due to improved val_loss_instance")
         

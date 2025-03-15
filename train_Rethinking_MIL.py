@@ -35,15 +35,22 @@ if __name__ == '__main__':
     # LOSS INIT
     BCE_loss = nn.BCELoss()
     CE_crit = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(model.parameters(),
+    
+    ops = {}
+    ops['inst_optimizer'] = optim.SGD(model.parameters(),
                         lr=config['learning_rate'],
                         momentum=0.9,
                         nesterov=True,
-                        weight_decay=0.001) # original .001
+                        weight_decay=0.001)
     
-    
+    ops['bag_optimizer'] = optim.SGD(model.parameters(),
+                        lr=config['learning_rate'],
+                        momentum=0.9,
+                        nesterov=True,
+                        weight_decay=0.001)
+
     # MODEL INIT
-    model, optimizer, state = setup_model(model, config, optimizer)
+    model, ops, state = setup_model(model, config, ops)
 
     
     # Training loop
@@ -88,7 +95,7 @@ if __name__ == '__main__':
                     instance_labels = instance_labels.cuda(non_blocking=True)
 
                     # forward
-                    optimizer.zero_grad()
+                    ops['inst_optimizer'].zero_grad()
                     _, instance_predictions, _, feat_q, iwscl_loss, pseudo_labels = model(im_q, im_k, true_label = instance_labels, projector=True, bag_on=True)
                     feat_q.to(device)
                     
@@ -99,7 +106,7 @@ if __name__ == '__main__':
                     
                     # Backward pass and optimization step
                     total_loss.backward()
-                    optimizer.step()
+                    ops['inst_optimizer'].step()
 
                     # Update the loss meter
                     train_iwscl_loss_total.update(iwscl_loss.item(), instance_labels.size(0))
@@ -183,7 +190,7 @@ if __name__ == '__main__':
                     save_metrics(config, state, train_pred, val_pred)
                     
                     if state['warmup']:
-                        save_state(state, config, instance_train_acc, val_losses.avg, instance_val_acc, model, optimizer)
+                        save_state(state, config, instance_train_acc, val_losses.avg, instance_val_acc, model, ops)
                         print("Saved checkpoint due to improved val_loss_instance")
 
 
@@ -211,7 +218,7 @@ if __name__ == '__main__':
             train_pred = PredictionTracker()
                 
             for (images, yb, instance_labels, unique_id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)):
-                optimizer.zero_grad()
+                ops['bag_optimizer'].zero_grad()
 
                 # Forward pass
                 bag_pred, instance_pred, _, _, _, _ = model(images, bag_on=True)
@@ -220,7 +227,7 @@ if __name__ == '__main__':
 
                 bag_loss = BCE_loss(bag_pred, yb)
                 bag_loss.backward()
-                optimizer.step()
+                ops['bag_optimizer'].step()
                 
                 total_loss += bag_loss.item() * yb.size(0)
                 predicted = (bag_pred > 0.5).float()
@@ -277,7 +284,7 @@ if __name__ == '__main__':
                 state['val_loss_bag'] = val_loss
                 state['mode'] = 'bag'
 
-                save_state(state, config, train_acc, val_loss, val_acc, model, optimizer,)
+                save_state(state, config, train_acc, val_loss, val_acc, model, ops,)
                 save_metrics(config, state, train_pred, val_pred)
                 print("Saved checkpoint due to improved val_loss_bag")
                 

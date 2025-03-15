@@ -51,17 +51,17 @@ if __name__ == '__main__':
 
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")
 
-    optimizer = optim.SGD(model.parameters(),
-                          lr=config['learning_rate'],
-                          momentum=0.9,
-                          nesterov=True,
-                          weight_decay=0.001)  # original .001
-
     loss_func = nn.BCELoss()
 
+    ops = {}
+    ops['bag_optimizer'] = optim.SGD(model.parameters(),
+                        lr=config['learning_rate'],
+                        momentum=0.9,
+                        nesterov=True,
+                        weight_decay=0.001)
+
     # MODEL INIT
-    # Pass the wrapped model and optimizer to any load/checkpoint function
-    model, optimizer, state = setup_model(model, config, optimizer)
+    model, ops, state = setup_model(model, config, ops)
     
     train_losses_over_epochs = []
     valid_losses_over_epochs = []
@@ -80,14 +80,14 @@ if __name__ == '__main__':
                 
         for (all_images, bag_labels, instance_labels, bag_ids) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)): 
             bag_labels = bag_labels.cuda()
-            optimizer.zero_grad()
+            ops['bag_optimizer'].zero_grad()
             
             bag_pred, _, _, _ = model(all_images.cuda())
 
             loss = loss_func(bag_pred, bag_labels)
 
             loss.backward()
-            optimizer.step()
+            ops['bag_optimizer'].step()
 
             total_loss += loss.item() * len(all_images)
             predicted = (bag_pred > .5).float()
@@ -155,6 +155,6 @@ if __name__ == '__main__':
             state['val_loss_bag'] = val_loss  # Update the best validation accuracy
             state['mode'] = 'bag'
 
-            save_state(state, config, train_acc, val_loss, val_acc, model, optimizer,)
+            save_state(state, config, train_acc, val_loss, val_acc, model, ops,)
             save_metrics(config, state, train_pred, val_pred)
             print("Saved checkpoint due to improved val_loss")
