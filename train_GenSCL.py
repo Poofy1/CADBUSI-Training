@@ -42,16 +42,25 @@ if __name__ == '__main__':
     # Create Model
     model = build_model(config)
         
-    optimizer = optim.SGD(model.parameters(),
-                        lr=config['learning_rate'],
-                        momentum=0.9,
-                        nesterov=True,
-                        weight_decay=0.001) # original .001
     BCE_loss = nn.BCEWithLogitsLoss()
     genscl = GenSupConLossv2(temperature=0.07, base_temperature=0.07)
 
 
-    model, optimizer, state = setup_model(model, config, optimizer)
+    ops = {}
+    ops['inst_optimizer'] = optim.SGD(model.parameters(),
+                        lr=config['learning_rate'],
+                        momentum=0.9,
+                        nesterov=True,
+                        weight_decay=0.001)
+    
+    ops['bag_optimizer'] = optim.SGD(model.parameters(),
+                        lr=config['learning_rate'],
+                        momentum=0.9,
+                        nesterov=True,
+                        weight_decay=0.001)
+
+    # MODEL INIT
+    model, ops, state = setup_model(model, config, ops)
     scaler = GradScaler('cuda')
 
     # Training loop
@@ -104,7 +113,7 @@ if __name__ == '__main__':
                     l_k = mix_target(y1a, y1b, lam1, num_classes)
                     
                     # forward
-                    optimizer.zero_grad()
+                    ops['inst_optimizer'].zero_grad()
                     
                     images = [im_q, im_k]
                     all_images = torch.cat(images, dim=0).cuda()
@@ -122,7 +131,7 @@ if __name__ == '__main__':
                     losses.update(loss.item(), bsz)
 
                     scaler.scale(loss).backward()
-                    scaler.step(optimizer)
+                    scaler.step(ops['inst_optimizer'])
                     scaler.update()
                     
                 print(f'[{iteration+1}/{target_count}] Gen_SCL Loss: {losses.avg:.5f}')
@@ -137,7 +146,7 @@ if __name__ == '__main__':
             
             print("Saved Warmup Model")
             torch.save(model.state_dict(), os.path.join(state['head_folder'], f"{state['pretrained_name']}.pth"))
-            torch.save(optimizer.state_dict(), f"{state['head_folder']}/{state['pretrained_name']}_optimizer.pth")
+            torch.save(ops['inst_optimizer'].state_dict(), f"{state['head_folder']}/{state['pretrained_name']}_optimizer.pth")
             
             
         
@@ -158,7 +167,7 @@ if __name__ == '__main__':
 
             for batch_idx, (images, yb, instance_labels, unique_id) in enumerate(tqdm(bag_dataloader_train, total=len(bag_dataloader_train))):
                 num_bags = len(images)
-                optimizer.zero_grad()
+                ops['bag_optimizer'].zero_grad()
                 #images, yb = images.cuda(), yb.cuda()
 
                 if not isinstance(images, list):
@@ -188,7 +197,7 @@ if __name__ == '__main__':
                 
                 bag_loss = BCE_loss(bag_pred, yb)
                 scaler.scale(bag_loss).backward()
-                scaler.step(optimizer)
+                scaler.step(ops['bag_optimizer'])
                 scaler.update()
                 
                 bag_pred = torch.sigmoid(bag_pred)
@@ -286,7 +295,7 @@ if __name__ == '__main__':
                     target_folder = state['model_folder']
 
                 
-                save_state(state, config, train_acc, val_loss, val_acc, model, optimizer,)
+                save_state(state, config, train_acc, val_loss, val_acc, model, ops,)
                 save_metrics(config, state, train_pred, val_pred)
                 print("Saved checkpoint due to improved val_loss_bag")
 
@@ -294,7 +303,7 @@ if __name__ == '__main__':
                 state['epoch'] += 1
                 
                 # Create selection mask
-                predictions_ratio = prediction_anchor_scheduler(state['epoch'], config['total_epochs'], 0, config['initial_ratio'], config['final_ratio'])
+                predictions_ratio = prediction_anchor_scheduler(state['epoch'], config)
                 state['selection_mask'] = create_selection_mask(train_bag_logits, predictions_ratio)
                 print("Created new sudo labels")
                 

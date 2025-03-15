@@ -22,8 +22,8 @@ import gc
 if __name__ == '__main__':
     # Config
     model_version = '1'
-    head_name = "TEST401"
-    data_config = DogDataConfig #FishDataConfig or LesionDataConfig
+    head_name = "TEST312"
+    data_config = LesionDataConfig #FishDataConfig or LesionDataConfig
     
     config = build_config(model_version, head_name, data_config)
     bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)
@@ -38,16 +38,22 @@ if __name__ == '__main__':
     stage2_loss = ConRoStage2Loss(temperature=0.7)
     BCE_loss = nn.BCEWithLogitsLoss()
     
-    optimizer = optim.SGD(model.parameters(),
+    
+    ops = {}
+    ops['inst_optimizer'] = optim.SGD(model.parameters(),
                         lr=config['learning_rate'],
                         momentum=0.9,
                         nesterov=True,
                         weight_decay=0.001)
     
-    #optimizer = optim.Adam(model.parameters(), lr=config['learning_rate'])
-    
+    ops['bag_optimizer'] = optim.SGD(model.parameters(),
+                        lr=config['learning_rate'],
+                        momentum=0.9,
+                        nesterov=True,
+                        weight_decay=0.001)
+
     # MODEL INIT
-    model, optimizer, state = setup_model(model, config, optimizer)
+    model, ops, state = setup_model(model, config, ops)
     scaler = GradScaler('cuda')
     
     
@@ -87,7 +93,7 @@ if __name__ == '__main__':
                     instance_labels = instance_labels.cuda(non_blocking=True)
     
                     # forward
-                    optimizer.zero_grad()
+                    ops['inst_optimizer'].zero_grad()
                     with autocast('cuda'):
                         _, _, instance_predictions, features = model(images, projector=True)
 
@@ -99,9 +105,9 @@ if __name__ == '__main__':
                     conro_loss_value = stage1_loss(features, instance_labels, None, None)
 
                     # Backward pass and optimization step
-                    total_loss = 0 + conro_loss_value
+                    total_loss = bce_loss_value + conro_loss_value
                     scaler.scale(total_loss).backward()
-                    scaler.step(optimizer)
+                    scaler.step(ops['inst_optimizer'])
                     scaler.update()
         
                     # Update the loss meter
@@ -150,7 +156,7 @@ if __name__ == '__main__':
                         bce_loss_value = BCE_loss(instance_predictions, instance_labels.float())
                         conro_loss_value = stage1_loss(features, instance_labels, None, None)
                         
-                        total_loss = 0 + conro_loss_value
+                        total_loss = bce_loss_value + conro_loss_value
                         val_losses.update(total_loss.item(), images[0].size(0))
 
                         # Get predictions
@@ -188,7 +194,7 @@ if __name__ == '__main__':
                     save_metrics(config, state, train_pred, val_pred)
                     
                     if state['warmup']:
-                        save_state(state, config, instance_train_acc, val_losses.avg, instance_val_acc, model, optimizer)
+                        save_state(state, config, instance_train_acc, val_losses.avg, instance_val_acc, model, ops)
                         print("Saved checkpoint due to improved val_loss_instance")
 
 
@@ -204,7 +210,7 @@ if __name__ == '__main__':
 
         
             
-        """print('\nTraining Bag Aggregator')
+        print('\nTraining Bag Aggregator')
         for iteration in range(config['MIL_train_count']):
             model.train()
             train_bag_logits = {}
@@ -219,7 +225,7 @@ if __name__ == '__main__':
 
             for batch_idx, (images, yb, instance_labels, unique_id) in enumerate(tqdm(bag_dataloader_train, total=len(bag_dataloader_train))):
                 num_bags = len(images)
-                optimizer.zero_grad()
+                ops['bag_optimizer'].zero_grad()
                 #images, yb = images.cuda(), yb.cuda()
 
                 if not isinstance(images, list):
@@ -249,7 +255,7 @@ if __name__ == '__main__':
                 
                 bag_loss = BCE_loss(bag_pred, yb)
                 scaler.scale(bag_loss).backward()
-                scaler.step(optimizer)
+                scaler.step(ops['bag_optimizer'])
                 scaler.update()
                 
                 bag_pred = torch.sigmoid(bag_pred)
@@ -347,7 +353,7 @@ if __name__ == '__main__':
                     target_folder = state['model_folder']
 
                 
-                save_state(state, config, train_acc, val_loss, val_acc, model, optimizer,)
+                save_state(state, config, train_acc, val_loss, val_acc, model, ops,)
                 save_metrics(config, state, train_pred, val_pred)
                 print("Saved checkpoint due to improved val_loss_bag")
 
@@ -355,10 +361,10 @@ if __name__ == '__main__':
                 state['epoch'] += 1
                 
                 # Create selection mask
-                predictions_ratio = prediction_anchor_scheduler(state['epoch'], config['total_epochs'], 0, config['initial_ratio'], config['final_ratio'])
+                predictions_ratio = prediction_anchor_scheduler(state['epoch'], config)
                 state['selection_mask'] = create_selection_mask(train_bag_logits, predictions_ratio)
                 print("Created new sudo labels")
                 
                 # Save selection
                 with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
-                    pickle.dump(state['selection_mask'], file)"""
+                    pickle.dump(state['selection_mask'], file)

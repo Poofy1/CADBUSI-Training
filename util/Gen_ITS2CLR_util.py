@@ -48,11 +48,11 @@ def mix_target(y_a, y_b, lam, num_classes):
 
 
 
-def prediction_anchor_scheduler(current_epoch, total_epochs, warmup_epochs, initial_ratio, final_ratio):
+def prediction_anchor_scheduler(current_epoch, config, warmup_epochs = 0):
     if current_epoch < warmup_epochs:
-        return initial_ratio
+        return config['initial_ratio']
     else:
-        return initial_ratio + (final_ratio - initial_ratio) * (current_epoch - warmup_epochs) / (total_epochs - warmup_epochs)
+        return config['initial_ratio'] + (config['final_ratio'] - config['initial_ratio']) * (current_epoch - warmup_epochs) / (config['total_epochs'] - warmup_epochs)
     
 
 '''

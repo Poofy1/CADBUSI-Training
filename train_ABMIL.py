@@ -5,6 +5,7 @@ from tqdm import tqdm
 from torch import nn
 from data.save_arch import *
 from torch.optim import Adam
+import torch.optim as optim
 from data.format_data import *
 from data.bag_loader import *
 from util.eval_util import *
@@ -31,13 +32,19 @@ if __name__ == '__main__':
     model = build_model(config)
         
         
-    optimizer = Adam(model.parameters(), lr=config['learning_rate'])
     loss_func = nn.BCELoss()
     train_losses_over_epochs = []
     valid_losses_over_epochs = []
     
+    ops = {}
+    ops['bag_optimizer'] = optim.SGD(model.parameters(),
+                        lr=config['learning_rate'],
+                        momentum=0.9,
+                        nesterov=True,
+                        weight_decay=0.001)
+
     # MODEL INIT
-    model, optimizer, state = setup_model(model, config, optimizer)
+    model, ops, state = setup_model(model, config, ops)
     
     
     print("Training Data...")
@@ -55,14 +62,14 @@ if __name__ == '__main__':
         for (data, yb, instance_yb, unique_id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)): 
             xb, yb = data, yb.cuda()
             
-            optimizer.zero_grad()
+            ops['bag_optimizer'].zero_grad()
             
             bag_pred, _, _, _ = model(xb)
 
             loss = loss_func(bag_pred, yb)
 
             loss.backward()
-            optimizer.step()
+            ops['bag_optimizer'].step()
 
             total_loss += loss.item() * len(xb)
             predicted = (bag_pred > .5).float()
@@ -132,6 +139,6 @@ if __name__ == '__main__':
             state['val_loss_bag'] = val_loss  # Update the best validation accuracy
             state['mode'] = 'bag'
 
-            save_state(state, config, train_acc, val_loss, val_acc, model, optimizer,)
+            save_state(state, config, train_acc, val_loss, val_acc, model, ops,)
             save_metrics(config, state, train_pred, val_pred)
             print("Saved checkpoint due to improved val_loss")

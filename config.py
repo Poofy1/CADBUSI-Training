@@ -24,8 +24,9 @@ class ITS2CLRConfig(BaseConfig):
         self.initial_ratio = 0.2
         self.final_ratio = .9
         self.total_epochs = 100
-        self.warmup_epochs = 150
-        self.learning_rate = 0.005
+        self.warmup_epochs = 15
+        self.learning_rate = 0.001
+        self.use_sudo_labels = False
         self.reset_aggregator = False
 
 
@@ -55,7 +56,7 @@ class LesionDataConfig(BaseConfig):
         self.bag_batch_size = 5
         self.min_bag_size = 2
         self.max_bag_size = 50
-        self.instance_batch_size = 32
+        self.instance_batch_size = 32 # Should be higher for contrasitive learning 
         self.encoder = 'efficientnet_b3'
         self.arch = "model_MIL_ins"
         self.pretrained_arch = False
@@ -70,7 +71,7 @@ class FishDataConfig(BaseConfig):
         self.bag_batch_size = 5
         self.min_bag_size = 2
         self.max_bag_size = 25
-        self.instance_batch_size = 25
+        self.instance_batch_size = 32
         self.encoder = 'efficientnet_b0'
         self.arch = "model_MIL_ins"
         self.pretrained_arch = False
@@ -85,7 +86,7 @@ class DogDataConfig(BaseConfig):
         self.bag_batch_size = 5
         self.min_bag_size = 2
         self.max_bag_size = 25
-        self.instance_batch_size = 25
+        self.instance_batch_size = 32
         self.encoder = 'efficientnet_b0'
         self.arch = "model_MIL_ins"
         self.pretrained_arch = False

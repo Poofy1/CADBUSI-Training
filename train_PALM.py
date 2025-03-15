@@ -22,7 +22,7 @@ import gc
 if __name__ == '__main__':
     # Config
     model_version = '1'
-    head_name = "TEST410"
+    head_name = "TEST500"
     data_config = DogDataConfig #FishDataConfig or LesionDataConfig
     
     config = build_config(model_version, head_name, data_config)
@@ -37,19 +37,25 @@ if __name__ == '__main__':
     palm = PALM(nviews = 1, num_classes=2, n_protos=10, k = 0, lambda_pcon=1).cuda()
     BCE_loss = nn.BCEWithLogitsLoss()
     
-    optimizer = optim.SGD(model.parameters(),
+    ops = {}
+    ops['inst_optimizer'] = optim.SGD(model.parameters(),
                         lr=config['learning_rate'],
                         momentum=0.9,
                         nesterov=True,
-                        weight_decay=0.001) # original .001
+                        weight_decay=0.001)
     
-    
+    ops['bag_optimizer'] = optim.SGD(model.parameters(),
+                        lr=config['learning_rate'],
+                        momentum=0.9,
+                        nesterov=True,
+                        weight_decay=0.001)
+
     # MODEL INIT
-    model, optimizer, state = setup_model(model, config, optimizer)
+    model, ops, state = setup_model(model, config, ops)
     palm.load_state(state['palm_path'])
     scaler = GradScaler('cuda')
     
-    
+
     # Training loop
     while state['epoch'] < config['total_epochs']:
         
@@ -87,7 +93,7 @@ if __name__ == '__main__':
                     instance_labels = instance_labels.cuda(non_blocking=True)
     
                     # forward
-                    optimizer.zero_grad()
+                    ops['inst_optimizer'].zero_grad()
                     with autocast('cuda'):
                         _, _, instance_predictions, features = model(images, projector=True)
                         features.to(device)
@@ -110,7 +116,7 @@ if __name__ == '__main__':
                     # Backward pass and optimization step
                     total_loss = palm_loss + bce_loss_value
                     scaler.scale(total_loss).backward()
-                    scaler.step(optimizer)
+                    scaler.step(ops['inst_optimizer'])
                     scaler.update()
         
                     # Update the loss meter
@@ -210,7 +216,7 @@ if __name__ == '__main__':
                     save_metrics(config, state, train_pred, val_pred)
                     
                     if state['warmup']:
-                        save_state(state, config, instance_train_acc, val_losses.avg, instance_val_acc, model, optimizer)
+                        save_state(state, config, instance_train_acc, val_losses.avg, instance_val_acc, model, ops)
                         palm.save_state(os.path.join(target_folder, "palm_state.pkl"))
                         print("Saved checkpoint due to improved val_loss_instance")
 
@@ -242,7 +248,7 @@ if __name__ == '__main__':
 
             for batch_idx, (images, yb, instance_labels, unique_id) in enumerate(tqdm(bag_dataloader_train, total=len(bag_dataloader_train))):
                 num_bags = len(images)
-                optimizer.zero_grad()
+                ops['bag_optimizer'].zero_grad()
                 #images, yb = images.cuda(), yb.cuda()
 
                 if not isinstance(images, list):
@@ -272,7 +278,7 @@ if __name__ == '__main__':
                 
                 bag_loss = BCE_loss(bag_pred, yb)
                 scaler.scale(bag_loss).backward()
-                scaler.step(optimizer)
+                scaler.step(ops['bag_optimizer'])
                 scaler.update()
                 
                 bag_pred = torch.sigmoid(bag_pred)
@@ -370,7 +376,7 @@ if __name__ == '__main__':
                     target_folder = state['model_folder']
 
                 
-                save_state(state, config, train_acc, val_loss, val_acc, model, optimizer,)
+                save_state(state, config, train_acc, val_loss, val_acc, model, ops,)
                 save_metrics(config, state, train_pred, val_pred)
                 palm.save_state(os.path.join(target_folder, "palm_state.pkl"))
                 print("Saved checkpoint due to improved val_loss_bag")
@@ -379,7 +385,7 @@ if __name__ == '__main__':
                 state['epoch'] += 1
                 
                 # Create selection mask
-                predictions_ratio = prediction_anchor_scheduler(state['epoch'], config['total_epochs'], 0, config['initial_ratio'], config['final_ratio'])
+                predictions_ratio = prediction_anchor_scheduler(state['epoch'], config)
                 state['selection_mask'] = create_selection_mask(train_bag_logits, predictions_ratio)
                 print("Created new sudo labels")
                 

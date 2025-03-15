@@ -144,6 +144,9 @@ class Instance_Dataset(TUD.Dataset):
     
     
 def get_instance_loaders(bags_train, bags_val, state, config, warmup=True, use_bag_labels=False, dual_output=False, only_negative=False, max_positive=None):
+    if not config['use_sudo_labels']:
+        state['selection_mask'] = []
+    
     # Used the instance predictions from bag training to update the Instance Dataloader
     instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=warmup, 
                                               use_bag_labels=use_bag_labels,

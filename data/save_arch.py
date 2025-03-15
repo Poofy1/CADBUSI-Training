@@ -57,7 +57,7 @@ def save_accuracy_to_file(epoch, train_acc, val_acc, label_columns, file_path):
     
 
 
-def save_state(state, config, train_acc, val_loss, val_acc, bagmodel, optimizer, classifier=None, palm = None):
+def save_state(state, config, train_acc, val_loss, val_acc, bagmodel, optimizers=None, classifier=None, palm=None):
     if state['warmup']:
         model_folder = state['head_folder']
     else:
@@ -65,18 +65,28 @@ def save_state(state, config, train_acc, val_loss, val_acc, bagmodel, optimizer,
         
     model_path = f"{model_folder}/model.pth"
     classifier_path = f"{model_folder}/classifier.pth"
-    optimizer_path = f"{model_folder}/optimizer.pth"
     stats_path = f"{model_folder}/stats.pkl"
     
     label_columns = config['label_columns']
     train_losses_over_epochs = state['train_losses']
     valid_losses_over_epochs = state['valid_losses']
 
-    # Save the model and optimizer
+    # Save the model
     torch.save(bagmodel.state_dict(), model_path)
+    
+    # Save classifier if provided
     if classifier:
         torch.save(classifier.state_dict(), classifier_path)
-    torch.save(optimizer.state_dict(), optimizer_path)
+    
+    # Save optimizers if provided
+    if optimizers:
+        if isinstance(optimizers, dict):
+            # Handle dictionary of optimizers
+            for opt_name, optimizer in optimizers.items():
+                torch.save(optimizer.state_dict(), f"{model_folder}/{opt_name}.pth")
+        else:
+            # Handle single optimizer for backward compatibility
+            torch.save(optimizers.state_dict(), f"{model_folder}/optimizer.pth")
 
     # Initialize or load previous metrics
     if os.path.exists(stats_path):
@@ -87,7 +97,6 @@ def save_state(state, config, train_acc, val_loss, val_acc, bagmodel, optimizer,
     else:
         all_fpr = []
         all_tpr = []
-
 
     # Save updated stats with all_fpr and all_tpr
     with open(stats_path, 'wb') as f:
@@ -119,14 +128,14 @@ def save_state(state, config, train_acc, val_loss, val_acc, bagmodel, optimizer,
         
         
 
-def setup_model(model, config, optimizer = None):
+def setup_model(model, config, optimizers=None):
     """
     Set up the model, handle loading/saving, and manage configurations.
     
     :param model: The model to set up
-    :param optimizer: The optimizer for the model
+    :param optimizers: Dictionary of optimizers for the model (e.g. {'instance_optimizer': opt1, 'bag_optimizer': opt2})
     :param config: A dictionary containing all necessary configuration parameters
-    :return: A dictionary containing the state of the model setup
+    :return: model, optimizers dictionary, and state dictionary
     """
     # Get the directory of the current script
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -144,7 +153,7 @@ def setup_model(model, config, optimizer = None):
     stats_path = os.path.join(model_folder, f"stats.pkl")
 
     state = {
-        'optimizer': optimizer,
+        'optimizers': optimizers,
         'head_folder': head_folder,
         'pretrained_name': pretrained_name,
         'model_folder': model_folder,
@@ -166,11 +175,24 @@ def setup_model(model, config, optimizer = None):
         model.load_state_dict(state_dict)
         return model
     
+    # Load optimizer state if available
+    def load_optimizer_states(optimizers, folder):
+        for name, optimizer in optimizers.items():
+            optimizer_path = os.path.join(folder, f"{name}.pth")
+            if os.path.exists(optimizer_path):
+                optimizer.load_state_dict(torch.load(optimizer_path))
+                print(f"Loaded optimizer state for {name}")
+        return optimizers
+    
     if os.path.exists(model_path):
         print(f"Loaded pre-existing model from {model_name}")
         model = load_model(model, model_path)
         state['train_losses'], state['valid_losses'], state['epoch'], state['val_loss_bag'], state['val_loss_instance'], state['selection_mask'] = load_state(stats_path, model_folder)
         state['palm_path'] = os.path.join(model_folder, "palm_state.pkl")
+        
+        # Load optimizer states if they exist
+        if optimizers:
+            optimizers = load_optimizer_states(optimizers, model_folder)
     else:
         print(f"{model_name} does not exist, creating new instance")
         os.makedirs(model_folder, exist_ok=True)
@@ -181,6 +203,10 @@ def setup_model(model, config, optimizer = None):
             state['warmup'] = False
             model = load_model(model, head_path)
             print(f"Loaded pre-trained model from {pretrained_name}")
+            
+            # Try to load optimizer states from head folder
+            if optimizers:
+                optimizers = load_optimizer_states(optimizers, head_folder)
         else:
             state['warmup'] = True
             os.makedirs(head_folder, exist_ok=True)
@@ -188,10 +214,8 @@ def setup_model(model, config, optimizer = None):
         save_config(config, model_folder)
         save_config(config, head_folder)
         save_model_architecture(model, head_folder)
-        
     
-    
-    return model, optimizer, state
+    return model, optimizers, state
 
 
 def load_model_config(folder_path):

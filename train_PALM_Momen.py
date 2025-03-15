@@ -42,15 +42,21 @@ if __name__ == '__main__':
     opt_params = [{'params': model.parameters(),  'lr': config['learning_rate']},          # Backbone
                   {'params': palm.protos,         'lr': config['learning_rate'] * 0.1}]  
     
-    optimizer = optim.SGD(opt_params,
+    ops = {}
+    ops['inst_optimizer'] = optim.SGD(model.parameters(),
                         lr=config['learning_rate'],
                         momentum=0.9,
                         nesterov=True,
                         weight_decay=0.001)
     
-    
+    ops['bag_optimizer'] = optim.SGD(model.parameters(),
+                        lr=config['learning_rate'],
+                        momentum=0.9,
+                        nesterov=True,
+                        weight_decay=0.001)
+
     # MODEL INIT
-    model, optimizer, state = setup_model(model, config, optimizer)
+    model, ops, state = setup_model(model, config, ops)
     palm.load_state(state['palm_path'])
     
     # Initialize dictionary for unknown labels
@@ -92,7 +98,7 @@ if __name__ == '__main__':
                     instance_labels = instance_labels.cuda(non_blocking=True)
 
                     # forward
-                    optimizer.zero_grad()
+                    ops['inst_optimizer'].zero_grad()
                     _, _, instance_predictions, features = model(images.cuda(), projector=True)
                     features.to(device)
                     
@@ -157,7 +163,7 @@ if __name__ == '__main__':
                     # Backward pass and optimization step
                     total_loss = palm_loss + bce_loss_value
                     total_loss.backward()
-                    optimizer.step()
+                    ops['inst_optimizer'].step()
         
                     # Update the loss meter
                     losses.update(total_loss.item(), images[0].size(0))
@@ -257,7 +263,7 @@ if __name__ == '__main__':
                         target_folder = state['model_folder']
                         
                     if state['warmup']:
-                        save_state(state, config, instance_train_acc, val_losses.avg, instance_val_acc, model, optimizer)
+                        save_state(state, config, instance_train_acc, val_losses.avg, instance_val_acc, model, ops)
                         palm.save_state(os.path.join(target_folder, "palm_state.pkl"))
                         print("Saved checkpoint due to improved val_loss_instance")
 
@@ -284,7 +290,7 @@ if __name__ == '__main__':
 
             for (images, yb, instance_labels, unique_id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)):
                 num_bags = len(images)
-                optimizer.zero_grad()
+                ops['bag_optimizer'].zero_grad()
                 images, yb = images.cuda(), yb.cuda()
 
                 # Forward pass
@@ -304,7 +310,7 @@ if __name__ == '__main__':
                 
                 bag_loss = BCE_loss(bag_pred, yb)
                 bag_loss.backward()
-                optimizer.step()
+                ops['bag_optimizer'].step()
                 
                 bag_pred = torch.sigmoid(bag_pred)
                 total_loss += bag_loss.item() * yb.size(0)
@@ -376,7 +382,7 @@ if __name__ == '__main__':
                     target_folder = state['model_folder']
 
                 
-                save_state(state, config, train_acc, val_loss, val_acc, model, optimizer,)
+                save_state(state, config, train_acc, val_loss, val_acc, model, ops,)
                 save_metrics(config, state, train_pred, val_pred)
                 palm.save_state(os.path.join(target_folder, "palm_state.pkl"))
                 print("Saved checkpoint due to improved val_loss_bag")
@@ -385,7 +391,7 @@ if __name__ == '__main__':
                 state['epoch'] += 1
                 
                 # Create selection mask
-                predictions_ratio = prediction_anchor_scheduler(state['epoch'], config['total_epochs'], 0, config['initial_ratio'], config['final_ratio'])
+                predictions_ratio = prediction_anchor_scheduler(state['epoch'], config)
                 state['selection_mask'] = create_selection_mask(train_bag_logits, predictions_ratio)
                 print("Created new sudo labels")
                 
