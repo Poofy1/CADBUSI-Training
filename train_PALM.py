@@ -22,8 +22,8 @@ import gc
 if __name__ == '__main__':
     # Config
     model_version = '1'
-    head_name = "TEST500"
-    data_config = DogDataConfig #FishDataConfig or LesionDataConfig
+    head_name = "TEST320"
+    data_config = LesionDataConfig #FishDataConfig or LesionDataConfig
     
     config = build_config(model_version, head_name, data_config)
     bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)
@@ -44,11 +44,19 @@ if __name__ == '__main__':
                         nesterov=True,
                         weight_decay=0.001)
     
-    ops['bag_optimizer'] = optim.SGD(model.parameters(),
+
+    
+    ops['bag_optimizer'] = optim.Adam(model.parameters(),
+                      lr=config['learning_rate'],
+                      betas=(0.9, 0.999),
+                      eps=1e-8,
+                      weight_decay=0.001)
+    
+    """ops['bag_optimizer'] = optim.SGD(model.parameters(),
                         lr=config['learning_rate'],
                         momentum=0.9,
                         nesterov=True,
-                        weight_decay=0.001)
+                        weight_decay=0.001)"""
 
     # MODEL INIT
     model, ops, state = setup_model(model, config, ops)
@@ -65,7 +73,7 @@ if __name__ == '__main__':
             # Used the instance predictions from bag training to update the Instance Dataloader
             instance_dataloader_train, instance_dataloader_val = get_instance_loaders(bags_train, bags_val, 
                                                                                       state, config, 
-                                                                                      warmup=state['warmup'], use_bag_labels=False)
+                                                                                      warmup=state['warmup'])
             
             if state['warmup']:
                 target_count = config['warmup_epochs']
@@ -224,7 +232,7 @@ if __name__ == '__main__':
 
 
 
-        if state['pickup_warmup']: 
+        """if state['pickup_warmup']: 
             state['pickup_warmup'] = False
         if state['warmup']:
             print("Warmup Phase Finished")
@@ -391,4 +399,4 @@ if __name__ == '__main__':
                 
                 # Save selection
                 with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
-                    pickle.dump(state['selection_mask'], file)
+                    pickle.dump(state['selection_mask'], file)"""
