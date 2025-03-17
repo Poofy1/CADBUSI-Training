@@ -143,18 +143,18 @@ class Instance_Dataset(TUD.Dataset):
         return len(self.images)
     
     
-def get_instance_loaders(bags_train, bags_val, state, config, warmup=True, use_bag_labels=False, dual_output=False, only_negative=False, max_positive=None):
+def get_instance_loaders(bags_train, bags_val, state, config, warmup=True, dual_output=False, only_negative=False, max_positive=None):
     if not config['use_sudo_labels']:
         state['selection_mask'] = []
     
     # Used the instance predictions from bag training to update the Instance Dataloader
     instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=warmup, 
-                                              use_bag_labels=use_bag_labels,
+                                              use_bag_labels=config['use_bag_labels'],
                                               dual_output=dual_output,
                                               only_negative=only_negative,
                                               max_positive=max_positive)
     instance_dataset_val = Instance_Dataset(bags_val, [], transform=val_transform, warmup=True,
-                                            use_bag_labels=use_bag_labels,
+                                            use_bag_labels=config['use_bag_labels'],
                                             dual_output=dual_output,
                                             only_negative=only_negative,
                                             max_positive=max_positive)

@@ -214,6 +214,7 @@ def setup_model(model, config, optimizers=None):
         save_config(config, model_folder)
         save_config(config, head_folder)
         save_model_architecture(model, head_folder)
+        
     
     return model, optimizers, state
 

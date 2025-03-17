@@ -168,8 +168,7 @@ def run_test(config):
     os.makedirs(save_dir, exist_ok=True)
     
     instance_targets, fc_predictions, instance_info, instance_features = instance_results
-    
-    # Extract prototypes
+
     visualize_instance_features(instance_features, instance_targets, config['dataset_name'], save_dir)
 
 if __name__ == '__main__':
@@ -179,7 +178,7 @@ if __name__ == '__main__':
     model_folder = os.path.join(parent_dir, "models")  
     
     # Load the model configuration
-    head_name = "TEST400"
+    head_name = "TEST315"
     model_version = "" #Leave "" to read HEAD
     
     # loaded configuration

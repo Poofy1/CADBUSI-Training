@@ -220,7 +220,7 @@ if __name__ == '__main__':
     model_folder = os.path.join(parent_dir, "models")  
     
     # Load the model configuration
-    head_name = "TEST410"
+    head_name = "TEST315"
     model_version = "" #Leave "" to read HEAD
     
     # loaded configuration

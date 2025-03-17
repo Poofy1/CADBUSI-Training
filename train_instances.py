@@ -44,7 +44,7 @@ if __name__ == '__main__':
     # Config
     model_version = '1'
     head_name = "Instance_testing_mixup_effi_3"
-    data_config = LesionDataConfig  # or LesionDataConfig
+    data_config = DogDataConfig  # or LesionDataConfig
     
     config = build_config(model_version, head_name, data_config)
     bags_train, bags_val = prepare_all_data(config)
