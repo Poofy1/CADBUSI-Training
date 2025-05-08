@@ -6,7 +6,7 @@ from data.save_arch import *
 from util.Gen_ITS2CLR_util import *
 import torch.optim as optim
 from data.format_data import *
-from data.sudo_labels import *
+from data.pseudo_labels import *
 from data.bag_loader import *
 from data.instance_loader import *
 from util.eval_util import *

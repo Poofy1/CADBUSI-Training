@@ -9,7 +9,7 @@ class BagOfImagesDataset(TUD.Dataset):
         self.original_ids = list(bags_dict.keys())
         self.bags_dict = {
             bags_dict[id]['Accession_Number']: bags_dict[id]
-            for id in self.original_ids}""" # THIS WILL BREAK SUDO LABELS
+            for id in self.original_ids}""" # this will break pseudo-labels
         
         self.bags_dict = bags_dict
         self.unique_bag_ids = list(self.bags_dict.keys())

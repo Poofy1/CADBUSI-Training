@@ -8,7 +8,7 @@ from data.save_arch import *
 from util.Gen_ITS2CLR_util import *
 from torch.optim import Adam
 from data.format_data import *
-from data.sudo_labels import *
+from data.pseudo_labels import *
 from data.bag_loader import *
 from data.instance_loader import *
 from loss.genSCL import GenSupConLossv2
@@ -305,7 +305,7 @@ if __name__ == '__main__':
                 # Create selection mask
                 predictions_ratio = prediction_anchor_scheduler(state['epoch'], config)
                 state['selection_mask'] = create_selection_mask(train_bag_logits, predictions_ratio)
-                print("Created new sudo labels")
+                print("Created new pseudo-labels")
                 
                 # Save selection
                 with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:

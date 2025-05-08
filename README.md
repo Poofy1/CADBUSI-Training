@@ -32,7 +32,7 @@ ML framework that supports various deep learning architectures for ultrasound im
 ### Post-Warmup Training
 - Alternates between instance and MIL-level learning ([ITS2CLR](https://arxiv.org/pdf/2210.09452.pdf))
 - Finetunes the warmup checkpoint
-- Often involves generating / using sudo labels
+- Often involves generating / using pseudo-labels
 
 ### Versioning Structure
 ```
@@ -68,7 +68,7 @@ Our model trainer has a configurable backbone encoder, such as ResNet18. This ba
 - ABMIL: https://arxiv.org/pdf/1802.04712.pdf
 - ITS2CLR: https://arxiv.org/pdf/2210.09452.pdf
 - ABMIL uses attention to determine the relations between parts of data.
-- ITS2CLR structures the training to alternate between instance level and bag training, while sending sudo labels from bag level to instance level.
+- ITS2CLR structures the training to alternate between instance level and bag training, while sending pseudo-labels from bag level to instance level.
 
 ### Gen_ITS2CLR
 - Source: https://arxiv.org/pdf/2106.00908.pdf
@@ -82,7 +82,7 @@ Our model trainer has a configurable backbone encoder, such as ResNet18. This ba
 
 
 ## Lead Model
-Our current direction is to include PALM in the instance training of our ABMIL + ITS2CLR framework. The bag training generates sudo labels that will be used in the instance training after warmup. PALM will move unknown instances to their closest prototype after warmup.
+Our current direction is to include PALM in the instance training of our ABMIL + ITS2CLR framework. The bag training generates pseudo-labels that will be used in the instance training after warmup. PALM will move unknown instances to their closest prototype after warmup.
 
 
 

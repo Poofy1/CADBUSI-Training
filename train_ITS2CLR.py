@@ -63,7 +63,7 @@ if __name__ == '__main__':
             # Used the instance predictions from bag training to update the Instance Dataloader
             instance_dataloader_train, instance_dataloader_val = get_instance_loaders(bags_train, bags_val, 
                                                                                       state, config, 
-                                                                                      warmup=True, use_bag_labels=False)
+                                                                                      warmup=True)
             
             if state['warmup']:
                 target_count = config['warmup_epochs']

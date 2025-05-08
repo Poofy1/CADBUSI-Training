@@ -7,7 +7,7 @@ sys.path.append(parent_dir)
 
 from fastai.vision.all import *
 from data.format_data import *
-from data.sudo_labels import *
+from data.pseudo_labels import *
 from loss.palm import PALM
 from data.save_arch import *
 from data.bag_loader import *
