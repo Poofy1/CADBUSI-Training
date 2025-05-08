@@ -11,7 +11,7 @@ sys.path.append(parent_dir)
 
 from util.eval_util import *
 from data.format_data import *
-from data.sudo_labels import *
+from data.pseudo_labels import *
 from data.save_arch import *
 from data.bag_loader import *
 from data.instance_loader import *

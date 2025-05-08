@@ -2,78 +2,124 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class SupervisedContrastiveLoss(nn.Module):
-    """
-    Implementation of the supervised contrastive loss from the ConRo framework.
-    This loss pulls together samples of the same class and pushes apart samples of different classes.
-    """
-    def __init__(self, temperature=1.0):
+
+'''class SupervisedContrastiveLoss(nn.Module):
+    def __init__(self, temperature=0.07):
         super(SupervisedContrastiveLoss, self).__init__()
         self.temperature = temperature
-        
-    def forward(self, embeddings, labels, auxiliary_embeddings=None, auxiliary_labels=None):
-        """
-        Args:
-            embeddings: Tensor of shape [batch_size, embedding_dim]
-            labels: Tensor of shape [batch_size]
-            auxiliary_embeddings: Optional tensor of shape [auxiliary_batch_size, embedding_dim]
-            auxiliary_labels: Optional tensor of shape [auxiliary_batch_size]
-        """
-        device = embeddings.device
-        
-        # Combine main batch with auxiliary batch if provided
-        if auxiliary_embeddings is not None and auxiliary_labels is not None:
-            all_embeddings = torch.cat([embeddings, auxiliary_embeddings], dim=0)
-            all_labels = torch.cat([labels, auxiliary_labels], dim=0)
-        else:
-            all_embeddings = embeddings
-            all_labels = labels
-            
-        # embeddings already normalized
-        
-        # Compute cosine similarity
-        cos_sim = torch.matmul(all_embeddings, all_embeddings.T) / self.temperature
-        
-        # For each sample, exclude comparing with itself
-        mask_no_self = ~torch.eye(all_embeddings.shape[0], dtype=torch.bool, device=device)
-        
-        # For each normal session in the main batch
-        normal_mask = labels == 0
-        normal_indices = torch.where(normal_mask)[0]
-        
-        loss = 0.0
-        
-        # Process only for normal sessions in the main batch (Eq. 1 in the paper)
-        for i in normal_indices:
-            # A(xi) - all sessions except the current one
-            a_xi_indices = torch.where(mask_no_self[i])[0]
-            
-            # B0(xi) - normal sessions in A(xi)
-            b0_xi_indices = torch.where(mask_no_self[i] & (all_labels == 0))[0]
-            
-            if len(b0_xi_indices) > 0:
-                # Sum over all positive pairs
-                pair_losses = 0.0
-                
-                for p in b0_xi_indices:
-                    # Calculate l(zi, zp, A(xi)) as in Eq. 2
-                    numerator = torch.exp(cos_sim[i, p])
-                    denominator = torch.sum(torch.exp(cos_sim[i, a_xi_indices]))
-                    
-                    if denominator > 0:
-                        pair_loss = -torch.log(numerator / denominator)
-                        pair_losses += pair_loss
-                
-                # Average over all positive pairs in B0(xi)
-                if len(b0_xi_indices) > 0:
-                    loss += pair_losses / len(b0_xi_indices)
-        
-        # Normalize by the number of normal samples (Eq. 1)
-        if len(normal_indices) > 0:
-            loss /= len(normal_indices)
-            
-        return loss
+    
 
+    def forward(self, features, labels, auxiliary_embeddings=None, auxiliary_labels=None):
+        """
+        Custom SCL implementation where:
+        - Pos/Pos: Do nothing
+        - Pos/Neg: Move apart
+        - Neg/Neg: Move together
+        
+        Args:
+            features: tensor of shape [batch_size, feature_dim]
+            labels: tensor of shape [batch_size]
+        """
+        
+        batch_size = features.size(0)
+        
+        # Compute similarity matrix
+        sim_matrix = torch.matmul(features, features.T) / self.temperature
+        
+        # Create masks for different pair types
+        # Same labels
+        mask_same = (labels.unsqueeze(1) == labels.unsqueeze(0)).float()
+        # Different labels
+        mask_diff = (labels.unsqueeze(1) != labels.unsqueeze(0)).float()
+        
+        # Remove self-comparisons
+        mask_self = torch.eye(batch_size, device=features.device)
+        
+        is_pos = (labels == 1).float()
+        
+        # Create masks for our specific rules
+        # 1. Pos/Pos pairs (do nothing): positive samples with same label
+        mask_pos_pos = is_pos.unsqueeze(1) * is_pos.unsqueeze(0) * mask_same * (1 - mask_self)
+        
+        # 2. Pos/Neg pairs (move apart): positive samples with different labels
+        mask_pos_neg = is_pos.unsqueeze(1) * (1 - is_pos.unsqueeze(0)) * mask_diff
+        
+        # 3. Neg/Neg pairs (move together): negative samples with same label
+        mask_neg_neg = (1 - is_pos.unsqueeze(1)) * (1 - is_pos.unsqueeze(0)) * mask_same * (1 - mask_self)
+        
+        # Loss for Pos/Neg (move apart)
+        loss_pos_neg = 0
+        if mask_pos_neg.sum() > 0:
+            # Clip similarity values to avoid numerical instability
+            clipped_sim = torch.clamp(sim_matrix, -1.0 + 1e-6, 1.0 - 1e-6)
+            # We use 1 - sim to move apart (increase distance)
+            loss_pos_neg = -torch.log(1 - clipped_sim + 1e-6) * mask_pos_neg
+            loss_pos_neg = loss_pos_neg.sum() / (mask_pos_neg.sum() + 1e-6)
+        
+        # Loss for Neg/Neg (move together)
+        loss_neg_neg = 0
+        if mask_neg_neg.sum() > 0:
+            # For moving together, we want high similarity (close to 1)
+            # Use direct log of similarity instead of log(exp(sim))
+            loss_neg_neg = -torch.log(torch.clamp(sim_matrix, min=1e-6)) * mask_neg_neg
+            loss_neg_neg = loss_neg_neg.sum() / (mask_neg_neg.sum() + 1e-6)
+        
+        # Total loss (Pos/Pos pairs contribute nothing as per requirements)
+        total_loss = loss_pos_neg + loss_neg_neg
+        
+        return total_loss'''
+    
+class SupervisedContrastiveLoss(nn.Module):
+    def __init__(self, temperature=0.07):
+        super(SupervisedContrastiveLoss, self).__init__()
+        self.temperature = temperature
+    
+    def forward(self, features, labels, auxiliary_embeddings=None, auxiliary_labels=None):
+        """
+        Standard Supervised Contrastive Loss
+        
+        Args:
+            features: tensor of shape [batch_size, feature_dim]
+            labels: tensor of shape [batch_size]
+        """
+        
+        batch_size = features.size(0)
+        
+        # Compute similarity matrix
+        sim_matrix = torch.matmul(features, features.T) / self.temperature
+        
+        # For numerical stability
+        logits_max, _ = torch.max(sim_matrix, dim=1, keepdim=True)
+        sim_matrix = sim_matrix - logits_max.detach()
+        
+        # Create mask for same labels (positive pairs)
+        mask_positives = (labels.unsqueeze(1) == labels.unsqueeze(0)).float()
+        
+        # Remove self-comparisons
+        mask_self = torch.eye(batch_size, device=features.device)
+        mask_positives = mask_positives - mask_self
+        
+        # Get number of positives per sample
+        num_positives_per_sample = mask_positives.sum(1)
+        
+        # Standard SCL computation
+        exp_sim = torch.exp(sim_matrix)
+        
+        # For each anchor, compute sum of exp similarities for all examples
+        exp_sim_sum = exp_sim.sum(dim=1, keepdim=True)
+        
+        # Compute log_prob for positive pairs
+        log_prob = sim_matrix - torch.log(exp_sim_sum + 1e-8)
+        
+        # Filter out the positive pairs and compute the mean
+        loss = (mask_positives * log_prob).sum(1) / (num_positives_per_sample + 1e-8)
+        
+        # Final loss is negative mean across all samples that have positive pairs
+        mask_valid_samples = (num_positives_per_sample > 0).float()
+        loss = -loss.sum() / (mask_valid_samples.sum() + 1e-8)
+        
+        return loss
+    
 class DeepSVDDLoss(nn.Module):
     """
     Implementation of the DeepSVDD loss from the ConRo framework.
@@ -225,9 +271,8 @@ class ConRoStage2Loss(nn.Module):
        loss /= batch_size
            
        return loss
-
-
-
+    
+    
 from tqdm import tqdm
 def compute_global_v0(dataloader, model, device='cuda'):
     """
@@ -310,7 +355,8 @@ def compute_global_v0(dataloader, model, device='cuda'):
     print(f"Contamination within sphere: {malicious_inside/(normal_inside+malicious_inside)*100:.2f}% of samples inside are malicious")
     
     return v0, radius
-    
+
+
 def generate_stage2_features(features, labels, beta1=0.92, beta2=4.0, v0=None):
    """
    Generate similar and diverse potential malicious embeddings for ConRo Stage 2
@@ -368,7 +414,7 @@ def generate_stage2_features(features, labels, beta1=0.92, beta2=4.0, v0=None):
            continue
            
        # Generate similar malicious embeddings (Gb1)
-       num_similar = 20  # Number of similar embeddings to generate
+       num_similar = 10  # Number of similar embeddings to generate
        similar_embeds = []
        
        for _ in range(num_similar):
@@ -394,7 +440,7 @@ def generate_stage2_features(features, labels, beta1=0.92, beta2=4.0, v0=None):
            similar_malicious_embeddings[idx.item()] = torch.stack(similar_embeds)
        
        # Generate diverse malicious embeddings (Ge1)
-       num_diverse = 200  # Number of diverse embeddings to generate
+       num_diverse = 50  # Number of diverse embeddings to generate
        diverse_embeds = []
        
        attempts = 0

@@ -13,7 +13,7 @@ sys.path.append(parent_dir)
 
 from util.eval_util import *
 from data.format_data import *
-from data.sudo_labels import *
+from data.pseudo_labels import *
 from loss.palm_proto_alt import PALM
 from data.save_arch import *
 from data.bag_loader import *
@@ -220,7 +220,7 @@ if __name__ == '__main__':
     model_folder = os.path.join(parent_dir, "models")  
     
     # Load the model configuration
-    head_name = "TEST315"
+    head_name = "TEST317"
     model_version = "" #Leave "" to read HEAD
     
     # loaded configuration

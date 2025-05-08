@@ -26,8 +26,8 @@ class ITS2CLRConfig(BaseConfig):
         self.total_epochs = 100
         self.warmup_epochs = 15
         self.learning_rate = 0.001
-        self.use_sudo_labels = False  # Whether or not the instance loader will incorperate instance sudo labels
-        self.use_bag_labels = True    # Instance labels = Bag label
+        self.use_pseudo_labels = False  # Whether or not the instance loader will incorperate instance sudo labels
+        self.use_bag_labels = False    # Instance labels = Bag label
         self.reset_aggregator = False
 
 

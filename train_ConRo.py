@@ -6,7 +6,7 @@ from data.save_arch import *
 from util.Gen_ITS2CLR_util import *
 import torch.optim as optim
 from data.format_data import *
-from data.sudo_labels import *
+from data.pseudo_labels import *
 from data.instance_loader import *
 from loss.ConRo import *
 from util.eval_util import *
@@ -22,8 +22,8 @@ import gc
 if __name__ == '__main__':
     # Config
     model_version = '1'
-    head_name = "TEST321"
-    data_config = LesionDataConfig #FishDataConfig or LesionDataConfig
+    head_name = "TEST317"
+    data_config = DogDataConfig #FishDataConfig or LesionDataConfig
     
     config = build_config(model_version, head_name, data_config)
     bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)
@@ -45,7 +45,11 @@ if __name__ == '__main__':
                       betas=(0.9, 0.999),
                       eps=1e-8,
                       weight_decay=0.001)
-    
+    """ops['inst_optimizer'] = optim.SGD(model.parameters(),
+                        lr=config['learning_rate'],
+                        momentum=0.9,
+                        nesterov=True,
+                        weight_decay=0.001)"""
     ops['bag_optimizer'] = optim.Adam(model.parameters(),
                       lr=config['learning_rate'],
                       betas=(0.9, 0.999),
@@ -55,8 +59,7 @@ if __name__ == '__main__':
     # MODEL INIT
     model, ops, state = setup_model(model, config, ops)
     scaler = GradScaler('cuda')
-    
-    
+    state['warmup'] = False
     # Training loop
     while state['epoch'] < config['total_epochs']:
         
@@ -79,6 +82,9 @@ if __name__ == '__main__':
             print('Training Feature Extractor')
             print(f'Warmup Mode: {state["warmup"]}')
             
+            print("Computing global center of normal samples (v0)...")
+            v0, radius = compute_global_v0(instance_dataloader_train, model)
+            
             
             for iteration in range(target_count): 
                 losses = AverageMeter()
@@ -99,10 +105,20 @@ if __name__ == '__main__':
 
                     # Calculate BCE loss
                     bce_loss_value = BCE_loss(instance_predictions, instance_labels.float())
+                    #bce_loss_value = 0
                     
-                    # Calculate ConRo Stage 1 loss (alternating between contrastive and SVDD)
-                    # Since we don't have auxiliary data, we pass None for auxiliary_embeddings and auxiliary_labels
-                    conro_loss_value = stage1_loss(features, instance_labels, None, None)
+                    
+                    if state['warmup']:
+                        # Calculate ConRo Stage 1 loss (alternating between contrastive and SVDD)
+                        # Since we don't have auxiliary data, we pass None for auxiliary_embeddings and auxiliary_labels
+                        conro_loss_value = stage1_loss(features, instance_labels, None, None)
+                    else:
+                        # Calculate ConRo Stage 2 loss
+                        similar_malicious_embeddings, diverse_malicious_embeddings = generate_stage2_features(features, instance_labels, beta1=0.92, beta2=4.0, v0=v0)
+                        conro_loss_value = stage2_loss(features, instance_labels, 
+                                                        similar_malicious_embeddings=similar_malicious_embeddings, 
+                                                        diverse_malicious_embeddings=diverse_malicious_embeddings,
+                                                        auxiliary_embeddings=None, auxiliary_labels=None,)
 
                     # Backward pass and optimization step
                     total_loss = bce_loss_value + conro_loss_value
@@ -154,7 +170,12 @@ if __name__ == '__main__':
                         
                         # Get loss
                         bce_loss_value = BCE_loss(instance_predictions, instance_labels.float())
+                        #bce_loss_value = 0
+                            
+                        # Calculate ConRo Stage 1 loss (alternating between contrastive and SVDD)
+                        # Since we don't have auxiliary data, we pass None for auxiliary_embeddings and auxiliary_labels
                         conro_loss_value = stage1_loss(features, instance_labels, None, None)
+                        # No artificial features
                         
                         total_loss = bce_loss_value + conro_loss_value
                         val_losses.update(total_loss.item(), images[0].size(0))
@@ -193,7 +214,7 @@ if __name__ == '__main__':
                     
                     save_metrics(config, state, train_pred, val_pred)
                     
-                    if state['warmup']:
+                    if True:#state['warmup']:
                         save_state(state, config, instance_train_acc, val_losses.avg, instance_val_acc, model, ops)
                         print("Saved checkpoint due to improved val_loss_instance")
 
