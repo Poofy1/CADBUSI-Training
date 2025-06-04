@@ -185,7 +185,5 @@ False, True, 2900_3081_left_0.png
 
 
 ## Data Pipeline
-- [CADBUSI-Anonymize](https://github.com/Poofy1/CADBUSI-Anonymize)
 - [CADBUSI-Database](https://github.com/Poofy1/CADBUSI-Database)
 - [CADBUSI-Training](https://github.com/Poofy1/CADBUSI-Training)
-![CASBUSI Pipeline](https://raw.githubusercontent.com/Poofy1/CADBUSI-Database/main/pipeline/CADBUSI-Pipeline.png)
