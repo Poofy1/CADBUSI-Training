@@ -132,7 +132,9 @@ def build_config():
         "model_version": model_version,
         **its2clr_config,
         **data_config,
-        **path_config
+        **path_config,
+        "num_classes": len(data_config['label_columns']) + 1,
+        "num_labels": len(data_config['label_columns']),
     }
     
     # Determine storage client
@@ -147,8 +149,7 @@ def build_model(config):
         model_type= config['arch'],
         arch=config['encoder'],
         pretrained_arch=config['pretrained_arch'],
-        num_classes = len(config['label_columns']) + 1,
-        num_labels = len(config['label_columns']),
+        num_classes = config['num_labels'],
     )
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")   
     return model.cuda()
