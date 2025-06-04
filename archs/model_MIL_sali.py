@@ -24,7 +24,7 @@ class Embeddingmodel(nn.Module):
 
 
         self.num_classes = num_classes
-        self.aggregator = Linear_Classifier(nf=self.nf, num_classes=num_classes)
+        self.aggregator = Attention_Prediction_Aggregator(nf=self.nf, num_classes=num_classes)
         dropout_rate=0.2
         self.projector = nn.Sequential(
             nn.Linear(self.nf, 512),

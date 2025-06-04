@@ -1,41 +1,46 @@
 import os
-from fastai.vision.all import *
+import torch
 import torch.utils.data as TUD
 from tqdm import tqdm
 from torch import nn
-from data.save_arch import *
-from torch.optim import Adam
 import torch.optim as optim
+
+from data.save_arch import *
+from util.Gen_ITS2CLR_util import *
 from data.format_data import *
+from data.pseudo_labels import *
 from data.bag_loader import *
+from data.instance_loader import *
+from loss.FocalLoss import *
 from util.eval_util import *
 from config import *
-env = os.path.dirname(os.path.abspath(__file__))
+#os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 torch.backends.cudnn.benchmark = True
-os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 
+import os
+"""os.environ["NCCL_SHM_DISABLE"] = "1"
+os.environ["NCCL_DEBUG"] = "INFO"
+os.environ["NCCL_P2P_DISABLE"] = "1"
 
+# Instead of fixing device to cuda:0, just use 'cuda' if available
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+# Optional: This is often useful for debugging but can degrade performance on multi-GPU setups
+# os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
+print(torch.cuda.device_count(), "GPUs detected.")
+"""
 if __name__ == '__main__':
-
-    # Config
-    model_version = '1'
-    head_name = "ABMIL_OFFICAL"
-    data_config = FishDataConfig  # or LesionDataConfig
-    
-    config = build_config(model_version, head_name, data_config)
+    config = build_config()
     bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)
-    num_classes = len(config['label_columns']) + 1
-    num_labels = len(config['label_columns'])
-    
-    # Create Model
     model = build_model(config)
-        
-        
+
+    """# Wrap model in DataParallel if multiple GPUs are available
+    if torch.cuda.device_count() > 1:
+        print(f"Using {torch.cuda.device_count()} GPUs via DataParallel.")
+        model = nn.DataParallel(model)"""
+
     loss_func = nn.BCELoss()
-    train_losses_over_epochs = []
-    valid_losses_over_epochs = []
-    
+
     ops = {}
     ops['bag_optimizer'] = optim.SGD(model.parameters(),
                         lr=config['learning_rate'],
@@ -46,6 +51,8 @@ if __name__ == '__main__':
     # MODEL INIT
     model, ops, state = setup_model(model, config, ops)
     
+    train_losses_over_epochs = []
+    valid_losses_over_epochs = []
     
     print("Training Data...")
     # Training loop
@@ -55,31 +62,30 @@ if __name__ == '__main__':
         total_loss = 0.0
         total_acc = 0
         total = 0
-        correct = [0] * num_labels
+        correct = [0] * config['num_labels']
         train_pred = PredictionTracker()
                 
                 
-        for (data, yb, instance_yb, unique_id) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)): 
-            xb, yb = data, yb.cuda()
-            
+        for (all_images, bag_labels, instance_labels, bag_ids) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)): 
+            bag_labels = bag_labels.cuda()
             ops['bag_optimizer'].zero_grad()
             
-            bag_pred, _, _, _ = model(xb)
+            bag_pred, _, _, _ = model(all_images.cuda())
 
-            loss = loss_func(bag_pred, yb)
+            loss = loss_func(bag_pred, bag_labels)
 
             loss.backward()
             ops['bag_optimizer'].step()
 
-            total_loss += loss.item() * len(xb)
+            total_loss += loss.item() * len(all_images)
             predicted = (bag_pred > .5).float()
-            total += yb.size(0)
+            total += len(bag_labels)
             
-            for label_idx in range(num_labels):
-                correct[label_idx] += (predicted[:, label_idx] == yb[:, label_idx]).sum().item()
+            for label_idx in range(config['num_labels']):
+                correct[label_idx] += (predicted[:, label_idx] == bag_labels[:, label_idx]).sum().item()
                 
             # Store raw predictions and targets
-            train_pred.update(bag_pred, yb, unique_id)
+            train_pred.update(bag_pred, bag_labels, bag_ids)
             
         train_loss = total_loss / total
         train_acc = [total_correct / total for total_correct in correct]
@@ -90,27 +96,25 @@ if __name__ == '__main__':
         total_val_loss = 0.0
         total_val_acc = 0.0
         total = 0
-        correct = [0] * num_labels
+        correct = [0] * config['num_labels']
         val_pred = PredictionTracker()
             
         with torch.no_grad():
-            for (data, yb, instance_yb, unique_id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
-                xb, yb = data, yb.cuda()
+            for (all_images, bag_labels, instance_labels, bag_ids) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
+                bag_labels = bag_labels.cuda()
+                bag_pred, _, _, _ = model(all_images.cuda())
 
-                bag_pred, _, _, _ = model(xb)
-
+                loss = loss_func(bag_pred, bag_labels)
                 
-                loss = loss_func(bag_pred, yb)
-                
-                total_val_loss += loss.item() * len(xb)
+                total_val_loss += loss.item() * len(all_images)
                 predicted = (bag_pred > .5).float()
-                total += yb.size(0)
+                total += len(bag_labels)
                 
-                for label_idx in range(num_labels):
-                    correct[label_idx] += (predicted[:, label_idx] == yb[:, label_idx]).sum().item()
+                for label_idx in range(config['num_labels']):
+                    correct[label_idx] += (predicted[:, label_idx] == bag_labels[:, label_idx]).sum().item()
                 
                 # Store raw predictions and targets
-                val_pred.update(bag_pred, yb, unique_id)
+                val_pred.update(bag_pred, bag_labels, bag_ids)
 
         val_loss = total_val_loss / total
         val_acc = [total_correct / total for total_correct in correct]

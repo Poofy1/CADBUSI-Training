@@ -22,20 +22,11 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 
 if __name__ == '__main__':
 
-    # Config
-    model_version = '1'
-    head_name = "TEST117"
-    data_config = DogDataConfig  # or LesionDataConfig
-    
     mix_alpha=0.0  #0.2
     mix='mixup'
     
-    config = build_config(model_version, head_name, data_config)
+    config = build_config()
     bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)
-    num_classes = len(config['label_columns']) + 1
-    num_labels = len(config['label_columns'])
-
-    # Create Model
     model = build_model(config)     
     
     
@@ -82,11 +73,7 @@ if __name__ == '__main__':
             print('Training Feature Extractor')
             print(f'Warmup Mode: {state["warmup"]}')
             
-            # Unfreeze encoder
-            for param in model.encoder.parameters():
-                param.requires_grad = True
 
-            
             
             for iteration in range(target_count): 
                 model.train()
@@ -114,8 +101,8 @@ if __name__ == '__main__':
                     im_q, y0a, y0b, lam0 = mix_fn(im_q, instance_labels, mix_alpha, mix) # (lam 1 = no mixup)
                     im_k, y1a, y1b, lam1 = mix_fn(im_k, instance_labels, mix_alpha, mix)
                     images = [im_q, im_k]
-                    l_q = mix_target(y0a, y0b, lam0, num_classes)
-                    l_k = mix_target(y1a, y1b, lam1, num_classes)
+                    l_q = mix_target(y0a, y0b, lam0, config['num_classes'])
+                    l_k = mix_target(y1a, y1b, lam1, config['num_classes'])
                     zk, zq = torch.split(features, [bsz, bsz], dim=0)
                     genscl_loss = genscl([zk, zq], [l_q, l_k], None)
                     #print(genscl_loss)
@@ -184,8 +171,8 @@ if __name__ == '__main__':
                         # Apply mix function (using the same mix_fn and mix_target as in training)
                         im_q, y0a, y0b, lam0 = mix_fn(im_q, instance_labels, mix_alpha, mix)
                         im_k, y1a, y1b, lam1 = mix_fn(im_k, instance_labels, mix_alpha, mix)
-                        l_q = mix_target(y0a, y0b, lam0, num_classes)
-                        l_k = mix_target(y1a, y1b, lam1, num_classes)
+                        l_q = mix_target(y0a, y0b, lam0, config['num_classes'])
+                        l_k = mix_target(y1a, y1b, lam1, config['num_classes'])
 
                         # Get loss
                         palm_loss, loss_dict = palm(zk, instance_labels, update_prototypes=False)

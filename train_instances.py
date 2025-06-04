@@ -40,21 +40,10 @@ def apply_mixup(images, labels, alpha=1.0, device='cuda'):
 
 
 if __name__ == '__main__':
-
-    # Config
-    model_version = '1'
-    head_name = "Instance_testing_mixup_effi_3"
-    data_config = DogDataConfig  # or LesionDataConfig
     
-    config = build_config(model_version, head_name, data_config)
+    config = build_config()
     bags_train, bags_val = prepare_all_data(config)
-    num_classes = len(config['label_columns']) + 1
-    num_labels = len(config['label_columns'])
-    
     use_mixup = False
-
-
-    # Create Model
     model = build_model(config)     
     
     # LOSS INIT

@@ -305,15 +305,8 @@ def test_anomaly_detection(generator, discriminator, encoder,
 
 if __name__ == '__main__':
 
-    # Config
-    model_version = '1'
-    head_name = "FanoGan_Test2"
-    data_config = LesionDataConfig  # or LesionDataConfig
-    
-    config = build_config(model_version, head_name, data_config)
+    config = build_config()
     bags_train, bags_val = prepare_all_data(config)
-    num_classes = len(config['label_columns']) + 1
-    num_labels = len(config['label_columns'])
 
     # Create Model
     from archs.model_FanoGan import *
