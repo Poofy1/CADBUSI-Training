@@ -4,9 +4,9 @@ import torch.nn.functional as F
 
 
 
-class Linear_Classifier(nn.Module):
+class Attention_Prediction_Aggregator(nn.Module):
     def __init__(self, nf, num_classes=1, L=256):
-        super(Linear_Classifier, self).__init__()
+        super(Attention_Prediction_Aggregator, self).__init__()
 
         # Use LayerNorm instead of BatchNorm1d
         self.input_norm = nn.LayerNorm(nf)
@@ -38,6 +38,14 @@ class Linear_Classifier(nn.Module):
             nn.Linear(L, 1)
         )
         
+        self.ins_classifier = nn.Sequential( # Called externally
+            nn.Linear(nf, 256),
+            nn.LayerNorm(256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.25),
+            nn.Linear(256, num_classes),
+        )
+        
     def reset_parameters(self):
         # Reset the parameters of all the submodules in the Linear_Classifier
         for module in self.modules():
@@ -60,15 +68,14 @@ class Linear_Classifier(nn.Module):
         # Aggregate instance-level predictions
         Y_prob = torch.mm(A, instance_pred)  # ATTENTION_BRANCHESxC
 
-        #instance_scores = torch.sigmoid(instance_scores.squeeze())
-        return Y_prob, instance_scores.squeeze()
+        return Y_prob
     
 
 
 
-class Linear_Classifier_With_FC(nn.Module):
+class Attention_Feature_Classifier(nn.Module):
     def __init__(self, nf, num_classes=1, L=256):
-        super(Linear_Classifier_With_FC, self).__init__()
+        super(Attention_Feature_Classifier, self).__init__()
         
         # Use LayerNorm instead of BatchNorm1d
         self.input_norm = nn.LayerNorm(nf)
@@ -129,12 +136,10 @@ class Linear_Classifier_With_FC(nn.Module):
         weighted_features = torch.mm(A, v)  # weighted average of features
         Y_prob = self.classifier(weighted_features)
         
-        return Y_prob, instance_scores.squeeze()
+        return Y_prob
     
     
-    
-    
-    
+
 class Saliency_Classifier(nn.Module):
     def __init__(self, nf, num_classes=1, L=256):
         super(Saliency_Classifier, self).__init__()
@@ -195,3 +200,6 @@ class Saliency_Classifier(nn.Module):
         yhat_bag = (attention_scores * yhat_instance).sum(dim=0)
         #yhat_bag = torch.clamp(yhat_bag, min=1e-6, max=1-1e-6)
         return yhat_bag, yhat_instance
+    
+    
+

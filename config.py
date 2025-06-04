@@ -8,12 +8,6 @@ class BaseConfig:
         """Convert config to a dictionary with only serializable types"""
         return {k: v for k, v in self.__dict__.items()}
 
-""" Common models
-efficientnet_b3   - images 300
-efficientnet_v2_s   - images 384
-convnextv2_tiny   - images 224
-resnet18
-"""
 
 ####### ITS2CLR CONFIG #######
 
@@ -24,7 +18,7 @@ class ITS2CLRConfig(BaseConfig):
         self.initial_ratio = 0.2
         self.final_ratio = .9
         self.total_epochs = 100
-        self.warmup_epochs = 15
+        self.warmup_epochs = 1#15
         self.learning_rate = 0.001
         self.use_pseudo_labels = False  # Whether or not the instance loader will incorperate instance sudo labels
         self.use_bag_labels = False    # Instance labels = Bag label
@@ -32,21 +26,14 @@ class ITS2CLRConfig(BaseConfig):
 
 
 
-####### MODEL #######
-
-def build_model(config):
-    model = get_model(
-        model_type= config['arch'],
-        arch=config['encoder'],
-        pretrained_arch=config['pretrained_arch'],
-        num_classes = len(config['label_columns'])
-        # Add any other parameters your model needs
-    )
-    print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")   
-    return model.cuda()
 
 ####### DATASETS #######
-
+""" Common models
+efficientnet_b3   - images 300
+efficientnet_v2_s   - images 384
+convnextv2_tiny   - images 224
+resnet18
+"""
 
 class LesionDataConfig(BaseConfig):
     def __init__(self):
@@ -59,7 +46,7 @@ class LesionDataConfig(BaseConfig):
         self.max_bag_size = 50
         self.instance_batch_size = 32 # Should be higher for contrasitive learning 
         self.encoder = 'efficientnet_b3'
-        self.arch = "model_MIL_ins"
+        self.arch = "model_MIL"
         self.pretrained_arch = False
         self.use_videos = False
 
@@ -74,7 +61,7 @@ class FishDataConfig(BaseConfig):
         self.max_bag_size = 25
         self.instance_batch_size = 32
         self.encoder = 'efficientnet_b0'
-        self.arch = "model_MIL_ins"
+        self.arch = "model_MIL"
         self.pretrained_arch = False
         self.use_videos = False
         
@@ -89,18 +76,22 @@ class DogDataConfig(BaseConfig):
         self.max_bag_size = 25
         self.instance_batch_size = 32
         self.encoder = 'efficientnet_b0'
-        self.arch = "model_MIL_ins"
+        self.arch = "model_MIL"
         self.pretrained_arch = False
         self.use_videos = False
 
-####### PATHS #######
 
-class PathConfig(BaseConfig):
-    def __init__(self):
-        self.bucket = "" # optional - enables GCP
-        self.export_location = "D:/DATA/CASBUSI/exports/"
-        self.cropped_images = "F:/Temp_SSD_Data/"
-        
+
+
+####### MODEL CONFIG #######
+
+model_version = '1'
+head_name = "TEST_RESET"
+data_config_class = FishDataConfig #FishDataConfig or LesionDataConfig
+bucket = "" # optional - enables GCP
+export_location = "D:/DATA/CASBUSI/exports/"
+cropped_images = "F:/Temp_SSD_Data/"
+
         
 ####### Augmentations #######
         
@@ -122,11 +113,17 @@ val_transform = T.Compose([
 ##############
 
 
-def build_config(model_version, head_name, data_config_class):
+def build_config():
     """Combines configs into a single dictionary"""
     its2clr_config = ITS2CLRConfig().to_dict()
     data_config = data_config_class().to_dict()
-    path_config = PathConfig().to_dict()
+    
+    # Direct path config as dictionary
+    path_config = {
+        "bucket": bucket,
+        "export_location": export_location,
+        "cropped_images": cropped_images
+    }
     
     print(f'Selected model: {head_name}, version: {model_version}')
     
@@ -142,3 +139,16 @@ def build_config(model_version, head_name, data_config_class):
     StorageClient.get_instance(None, config['bucket'])
     
     return config
+
+
+
+def build_model(config):
+    model = get_model(
+        model_type= config['arch'],
+        arch=config['encoder'],
+        pretrained_arch=config['pretrained_arch'],
+        num_classes = len(config['label_columns']) + 1,
+        num_labels = len(config['label_columns']),
+    )
+    print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")   
+    return model.cuda()

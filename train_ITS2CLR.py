@@ -6,7 +6,7 @@ from data.save_arch import *
 from util.Gen_ITS2CLR_util import *
 import torch.optim as optim
 from data.format_data import *
-from data.sudo_labels import *
+from data.pseudo_labels import *
 from data.instance_loader import *
 from loss.palm import PALM
 from util.eval_util import *
@@ -20,17 +20,9 @@ mp.set_sharing_strategy('file_system')
 import gc
 
 if __name__ == '__main__':
-    # Config
-    model_version = '1'
-    head_name = "TEST308"
-    data_config = LesionDataConfig #FishDataConfig or LesionDataConfig
     
-    config = build_config(model_version, head_name, data_config)
+    config = build_config()
     bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)
-    num_classes = len(config['label_columns']) + 1
-    num_labels = len(config['label_columns'])
-
-    # Create Model
     model = build_model(config)    
     
     # LOSS INIT
@@ -92,7 +84,7 @@ if __name__ == '__main__':
                     # forward
                     ops['inst_optimizer'].zero_grad()
                     with autocast('cuda'):
-                        _, _, instance_predictions, features = model(images, projector=False)
+                        _, instance_predictions, features = model(images, projector=False)
 
                     # Calculate BCE loss
                     bce_loss_value = BCE_loss(instance_predictions, instance_labels.float())
@@ -143,7 +135,7 @@ if __name__ == '__main__':
 
                         # Forward pass
                         with autocast('cuda'):
-                            _, _, instance_predictions, features = model(images, projector=False)
+                            _, instance_predictions, features = model(images, projector=False)
                         
                         # Get loss
                         bce_loss_value = BCE_loss(instance_predictions, instance_labels.float())
@@ -229,7 +221,7 @@ if __name__ == '__main__':
         
                 # Forward pass
                 with autocast('cuda'):
-                    bag_pred, bag_instance_pred, instance_pred, _ = model(images, pred_on=True)
+                    bag_pred, instance_pred, _ = model(images, pred_on=True)
                     bag_pred = bag_pred.cuda()
     
                 # Split the embeddings back into per-bag embeddings
@@ -305,7 +297,7 @@ if __name__ == '__main__':
                         
                     # Forward pass
                     with autocast('cuda'):
-                        bag_pred, _, _, features = model(images, pred_on=True)
+                        bag_pred, _, _ = model(images, pred_on=True)
                         bag_pred = bag_pred.cuda()
 
                     # Calculate bag-level loss

@@ -25,21 +25,12 @@ import gc
 
 
 if __name__ == '__main__':
-
-    # Config
-    model_version = '1'
-    head_name = "TEST310"
-    data_config = LesionDataConfig  # or LesionDataConfig
     
     mix_alpha=0.2
     mix='mixup'
     
-    config = build_config(model_version, head_name, data_config)
+    config = build_config()
     bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)
-    num_classes = len(config['label_columns']) + 1
-    num_labels = len(config['label_columns'])
-
-    # Create Model
     model = build_model(config)
         
     BCE_loss = nn.BCEWithLogitsLoss()
@@ -82,10 +73,7 @@ if __name__ == '__main__':
             print('Training Feature Extractor')
             print(f'Warmup Mode: {state["warmup"]}')
             
-            # Unfreeze encoder
-            for param in model.encoder.parameters():
-                param.requires_grad = True
-        
+
             # Generalized Supervised Contrastive Learning phase
             
             model.train()
@@ -109,8 +97,8 @@ if __name__ == '__main__':
                     im_q, y0a, y0b, lam0 = mix_fn(im_q, instance_labels, mix_alpha, mix)
                     im_k, y1a, y1b, lam1 = mix_fn(im_k, instance_labels, mix_alpha, mix)
                     
-                    l_q = mix_target(y0a, y0b, lam0, num_classes)
-                    l_k = mix_target(y1a, y1b, lam1, num_classes)
+                    l_q = mix_target(y0a, y0b, lam0, config['num_classes'])
+                    l_k = mix_target(y1a, y1b, lam1, config['num_classes'])
                     
                     # forward
                     ops['inst_optimizer'].zero_grad()

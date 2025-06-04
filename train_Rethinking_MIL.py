@@ -17,19 +17,9 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
         
         
 if __name__ == '__main__':
-
-    # Config
-    model_version = '1'
-    head_name = "TEST37"
-    data_config = FishDataConfig #FishDataConfig or LesionDataConfig
     
-    
-    config = build_config(model_version, head_name, data_config)
+    config = build_config()
     bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)
-    num_classes = len(config['label_columns']) + 1
-    num_labels = len(config['label_columns'])
-
-    # Create Model
     model = build_model(config)    
     
     # LOSS INIT
