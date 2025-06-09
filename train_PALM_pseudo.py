@@ -254,7 +254,7 @@ if __name__ == '__main__':
                 # Forward pass
                 bag_pred, instance_pred, features = model(images, pred_on=True)
                 
-                
+                yb = yb.cuda()
                 bag_loss = BCE_loss(bag_pred, yb)
                 bag_loss.backward()
                 ops['bag_optimizer'].step()
@@ -292,6 +292,7 @@ if __name__ == '__main__':
                     bag_pred, _, features = model(images, pred_on=True)
 
                     # Calculate bag-level loss
+                    yb = yb.cuda()
                     loss = BCE_loss(bag_pred, yb)
                     total_val_loss += loss.item() * yb.size(0)
 

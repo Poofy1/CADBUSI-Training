@@ -83,7 +83,7 @@ class PALM(nn.Module):
         update_features = torch.matmul(update_mask.T, features)
 
         if update_prototypes:
-            self.proto_class_counts += torch.matmul(update_mask.T, F.one_hot(targets, num_classes=self.num_classes).float()) # ADDED
+            self.proto_class_counts += torch.matmul(update_mask.T, F.one_hot(targets.long(), num_classes=self.num_classes).float()) # ADDED
             protos = self.protos
             protos = self.proto_m * protos + (1-self.proto_m) * update_features
             self.protos = F.normalize(protos, dim=1, p=2)
