@@ -85,7 +85,7 @@ class DogDataConfig(BaseConfig):
 
 ####### MODEL CONFIG #######
 
-head_name = "TEST_RESET_3"
+head_name = "TEST_RESET_4"
 model_version = '1'
 data_config_class = FishDataConfig # FishDataConfig / LesionDataConfig / DogDataConfig
 bucket = "" # optional - enables GCP

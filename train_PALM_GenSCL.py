@@ -89,7 +89,7 @@ if __name__ == '__main__':
                     # forward
                     ops['inst_optimizer'].zero_grad()
                     _, instance_predictions, features = model(images, pred_on=True, projector=True)
-                    features.to(device)
+                    features = features.to(device)
                     
                     # GenSCL Loss
                     bsz = instance_labels.shape[0]
@@ -163,7 +163,7 @@ if __name__ == '__main__':
 
                         # Forward pass
                         _, instance_predictions, features = model([im_q, im_k], pred_on=True, projector=True)
-                        features.to(device)
+                        features = features.to(device)
 
                         # Split features
                         zk, zq = torch.split(features, [bsz, bsz], dim=0)
@@ -280,8 +280,8 @@ if __name__ == '__main__':
                                 
                         
                 
-                
-                bag_loss = BCE_loss(bag_pred, yb.cuda())
+                yb = yb.cuda()
+                bag_loss = BCE_loss(bag_pred, yb)
                 bag_loss.backward()
                 ops['bag_optimizer'].step()
                 
@@ -312,7 +312,8 @@ if __name__ == '__main__':
                     bag_pred = bag_pred.cuda()
                     
                     # Calculate bag-level loss
-                    loss = BCE_loss(bag_pred, yb.cuda())
+                    yb = yb.cuda()
+                    loss = BCE_loss(bag_pred, yb)
                     total_val_loss += loss.item() * yb.size(0)
 
                     predicted = (bag_pred > 0.5).float()
