@@ -254,7 +254,7 @@ def compute_global_v0(dataloader, model, device='cuda'):
             labels = labels.to(device, non_blocking=True)
             
             # Extract features using the model
-            _, _, _, features = model(images, projector=True)
+            _, _, features = model(images, projector=True)
             
             # Store all features and labels for later analysis
             all_features.append(features)

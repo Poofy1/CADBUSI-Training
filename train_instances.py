@@ -42,12 +42,12 @@ def apply_mixup(images, labels, alpha=1.0, device='cuda'):
 if __name__ == '__main__':
     
     config = build_config()
-    bags_train, bags_val = prepare_all_data(config)
+    bags_train, bags_val, bag_dataloader_train, bag_dataloader_val = prepare_all_data(config)
     use_mixup = False
     model = build_model(config)     
     
     # LOSS INIT
-    BCE_loss = nn.BCELoss()
+    BCE_loss = nn.BCEWithLogitsLoss()
 
     
     ops = {}
@@ -103,7 +103,7 @@ if __name__ == '__main__':
                     
                     # Forward pass with mixed images
                     ops['inst_optimizer'].zero_grad()
-                    _, _, instance_predictions, features = model(mixed_images, projector=True)
+                    _, instance_predictions, features = model(mixed_images, projector=True)
                     features = features.to(device)
 
                     # Calculate mixed BCE loss
@@ -120,7 +120,7 @@ if __name__ == '__main__':
                 else:
                     # Standard forward pass without mixup
                     ops['inst_optimizer'].zero_grad()
-                    _, _, instance_predictions, features = model(images, projector=True)
+                    _, instance_predictions, features = model(images, projector=True)
                     features = features.to(device)
 
                     # Standard BCE loss
@@ -160,7 +160,7 @@ if __name__ == '__main__':
                     instance_labels = instance_labels.cuda(non_blocking=True)
 
                     # Forward pass
-                    _, _, instance_predictions, features = model(images, projector=True)
+                    _, instance_predictions, features = model(images, projector=True)
                     features.to(device)
                     
                     # Get loss

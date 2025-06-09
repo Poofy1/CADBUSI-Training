@@ -95,7 +95,7 @@ if __name__ == '__main__':
                     # forward
                     ops['inst_optimizer'].zero_grad()
                     with autocast('cuda'):
-                        _, _, instance_predictions, features = model(images, projector=True)
+                        _, instance_predictions, features = model(images, projector=True)
                         features.to(device)
 
                     # Separate labeled and unlabeled data
@@ -166,7 +166,7 @@ if __name__ == '__main__':
 
                         # Forward pass
                         with autocast('cuda'):
-                            _, _, instance_predictions, features = model(images, projector=True)
+                            _, instance_predictions, features = model(images, projector=True)
                             features.to(device)
                         
                         # Get loss
@@ -224,7 +224,7 @@ if __name__ == '__main__':
 
 
 
-        """if state['pickup_warmup']: 
+        if state['pickup_warmup']: 
             state['pickup_warmup'] = False
         if state['warmup']:
             print("Warmup Phase Finished")
@@ -261,7 +261,7 @@ if __name__ == '__main__':
         
                 # Forward pass
                 with autocast('cuda'):
-                    bag_pred, bag_instance_pred, instance_pred, _ = model(images, pred_on=True)
+                    bag_pred, instance_pred, _ = model(images, pred_on=True)
                     bag_pred = bag_pred.cuda()
                     
                 # Split the embeddings back into per-bag embeddings
@@ -302,7 +302,6 @@ if __name__ == '__main__':
                     images.detach()
                     del images
 
-                del bag_instance_pred
                 del y_hat_per_bag
                 del bag_pred
 
@@ -337,7 +336,7 @@ if __name__ == '__main__':
                         
                     # Forward pass
                     with autocast('cuda'):
-                        bag_pred, _, _, features = model(images, pred_on=True)
+                        bag_pred, _, features = model(images, pred_on=True)
                         bag_pred = bag_pred.cuda()
 
                     # Calculate bag-level loss
@@ -391,4 +390,4 @@ if __name__ == '__main__':
                 
                 # Save selection
                 with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
-                    pickle.dump(state['selection_mask'], file)"""
+                    pickle.dump(state['selection_mask'], file)

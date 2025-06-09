@@ -241,9 +241,12 @@ def save_bags_to_csv(bags_dict, file_path):
 
 def prepare_all_data(config):
 
+    cropped_images_root = f"{parent_dir}/temp"
+    os.makedirs(cropped_images_root, exist_ok=True)
+        
     # Path to the config file
     export_location = f"{config['export_location']}/{config['dataset_name']}"
-    cropped_images = f"{config['cropped_images']}/{config['dataset_name']}_{config['img_size']}_images"
+    cropped_images = f"{cropped_images_root}/{config['dataset_name']}_{config['img_size']}_images"
     
     print("Preprocessing Data...")
     data = read_csv(f'{export_location}/TrainData.csv')

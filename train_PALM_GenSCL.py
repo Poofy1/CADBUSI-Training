@@ -32,7 +32,7 @@ if __name__ == '__main__':
     
     palm = PALM(nviews = 1, num_classes=2, n_protos=100, k = 0, lambda_pcon=0).cuda() #lambda_pcon = 0 means prototypes are not moved
     genscl = GenSupConLossv2(temperature=0.07, base_temperature=0.07)
-    BCE_loss = nn.BCELoss()
+    BCE_loss = nn.BCEWithLogitsLoss()
     
     ops = {}
     ops['inst_optimizer'] = optim.SGD(model.parameters(),
@@ -88,7 +88,7 @@ if __name__ == '__main__':
                     
                     # forward
                     ops['inst_optimizer'].zero_grad()
-                    _, _, instance_predictions, features = model(images, pred_on=True, projector=True)
+                    _, instance_predictions, features = model(images, pred_on=True, projector=True)
                     features.to(device)
                     
                     # GenSCL Loss
@@ -162,7 +162,7 @@ if __name__ == '__main__':
                         bsz = instance_labels.shape[0]
 
                         # Forward pass
-                        _, _, instance_predictions, features = model([im_q, im_k], pred_on=True, projector=True)
+                        _, instance_predictions, features = model([im_q, im_k], pred_on=True, projector=True)
                         features.to(device)
 
                         # Split features
@@ -252,8 +252,8 @@ if __name__ == '__main__':
                 ops['bag_optimizer'].zero_grad()
 
                 # Forward pass
-                bag_pred, _, instance_pred, features = model(images, pred_on=True, projector=True)
-                
+                bag_pred, instance_pred, features = model(images, pred_on=True, projector=True)
+                bag_pred = bag_pred.cuda()
 
                 # Get predictions from PALM
                 with torch.no_grad():
@@ -281,7 +281,7 @@ if __name__ == '__main__':
                         
                 
                 
-                bag_loss = BCE_loss(bag_pred, yb)
+                bag_loss = BCE_loss(bag_pred, yb.cuda())
                 bag_loss.backward()
                 ops['bag_optimizer'].step()
                 
@@ -308,10 +308,11 @@ if __name__ == '__main__':
                 for (images, yb, instance_labels, unique_id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
 
                     # Forward pass
-                    bag_pred, _, _, features = model(images, pred_on=True)
-
+                    bag_pred, _, features = model(images, pred_on=True)
+                    bag_pred = bag_pred.cuda()
+                    
                     # Calculate bag-level loss
-                    loss = BCE_loss(bag_pred, yb)
+                    loss = BCE_loss(bag_pred, yb.cuda())
                     total_val_loss += loss.item() * yb.size(0)
 
                     predicted = (bag_pred > 0.5).float()

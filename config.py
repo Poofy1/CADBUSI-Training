@@ -85,12 +85,11 @@ class DogDataConfig(BaseConfig):
 
 ####### MODEL CONFIG #######
 
+head_name = "TEST_RESET_3"
 model_version = '1'
-head_name = "TEST_RESET"
-data_config_class = FishDataConfig #FishDataConfig or LesionDataConfig
+data_config_class = FishDataConfig # FishDataConfig / LesionDataConfig / DogDataConfig
 bucket = "" # optional - enables GCP
 export_location = "D:/DATA/CASBUSI/exports/"
-cropped_images = "F:/Temp_SSD_Data/"
 
         
 ####### Augmentations #######
@@ -122,7 +121,6 @@ def build_config():
     path_config = {
         "bucket": bucket,
         "export_location": export_location,
-        "cropped_images": cropped_images
     }
     
     print(f'Selected model: {head_name}, version: {model_version}')
