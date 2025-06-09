@@ -108,7 +108,7 @@ if __name__ == '__main__':
 
                     # Forward pass
                     with autocast('cuda'):
-                        _, _, _, features = model(all_images, projector=True)
+                        _, _, features = model(all_images, projector=True)
                         features = features.cuda()
                         
                     zk, zq = torch.split(features, [bsz, bsz], dim=0)
@@ -168,7 +168,7 @@ if __name__ == '__main__':
         
                 # Forward pass
                 with autocast('cuda'):
-                    bag_pred, bag_instance_pred, _, _ = model(images, pred_on=True)
+                    bag_pred, bag_instance_pred, _ = model(images, pred_on=True)
                     bag_pred = bag_pred.cuda()
                     
                 # Split the embeddings back into per-bag embeddings
@@ -244,7 +244,7 @@ if __name__ == '__main__':
                         
                     # Forward pass
                     with autocast('cuda'):
-                        bag_pred, _, _, features = model(images, pred_on=True)
+                        bag_pred, _, features = model(images, pred_on=True)
                         bag_pred = bag_pred.cuda()
 
                     # Calculate bag-level loss

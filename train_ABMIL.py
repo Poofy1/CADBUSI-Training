@@ -14,7 +14,7 @@ from data.instance_loader import *
 from loss.FocalLoss import *
 from util.eval_util import *
 from config import *
-#os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
+os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 torch.backends.cudnn.benchmark = True
 
 import os
@@ -39,7 +39,7 @@ if __name__ == '__main__':
         print(f"Using {torch.cuda.device_count()} GPUs via DataParallel.")
         model = nn.DataParallel(model)"""
 
-    loss_func = nn.BCELoss()
+    loss_func = nn.BCEWithLogitsLoss()
 
     ops = {}
     ops['bag_optimizer'] = optim.SGD(model.parameters(),
@@ -68,12 +68,14 @@ if __name__ == '__main__':
                 
         for (all_images, bag_labels, instance_labels, bag_ids) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)): 
             bag_labels = bag_labels.cuda()
+            all_images = [img.cuda() for img in all_images]
+
             ops['bag_optimizer'].zero_grad()
             
-            bag_pred, _, _, _ = model(all_images.cuda())
+            bag_pred, _, _ = model(all_images, pred_on=True)
 
             loss = loss_func(bag_pred, bag_labels)
-
+            
             loss.backward()
             ops['bag_optimizer'].step()
 
@@ -102,7 +104,9 @@ if __name__ == '__main__':
         with torch.no_grad():
             for (all_images, bag_labels, instance_labels, bag_ids) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
                 bag_labels = bag_labels.cuda()
-                bag_pred, _, _, _ = model(all_images.cuda())
+                all_images = all_images.cuda(non_blocking=True)
+                
+                bag_pred, _, _ = model(all_images, pred_on=True)
 
                 loss = loss_func(bag_pred, bag_labels)
                 

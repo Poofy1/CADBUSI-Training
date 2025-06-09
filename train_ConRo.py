@@ -93,7 +93,7 @@ if __name__ == '__main__':
                     # forward
                     ops['inst_optimizer'].zero_grad()
                     with autocast('cuda'):
-                        _, _, instance_predictions, features = model(images, projector=True)
+                        _, instance_predictions, features = model(images, projector=True)
 
                     # Calculate BCE loss
                     bce_loss_value = BCE_loss(instance_predictions, instance_labels.float())
@@ -158,7 +158,7 @@ if __name__ == '__main__':
 
                         # Forward pass
                         with autocast('cuda'):
-                            _, _, instance_predictions, features = model(images, projector=True)
+                            _, instance_predictions, features = model(images, projector=True)
                         
                         # Get loss
                         bce_loss_value = BCE_loss(instance_predictions, instance_labels.float())
@@ -251,7 +251,7 @@ if __name__ == '__main__':
         
                 # Forward pass
                 with autocast('cuda'):
-                    bag_pred, bag_instance_pred, instance_pred, _ = model(images, pred_on=True)
+                    bag_pred, instance_pred, _ = model(images, pred_on=True)
                     bag_pred = bag_pred.cuda()
     
                 # Split the embeddings back into per-bag embeddings
@@ -327,7 +327,7 @@ if __name__ == '__main__':
                         
                     # Forward pass
                     with autocast('cuda'):
-                        bag_pred, _, _, features = model(images, pred_on=True)
+                        bag_pred, _, features = model(images, pred_on=True)
                         bag_pred = bag_pred.cuda()
 
                     # Calculate bag-level loss

@@ -86,7 +86,7 @@ if __name__ == '__main__':
 
                     # forward
                     ops['inst_optimizer'].zero_grad()
-                    _, _, instance_predictions, features = model(images, projector=True)
+                    _, instance_predictions, features = model(images, projector=True)
                     features.to(device)
                     
                     # Create masks for labeled and unlabeled data
@@ -167,7 +167,7 @@ if __name__ == '__main__':
                         instance_labels = instance_labels.cuda(non_blocking=True)
 
                         # Forward pass
-                        _, _, instance_predictions, features = model(images, projector=True)
+                        _, instance_predictions, features = model(images, projector=True)
                         features.to(device)
                         
                         # PALM Loss
@@ -252,7 +252,7 @@ if __name__ == '__main__':
                 ops['bag_optimizer'].zero_grad()
 
                 # Forward pass
-                bag_pred, _, instance_pred, features = model(images, pred_on=True)
+                bag_pred, instance_pred, features = model(images, pred_on=True)
                 
                 
                 bag_loss = BCE_loss(bag_pred, yb)
@@ -289,7 +289,7 @@ if __name__ == '__main__':
                 for (images, yb, instance_labels, id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
 
                     # Forward pass
-                    bag_pred, _, _, features = model(images, pred_on=True)
+                    bag_pred, _, features = model(images, pred_on=True)
 
                     # Calculate bag-level loss
                     loss = BCE_loss(bag_pred, yb)
