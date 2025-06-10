@@ -60,7 +60,7 @@ class FishDataConfig(BaseConfig):
         self.min_bag_size = 2
         self.max_bag_size = 25
         self.instance_batch_size = 32
-        self.encoder = 'efficientnet_b0'
+        self.encoder = 'resnet18'
         self.arch = "model_MIL"
         self.pretrained_arch = False
         self.use_videos = False
@@ -75,7 +75,7 @@ class DogDataConfig(BaseConfig):
         self.min_bag_size = 2
         self.max_bag_size = 25
         self.instance_batch_size = 32
-        self.encoder = 'efficientnet_b0'
+        self.encoder = 'resnet18'
         self.arch = "model_MIL"
         self.pretrained_arch = False
         self.use_videos = False
@@ -85,7 +85,7 @@ class DogDataConfig(BaseConfig):
 
 ####### MODEL CONFIG #######
 
-head_name = "TEST_RESET_4"
+head_name = "TEST_RESET_7"
 model_version = '1'
 data_config_class = FishDataConfig # FishDataConfig / LesionDataConfig / DogDataConfig
 bucket = "" # optional - enables GCP

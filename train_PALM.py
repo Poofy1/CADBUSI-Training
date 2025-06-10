@@ -123,10 +123,9 @@ if __name__ == '__main__':
                     losses.update(total_loss.item(), images[0].size(0))
                     
                     # Get predictions from PALM
-                    instance_predictions = torch.sigmoid(instance_predictions)
                     with torch.no_grad():
                         palm_predicted_classes, dist = palm.predict(features)
-                        instance_predicted_classes = (instance_predictions) > 0.5
+                        instance_predicted_classes = (instance_predictions) > 0
 
                         # Calculate accuracy for PALM predictions
                         palm_correct = (palm_predicted_classes == instance_labels).sum().item()
@@ -176,9 +175,8 @@ if __name__ == '__main__':
                         val_losses.update(total_loss.item(), images[0].size(0))
 
                         # Get predictions
-                        instance_predictions = torch.sigmoid(instance_predictions)
                         palm_predicted_classes, _ = palm.predict(features)
-                        instance_predicted_classes = (instance_predictions) > 0.5
+                        instance_predicted_classes = (instance_predictions) > 0
 
                         # Calculate accuracy for PALM predictions
                         palm_correct = (palm_predicted_classes == instance_labels).sum().item()
@@ -281,9 +279,8 @@ if __name__ == '__main__':
                 scaler.step(ops['bag_optimizer'])
                 scaler.update()
                 
-                bag_pred = torch.sigmoid(bag_pred)
                 total_loss += bag_loss.item() * yb.size(0)
-                predicted = (bag_pred > 0.5).float()
+                predicted = (bag_pred > 0).float()
                 total += yb.size(0)
                 correct += (predicted == yb).sum().item()
                 
@@ -343,8 +340,7 @@ if __name__ == '__main__':
                     loss = BCE_loss(bag_pred, yb)
                     total_val_loss += loss.item() * yb.size(0)
 
-                    bag_pred = torch.sigmoid(bag_pred)
-                    predicted = (bag_pred > 0.5).float()
+                    predicted = (bag_pred > 0).float()
                     total += yb.size(0)
                     correct += (predicted == yb).sum().item()
 

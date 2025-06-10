@@ -124,7 +124,7 @@ if __name__ == '__main__':
                     # Get predictions from PALM
                     with torch.no_grad():
                         palm_predicted_classes, dist = palm.predict(zk)
-                        instance_predicted_classes = (instance_predictions[:bsz]) > 0.5
+                        instance_predicted_classes = (instance_predictions[:bsz]) > 0
 
                         # Calculate accuracy for PALM predictions
                         palm_correct = (palm_predicted_classes == instance_labels).sum().item()
@@ -185,7 +185,7 @@ if __name__ == '__main__':
                         
                         # Get predictions
                         palm_predicted_classes, _ = palm.predict(zk)
-                        instance_predicted_classes = (instance_predictions[:bsz]) > 0.5
+                        instance_predicted_classes = (instance_predictions[:bsz]) > 0
 
                         # Calculate accuracy for PALM predictions
                         palm_correct = (palm_predicted_classes == instance_labels).sum().item()
@@ -252,7 +252,7 @@ if __name__ == '__main__':
                 ops['bag_optimizer'].zero_grad()
 
                 # Forward pass
-                bag_pred, instance_pred, features = model(images, pred_on=True, projector=True)
+                bag_pred, _, features = model(images, pred_on=True, projector=True)
                 bag_pred = bag_pred.cuda()
 
                 # Get predictions from PALM
@@ -286,7 +286,7 @@ if __name__ == '__main__':
                 ops['bag_optimizer'].step()
                 
                 total_loss += bag_loss.item() * yb.size(0)
-                predicted = (bag_pred > 0.5).float()
+                predicted = (bag_pred > 0).float()
                 total += yb.size(0)
                 correct += (predicted == yb).sum().item()
                     
@@ -316,7 +316,7 @@ if __name__ == '__main__':
                     loss = BCE_loss(bag_pred, yb)
                     total_val_loss += loss.item() * yb.size(0)
 
-                    predicted = (bag_pred > 0.5).float()
+                    predicted = (bag_pred > 0).float()
                     total += yb.size(0)
                     correct += (predicted == yb).sum().item()
 

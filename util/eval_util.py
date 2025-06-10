@@ -25,7 +25,10 @@ class PredictionTracker:
         if predictions is None or targets is None or ids is None:
             raise ValueError("Predictions, targets, and ids cannot be None")
         
-        self.predictions.append(predictions.cpu().detach())
+        # Apply sigmoid to convert logits to probabilities
+        predictions_probs = torch.sigmoid(predictions)
+        
+        self.predictions.append(predictions_probs.cpu().detach())
         self.targets.append(targets.cpu().detach())
         self.ids.extend(ids)
     

@@ -188,9 +188,8 @@ if __name__ == '__main__':
                 scaler.step(ops['bag_optimizer'])
                 scaler.update()
                 
-                bag_pred = torch.sigmoid(bag_pred)
                 total_loss += bag_loss.item() * yb.size(0)
-                predicted = (bag_pred > 0.5).float()
+                predicted = (bag_pred > 0).float()
                 total += yb.size(0)
                 correct += (predicted == yb).sum().item()
                 
@@ -251,8 +250,7 @@ if __name__ == '__main__':
                     loss = BCE_loss(bag_pred, yb)
                     total_val_loss += loss.item() * yb.size(0)
 
-                    bag_pred = torch.sigmoid(bag_pred)
-                    predicted = (bag_pred > 0.5).float()
+                    predicted = (bag_pred > 0).float()
                     total += yb.size(0)
                     correct += (predicted == yb).sum().item()
 
