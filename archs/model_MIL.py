@@ -1,20 +1,19 @@
 import torch
 import torch.nn as nn
-from fastai.vision.all import *
 import torch.nn.functional as F
 from archs.backbone import *
 from archs.linear_classifier import *
 from archs.dsmil import *
 
 class UnifiedAttentionAggregator(nn.Module):
-    def __init__(self, nf, num_classes=1, L=256):
+    def __init__(self, nf, num_classes=1):
         super(UnifiedAttentionAggregator, self).__init__()
         self.num_classes = num_classes
         
         # Select Aggregator
-        #self.aggregator = Attention_Prediction_Aggregator(nf, num_classes, L)
-        #self.aggregator = Attention_Feature_Classifier(nf, num_classes, L)
-        self.aggregator = DSMIL(nf, num_classes)
+        #self.aggregator = Attention_Prediction_Aggregator(nf, num_classes) # Includes seperate instance classifier 
+        self.aggregator = Attention_Feature_Classifier(nf, num_classes)
+        #self.aggregator = DSMIL(nf, num_classes)
         self.has_ins_classifier = hasattr(self.aggregator, 'ins_classifier')
     
     def forward(self, feats, split_sizes, pred_on=True):
@@ -64,7 +63,6 @@ class Embeddingmodel(nn.Module):
             )
             nf = num_features_model(nn.Sequential(*self.encoder.children()))
             
-        
         self.aggregator = UnifiedAttentionAggregator(nf=nf, num_classes=num_classes)
         
         self.projector = nn.Sequential(

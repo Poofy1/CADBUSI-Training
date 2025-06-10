@@ -80,7 +80,7 @@ if __name__ == '__main__':
             ops['bag_optimizer'].step()
 
             total_loss += loss.item() * len(all_images)
-            predicted = (bag_pred > .5).float()
+            predicted = (bag_pred > 0).float()
             total += len(bag_labels)
             
             for label_idx in range(config['num_labels']):
@@ -104,14 +104,14 @@ if __name__ == '__main__':
         with torch.no_grad():
             for (all_images, bag_labels, instance_labels, bag_ids) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
                 bag_labels = bag_labels.cuda()
-                all_images = all_images.cuda(non_blocking=True)
+                all_images = [img.cuda() for img in all_images]
                 
                 bag_pred, _, _ = model(all_images, pred_on=True)
 
                 loss = loss_func(bag_pred, bag_labels)
                 
                 total_val_loss += loss.item() * len(all_images)
-                predicted = (bag_pred > .5).float()
+                predicted = (bag_pred > 0).float()
                 total += len(bag_labels)
                 
                 for label_idx in range(config['num_labels']):

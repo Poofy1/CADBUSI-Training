@@ -112,7 +112,7 @@ if __name__ == '__main__':
                     bce_loss_value = lam * loss_a + (1 - lam) * loss_b
                     
                     # Calculate accuracy considering both original and mixed labels
-                    predicted = (instance_predictions > 0.5).float()
+                    predicted = (instance_predictions > 0).float()
                     correct_a = (predicted == labels_a).float()
                     correct_b = (predicted == labels_b).float()
                     correct = lam * correct_a + (1 - lam) * correct_b
@@ -127,7 +127,7 @@ if __name__ == '__main__':
                     bce_loss_value = BCE_loss(instance_predictions, instance_labels.float())
                     
                     # Standard accuracy calculation
-                    predicted = (instance_predictions > 0.5).float()
+                    predicted = (instance_predictions > 0).float()
                     correct = (predicted == instance_labels).float()
                 
                 # Common steps for both cases
@@ -169,7 +169,7 @@ if __name__ == '__main__':
                     val_losses.update(total_loss.item(), images[0].size(0))
                     
                     # Calculate correct predictions
-                    predicted = (instance_predictions > 0.5).float()
+                    predicted = (instance_predictions > 0).float()
                     correct = (predicted == instance_labels).float()
                     instance_total_correct += correct.sum().item()
                     total_samples += instance_labels.numel()

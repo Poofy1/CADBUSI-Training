@@ -23,7 +23,7 @@ if __name__ == '__main__':
     model = build_model(config)    
     
     # LOSS INIT
-    BCE_loss = nn.BCELoss()
+    BCE_loss = nn.BCEWithLogitsLoss()
     CE_crit = nn.CrossEntropyLoss()
     
     ops = {}
@@ -112,7 +112,7 @@ if __name__ == '__main__':
                         valid_labels = instance_labels[valid_mask]
                         
                         # Calculate accuracy for valid samples only
-                        instance_predicted_classes = (valid_predictions > 0.5)
+                        instance_predicted_classes = (valid_predictions > 0)
                         instance_correct = (instance_predicted_classes == valid_labels).sum().item()
                         instance_total_correct += instance_correct
                         total_samples += valid_mask.sum().item()
@@ -155,7 +155,7 @@ if __name__ == '__main__':
                         val_losses.update(total_loss.item(), instance_labels.size(0))
 
                         # Get predictions
-                        instance_predicted_classes = (instance_predictions) > 0.5
+                        instance_predicted_classes = (instance_predictions) > 0
                         instance_correct = (instance_predicted_classes == instance_labels).sum().item()
                         instance_total_correct += instance_correct
                         total_samples += instance_labels.size(0)
@@ -212,15 +212,13 @@ if __name__ == '__main__':
 
                 # Forward pass
                 bag_pred, instance_pred, _, _, _, _ = model(images, bag_on=True)
-                
-                bag_pred = torch.clamp(bag_pred, min=0.000001, max=.999999)
 
                 bag_loss = BCE_loss(bag_pred, yb)
                 bag_loss.backward()
                 ops['bag_optimizer'].step()
                 
                 total_loss += bag_loss.item() * yb.size(0)
-                predicted = (bag_pred > 0.5).float()
+                predicted = (bag_pred > 0).float()
                 total += yb.size(0)
                 correct += (predicted == yb).sum().item()
                 
@@ -246,12 +244,11 @@ if __name__ == '__main__':
 
                     # Forward pass
                     bag_pred, _, _, _, _, _ = model(images, bag_on=True, val_on = True)
-                    bag_pred = torch.clamp(bag_pred, min=0.000001, max=.999999)
                     # Calculate bag-level loss
                     loss = BCE_loss(bag_pred, yb)
                     total_val_loss += loss.item() * yb.size(0)
 
-                    predicted = (bag_pred > 0.5).float()
+                    predicted = (bag_pred > 0).float()
                     total += yb.size(0)
                     correct += (predicted == yb).sum().item()
 

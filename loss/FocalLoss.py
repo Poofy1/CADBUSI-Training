@@ -10,7 +10,7 @@ class FocalLoss(nn.Module):
         self.gamma = gamma
     
     def forward(self, inputs, targets):
-        probs = inputs
+        probs = torch.sigmoid(inputs)
         pt = torch.where(targets == 1, probs, 1 - probs)
         
         # Apply alpha only to positive class
@@ -27,6 +27,8 @@ class BCELossWithSmoothing(nn.Module):
         self.smoothing = smoothing
         
     def forward(self, pred, target):
+        pred = torch.sigmoid(pred)
+        
         # Apply label smoothing
         target = target * (1 - self.smoothing) + 0.5 * self.smoothing
         # Calculate BCE

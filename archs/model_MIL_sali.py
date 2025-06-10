@@ -35,7 +35,7 @@ class Embeddingmodel(nn.Module):
         
         self.saliency_layer = nn.Sequential(
             nn.Conv2d(pooled_size, num_classes, (1,1), bias = True),
-            nn.Sigmoid()
+            #nn.Sigmoid() # removed sigmoid for stabilization 
         )
         self.pool_patches = 3
         

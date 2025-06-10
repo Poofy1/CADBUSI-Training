@@ -74,7 +74,6 @@ class Embeddingmodel(nn.Module):
             nn.ReLU(inplace=True),
             nn.Dropout(dropout_rate),  # Add dropout after the first ReLU
             nn.Linear(512, num_classes),
-            nn.Sigmoid()
         )
         
         # Initialize the momentum encoder and projector
@@ -161,10 +160,10 @@ class Embeddingmodel(nn.Module):
         if projector:
             proj_q = self.projector_q(feat_q)
             proj_q = F.normalize(proj_q, dim=1)
-            
+            instance_predictions_sig = torch.sigmoid(instance_predictions)
             
             # 1. Calculate IWSCL loss using current queue state
-            iwscl_loss, pseudo_labels = self.iwscl(proj_q, instance_predictions, true_label, 
+            iwscl_loss, pseudo_labels = self.iwscl(proj_q, instance_predictions_sig, true_label, 
                                                   self.queue, self.queue_labels, val_on)
             
             if im_k is not None and not val_on:
@@ -183,13 +182,13 @@ class Embeddingmodel(nn.Module):
                     known_mask = true_label != -1
                     
                     # Initialize labels with classifier predictions
-                    enqueue_labels = instance_predictions.argmax(dim=1)
+                    enqueue_labels = instance_predictions_sig.argmax(dim=1)
                     
                     # Replace known labels with ground truth
                     enqueue_labels[known_mask] = true_label[known_mask]
                 else:
                     # If no true_label is provided, use classifier predictions for all
-                    enqueue_labels = instance_predictions.argmax(dim=1)
+                    enqueue_labels = instance_predictions_sig.argmax(dim=1)
 
                 # Enqueue and dequeue
                 self._dequeue_and_enqueue(proj_k, enqueue_labels)
