@@ -45,9 +45,6 @@ class Embeddingmodel(nn.Module):
         
         if self.is_efficientnet:
             base_encoder = get_efficientnet_model(arch, pretrained_arch) 
-            #nf = get_num_features(self.encoder)
-            # not sure which one to use right now
-            
             self.encoder = nn.Sequential(
                 base_encoder,
                 nn.AdaptiveAvgPool2d((1, 1)),
@@ -97,6 +94,6 @@ class Embeddingmodel(nn.Module):
         if pred_on:
             del all_images
         
-        return bag_pred, instance_pred, feat
+        return bag_pred.cuda(), instance_pred, feat
 
 
