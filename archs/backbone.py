@@ -14,34 +14,6 @@ def create_timm_body(arch:str, pretrained=False, cut=None, n_in=3):
     if isinstance(cut, int): return nn.Sequential(*list(model.children())[:cut])
     elif callable(cut): return cut(model)
     else: raise NameError("cut must be either integer or function")
-    
-    
-    
-def get_num_features(model):
-    # Keep track of the last Conv2d layer found
-    last_conv_channels = None
-    
-    def recursive_search(layer):
-        nonlocal last_conv_channels
-        
-        if isinstance(layer, nn.Conv2d):
-            last_conv_channels = layer.out_channels
-        
-        # Continue searching through children
-        for child in layer.children():
-            recursive_search(child)
-        
-        return last_conv_channels
-
-    # Start the recursive search from the model
-    nf = recursive_search(model)
-    
-    if nf is None:
-        raise ValueError("No Conv2d layer found in the feature extractor!")
-    
-    print("Output channels (nf) via layer inspection:", nf)
-    return nf
-    
 
 class _Hook:
     def __init__(self, module):
@@ -223,19 +195,6 @@ class EfficientNetPooled(nn.Module):
 
 
 
-def create_pooled_efficientnet(model, n_in=3, num_hooks=3):
-
-    # Now create a body that registers hooks on the last num_hooks modules.
-    body = EfficientNetPooled(model, num_hooks=num_hooks, upsample_to='largest')
-    
-    # Determine the channel count of the concatenated (pooled) features using a dummy forward.
-    dummy = torch.zeros(1, n_in, 224, 224)
-    with torch.no_grad():
-        _, multi_pooled = body(dummy)
-    pooled_feat_size = multi_pooled.shape[1]
-    return body, pooled_feat_size
-
-
 
 def get_efficientnet_model(arch, pretrained_arch):
     # Mapping of EfficientNet model names to their corresponding torchvision functions
@@ -278,3 +237,18 @@ def get_efficientnet_model(arch, pretrained_arch):
     
     
     return model_features
+
+
+def create_pooled_efficientnet(arch, pretrained_arch, n_in=3, num_hooks=3):
+
+    encoder = get_efficientnet_model(arch, pretrained_arch) 
+
+    # Now create a body that registers hooks on the last num_hooks modules.
+    body = EfficientNetPooled(encoder, num_hooks=num_hooks, upsample_to='largest')
+    
+    # Determine the channel count of the concatenated (pooled) features using a dummy forward.
+    dummy = torch.zeros(1, n_in, 224, 224)
+    with torch.no_grad():
+        _, multi_pooled = body(dummy)
+    pooled_feat_size = multi_pooled.shape[1]
+    return body, pooled_feat_size

@@ -13,13 +13,11 @@ class Embeddingmodel(nn.Module):
         self.is_efficientnet = "efficientnet" in arch.lower()
         
         if self.is_efficientnet:
-            model = get_efficientnet_model(arch, pretrained_arch) 
-            self.nf = get_num_features(model)
-            self.encoder, pooled_size = create_pooled_efficientnet(model)
-                        
+            self.encoder, pooled_size = create_pooled_efficientnet(arch, pretrained_arch) 
+            self.nf = num_features_model(nn.Sequential(*self.encoder.children()))        
         else:
-            #self.encoder, pooled_size = create_pooled_resnet(arch, pretrained=pretrained_arch)
-            self.encoder, pooled_size = create_pooled_convnext(arch, pretrained=pretrained_arch)
+            self.encoder, pooled_size = create_pooled_resnet(arch, pretrained=pretrained_arch)
+            #self.encoder, pooled_size = create_pooled_convnext(arch, pretrained=pretrained_arch)
             self.nf = num_features_model(nn.Sequential(*self.encoder.children()))
 
 
@@ -76,20 +74,17 @@ class Embeddingmodel(nn.Module):
         selected_area = map_flatten.topk(self.pool_patches, dim=2)[0]
         instance_predictions = selected_area.mean(dim=2).squeeze()  # Calculate the mean of the selected patches for instance predictions
 
-        bag_pred = None
-        bag_instance_predictions = None
+        bag_pred = torch.empty(num_bags, self.num_classes, device=feats.device)
         if pred_on:
             # Split the embeddings back into per-bag embeddings
             h_per_bag = torch.split(feats, split_sizes, dim=0)
             y_hat_per_bag = torch.split(instance_predictions, split_sizes, dim=0)
             bag_pred = torch.empty(num_bags, self.num_classes)
-            bag_instance_predictions = []
             for i, (h, y_h) in enumerate(zip(h_per_bag, y_hat_per_bag)):
                 # Pass both h and y_hat to the aggregator
                 y_h = y_h.view(-1, 1)
-                yhat_bag, yhat_ins = self.aggregator(h, y_h)
+                yhat_bag = self.aggregator(h, y_h)
                 bag_pred[i] = yhat_bag
-                bag_instance_predictions.append(yhat_ins) 
         
         proj = None
         if projector:
@@ -99,4 +94,4 @@ class Embeddingmodel(nn.Module):
             proj = saliency_maps
             
 
-        return bag_pred, saliency_maps, instance_predictions.squeeze(), proj
+        return bag_pred.cuda(), instance_predictions.squeeze(), proj
