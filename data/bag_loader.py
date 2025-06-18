@@ -1,10 +1,9 @@
 from fastai.vision.all import *
 import torch.utils.data as TUD
-from torch.utils.data.distributed import DistributedSampler
 from storage_adapter import * 
 
 class BagOfImagesDataset(TUD.Dataset):
-    def __init__(self, bags_dict, transform=None, save_processed=False):
+    def __init__(self, bags_dict, transform=None, save_processed=False, subset=None):
         """# Create a new dictionary using Accession_Number as keys
         self.original_ids = list(bags_dict.keys())
         self.bags_dict = {
@@ -12,9 +11,23 @@ class BagOfImagesDataset(TUD.Dataset):
             for id in self.original_ids}""" # this will break pseudo-labels
         
         self.bags_dict = bags_dict
-        self.unique_bag_ids = list(self.bags_dict.keys())
         self.save_processed = save_processed
-        self.transform = transform
+        self.transform = transform 
+        all_bag_ids = list(self.bags_dict.keys())
+        
+        # Handle subset selection
+        if subset is None:
+            self.unique_bag_ids = all_bag_ids
+        else:
+            # Create a local random state for consistency
+            rng = np.random.RandomState(42)
+            
+            if isinstance(subset, float) and 0 < subset <= 1:
+                # Percentage of the data
+                subset_size = int(len(all_bag_ids) * subset)
+                self.unique_bag_ids = rng.choice(all_bag_ids, size=subset_size, replace=False).tolist()
+            else:
+                raise ValueError("subset must be None or a float between 0 and 1")
         
         # Pre-process bag labels at initialization
         self.bag_labels = {

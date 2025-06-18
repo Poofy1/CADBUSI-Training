@@ -8,7 +8,7 @@ from config import train_transform, val_transform
 
 class Instance_Dataset(TUD.Dataset):
     def __init__(self, bags_dict, selection_mask, transform=None, warmup=True, use_bag_labels=False,
-                 dual_output=False, only_negative=False, max_positive=None):
+                 dual_output=False, only_negative=False, max_positive=None, subset=None):
         self.transform = transform
         self.warmup = warmup
         self.dual_output = dual_output
@@ -16,6 +16,22 @@ class Instance_Dataset(TUD.Dataset):
         self.max_positive = max_positive
         self.use_bag_labels = use_bag_labels
 
+        # Handle subset selection - filter bags_dict first
+        if subset is None:
+            filtered_bags_dict = bags_dict
+        else:
+            # Create a local random state for consistency
+            rng = np.random.RandomState(42)
+            
+            if isinstance(subset, float) and 0 < subset <= 1:
+                # Percentage of the data
+                all_bag_ids = list(bags_dict.keys())
+                subset_size = int(len(all_bag_ids) * subset)
+                selected_bag_ids = rng.choice(all_bag_ids, size=subset_size, replace=False).tolist()
+                filtered_bags_dict = {bag_id: bags_dict[bag_id] for bag_id in selected_bag_ids}
+            else:
+                raise ValueError("subset must be None or a float between 0 and 1")
+            
         self.images = []
         self.output_image_labels = []
         self.unique_ids = []
@@ -23,7 +39,7 @@ class Instance_Dataset(TUD.Dataset):
         # Keep track of positive instances
         temp_positive_data = []
         
-        for bag_id, bag_info in bags_dict.items():
+        for bag_id, bag_info in filtered_bags_dict.items():
             images = bag_info['images'].copy()  # Create copies to avoid modifying original
             image_labels = bag_info['image_labels'].copy()
             videos = bag_info['videos']
