@@ -283,8 +283,8 @@ def prepare_all_data(config):
     
     
     # Create bag datasets
-    bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False)
-    bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform)
+    bag_dataset_train = BagOfImagesDataset(bags_train, transform=train_transform, save_processed=False, subset=config["data_subset_ratio"])
+    bag_dataset_val = BagOfImagesDataset(bags_val, transform=val_transform, subset=config["data_subset_ratio"])
     train_sampler = BalancedBagSampler(bag_dataset_train, batch_size=config['bag_batch_size'])
     val_sampler = BalancedBagSampler(bag_dataset_val, batch_size=config['bag_batch_size'])
     #train_sampler = DistributedBalancedBagSampler(bag_dataset_train, config['bag_batch_size'])

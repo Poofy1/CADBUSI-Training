@@ -11,8 +11,8 @@ class UnifiedAttentionAggregator(nn.Module):
         self.num_classes = num_classes
         
         # Select Aggregator
-        #self.aggregator = Attention_Prediction_Aggregator(nf, num_classes) # Includes seperate instance classifier 
-        self.aggregator = Attention_Feature_Classifier(nf, num_classes)
+        self.aggregator = Attention_Prediction_Aggregator(nf, num_classes) # Includes seperate instance classifier 
+        #self.aggregator = Attention_Feature_Classifier(nf, num_classes)
         #self.aggregator = DSMIL(nf, num_classes)
         self.has_ins_classifier = hasattr(self.aggregator, 'ins_classifier')
     
@@ -28,7 +28,7 @@ class UnifiedAttentionAggregator(nn.Module):
                 y_hat_per_bag = torch.split(instance_predictions, split_sizes, dim=0)
                 for i, (h, y_h) in enumerate(zip(h_per_bag, y_hat_per_bag)):
                     bag_pred[i] = self.aggregator(h, y_h)
-            return bag_pred, instance_predictions
+            return bag_pred, instance_predictions.squeeze()
         else:
             # feature classifier logic
             for i, h in enumerate(h_per_bag):

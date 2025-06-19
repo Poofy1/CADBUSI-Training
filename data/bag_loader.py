@@ -22,7 +22,7 @@ class BagOfImagesDataset(TUD.Dataset):
             # Create a local random state for consistency
             rng = np.random.RandomState(42)
             
-            if isinstance(subset, float) and 0 < subset <= 1:
+            if isinstance(subset, (int, float)) and 0 < subset <= 1.0:
                 # Percentage of the data
                 subset_size = int(len(all_bag_ids) * subset)
                 self.unique_bag_ids = rng.choice(all_bag_ids, size=subset_size, replace=False).tolist()

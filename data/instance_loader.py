@@ -23,7 +23,7 @@ class Instance_Dataset(TUD.Dataset):
             # Create a local random state for consistency
             rng = np.random.RandomState(42)
             
-            if isinstance(subset, float) and 0 < subset <= 1:
+            if isinstance(subset, (int, float)) and 0 < subset <= 1.0:
                 # Percentage of the data
                 all_bag_ids = list(bags_dict.keys())
                 subset_size = int(len(all_bag_ids) * subset)
@@ -152,6 +152,7 @@ class Instance_Dataset(TUD.Dataset):
             return (image_data_q, image_data_k), instance_label, unique_id
         else:
             image_data = self.transform(img)
+            
             return image_data, instance_label, unique_id
 
 
@@ -168,12 +169,14 @@ def get_instance_loaders(bags_train, bags_val, state, config, warmup=True, dual_
                                               use_bag_labels=config['use_bag_labels'],
                                               dual_output=dual_output,
                                               only_negative=only_negative,
-                                              max_positive=max_positive)
+                                              max_positive=max_positive,
+                                              subset=config["data_subset_ratio"])
     instance_dataset_val = Instance_Dataset(bags_val, [], transform=val_transform, warmup=True,
                                             use_bag_labels=config['use_bag_labels'],
                                             dual_output=dual_output,
                                             only_negative=only_negative,
-                                            max_positive=max_positive)
+                                            max_positive=max_positive,
+                                            subset=config["data_subset_ratio"])
     train_sampler = InstanceSampler(instance_dataset_train, config['instance_batch_size'], strategy=1)
     val_sampler = InstanceSampler(instance_dataset_val, config['instance_batch_size'], seed=1)
     
