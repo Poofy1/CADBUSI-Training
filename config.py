@@ -85,8 +85,9 @@ class DogDataConfig(BaseConfig):
 
 ####### MODEL CONFIG #######
 
-head_name = "TEST_RESET_7"
+head_name = "TEST_RESET_8"
 model_version = '1'
+data_subset_ratio = 1 # 1.0 uses 100% of the data
 data_config_class = FishDataConfig # FishDataConfig / LesionDataConfig / DogDataConfig
 bucket = "" # optional - enables GCP
 export_location = "D:/DATA/CASBUSI/exports/"
@@ -128,6 +129,7 @@ def build_config():
     config = {
         "head_name": head_name,
         "model_version": model_version,
+        "data_subset_ratio": data_subset_ratio,
         **its2clr_config,
         **data_config,
         **path_config,
