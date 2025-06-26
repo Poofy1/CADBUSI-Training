@@ -42,11 +42,12 @@ if __name__ == '__main__':
     loss_func = nn.BCEWithLogitsLoss()
 
     ops = {}
-    ops['bag_optimizer'] = optim.SGD(model.parameters(),
+    ops['bag_optimizer'] = optim.Adam(model.parameters(),
                         lr=config['learning_rate'],
-                        momentum=0.9,
-                        nesterov=True,
+                        betas=(0.9, 0.999),
+                        eps=1e-8,
                         weight_decay=0.001)
+
 
     # MODEL INIT
     model, ops, state = setup_model(model, config, ops)
@@ -73,7 +74,7 @@ if __name__ == '__main__':
             ops['bag_optimizer'].zero_grad()
             
             bag_pred, _, _ = model(all_images, pred_on=True)
-
+                
             loss = loss_func(bag_pred, bag_labels)
             
             loss.backward()
@@ -141,6 +142,7 @@ if __name__ == '__main__':
         
         target_folder = state['head_folder']
         target_name = state['pretrained_name']
+        state['epoch'] += 1
         
         # Save the model
         if val_loss < state['val_loss_bag']:

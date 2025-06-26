@@ -145,6 +145,9 @@ def setup_model(model, config, optimizers=None):
     model_name = config['model_version']
     pretrained_name = f"{config['head_name']}"
     
+    encoder_model_name = config['encoder_model_version']
+    encoder_pretrained_name = f"{config['encoder_head_name']}"
+    
     head_folder = os.path.join(parent_dir, "models", pretrained_name)
     head_path = os.path.join(head_folder, f"model.pth")
 
@@ -184,6 +187,60 @@ def setup_model(model, config, optimizers=None):
                 print(f"Loaded optimizer state for {name}")
         return optimizers
     
+    def load_encoder_weights(model, encoder_model_path):
+        """Load only encoder weights from a pretrained model, ignoring aggregator and projector"""
+        if os.path.exists(encoder_model_path):
+            print(f"Loading encoder weights from {encoder_model_path}")
+            pretrained_state_dict = torch.load(encoder_model_path)
+            
+            # Get current model's state dict to compare parameter shapes
+            current_state_dict = model.state_dict()
+            
+            print(f"Total parameters in pretrained model: {len(pretrained_state_dict)}")
+            print(f"Total parameters in current model: {len(current_state_dict)}")
+            
+            
+            # Filter to only encoder-related parameters
+            encoder_weights = {}
+            skipped_params = []
+            loaded_params = []
+            
+            for key, value in pretrained_state_dict.items():
+                # Only load parameters that start with 'encoder.' 
+                if key.startswith('encoder.'):
+                    
+                    # Check if this parameter exists in current model and has matching shape
+                    if key in current_state_dict:
+                        if current_state_dict[key].shape == value.shape:
+                            encoder_weights[key] = value
+                            loaded_params.append(key)
+                        else:
+                            skipped_params.append(f"{key} (shape mismatch: {current_state_dict[key].shape} vs {value.shape})")
+                    else:
+                        skipped_params.append(f"{key} (not found in current model)")
+            
+            # Load only the compatible encoder weights
+            if encoder_weights:
+                model.load_state_dict(encoder_weights, strict=False)
+                
+                # Calculate total parameters (not just parameter tensors)
+                total_params = sum(p.numel() for p in encoder_weights.values())
+                print(f"\nSuccessfully loaded {len(encoder_weights)} parameter tensors")
+                print(f"Total encoder parameters loaded: {total_params:,}")
+                
+
+                if skipped_params:
+                    print(f"\nSkipped {len(skipped_params)} incompatible parameters:")
+                    for param in skipped_params[:5]:
+                        print(f"  ✗ {param}")
+                    if len(skipped_params) > 5:
+                        print(f"  ... and {len(skipped_params) - 5} more")
+            else:
+                print("Warning: No compatible encoder parameters found to load")
+                
+        else:
+            print(f"Warning: Encoder model path {encoder_model_path} does not exist")
+        
     if os.path.exists(model_path):
         print(f"Loaded pre-existing model from {model_name}")
         model = load_model(model, model_path)
@@ -215,7 +272,12 @@ def setup_model(model, config, optimizers=None):
         save_config(config, head_folder)
         save_model_architecture(model, head_folder)
         
-    
+    # Load encoder weights from different pretrained model if specified
+    if encoder_pretrained_name and encoder_pretrained_name.strip():
+        encoder_folder = os.path.join(parent_dir, "models", encoder_pretrained_name, encoder_model_name)
+        encoder_model_path = os.path.join(encoder_folder, "model.pth")
+        load_encoder_weights(model, encoder_model_path)
+        
     return model, optimizers, state
 
 

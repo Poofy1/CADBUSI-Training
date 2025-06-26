@@ -18,10 +18,9 @@ def create_selection_mask(train_bag_logits, include_ratio):
                            the top 50% most confident predictions.
 
     Returns:
-    dict: A dictionary where keys are bag IDs and values are lists containing two elements:
-          1. A numpy array mask where 1 indicates selected instances, 0 indicates
-             unselected instances, and -1 indicates instances not considered for selection.
-          2. A list of the original probabilities for each instance.
+    dict: Dictionary where values contain:
+          1. Pseudo-label array: 1 (positive), 0 (negative), -1 (unlabeled/not selected)
+          2. Original probabilities
 
     Note: The function assumes that probabilities closer to 0 or 1 indicate higher confidence,
           while probabilities closer to 0.5 indicate lower confidence.

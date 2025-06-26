@@ -7,13 +7,13 @@ from storage_adapter import *
 from config import train_transform, val_transform
 
 class Instance_Dataset(TUD.Dataset):
-    def __init__(self, bags_dict, selection_mask, transform=None, warmup=True, use_bag_labels=False,
-                 dual_output=False, only_negative=False, max_positive=None, subset=None):
+    def __init__(self, bags_dict, pseudo_dict, transform=None, only_known=True, only_pseudo = False, use_bag_labels=False,
+                 dual_output=False, only_negative=False, subset=None):
         self.transform = transform
-        self.warmup = warmup
+        self.only_known = only_known
+        self.only_pseudo = only_pseudo
         self.dual_output = dual_output
         self.only_negative = only_negative
-        self.max_positive = max_positive
         self.use_bag_labels = use_bag_labels
 
         # Handle subset selection - filter bags_dict first
@@ -34,10 +34,8 @@ class Instance_Dataset(TUD.Dataset):
             
         self.images = []
         self.output_image_labels = []
+        self.output_pseudo_labels = []
         self.unique_ids = []
-        
-        # Keep track of positive instances
-        temp_positive_data = []
         
         for bag_id, bag_info in filtered_bags_dict.items():
             images = bag_info['images'].copy()  # Create copies to avoid modifying original
@@ -46,7 +44,7 @@ class Instance_Dataset(TUD.Dataset):
             bag_label = bag_info['bag_labels'][0]
             accession_number = bag_info['Accession_Number']
             
-             #Debug prints
+            #Debug prints
             """print(f"\nBag {bag_id}:")
             print(f"Number of images: {len(images)}")
             print(f"Number of videos: {len(videos)}")
@@ -54,14 +52,15 @@ class Instance_Dataset(TUD.Dataset):
             """
 
             # Extend images and labels with videos
-            if not warmup: # do not include video data in warmup (more noise)
+            if not self.only_known: # do not include video data in warmup (more noise)
                 images.extend(videos)
                 image_labels.extend([[None]] * len(videos))  # Add empty labels for videos
             
+            # ID
             acc_number_key = accession_number.item() if isinstance(accession_number, torch.Tensor) else accession_number
-            
-            if bag_id in selection_mask:
-                selection_mask_labels, _ = selection_mask[bag_id]
+
+            if bag_id in pseudo_dict:
+                selection_mask_labels, _ = pseudo_dict[bag_id]
                 #print(f"Selection mask size for bag {bag_id}: {len(selection_mask_labels)}")
             else: 
                 selection_mask_labels = None
@@ -73,9 +72,11 @@ class Instance_Dataset(TUD.Dataset):
             # Process all instances (images + videos)
             for idx, (img, labels) in enumerate(zip(images, image_labels)):
                 image_label = None
+                pseudo_label = None
                 is_video = idx >= len(bag_info['images'])  # Check if this is a video frame
+                unique_id = f"{acc_number_key}_{idx}_{'vid' if is_video else 'img'}"
                 
-            
+                # true labels
                 if self.only_negative:
                     if labels[0] is not None and labels[0] == 0:
                         image_label = 0
@@ -85,59 +86,50 @@ class Instance_Dataset(TUD.Dataset):
                 elif self.use_bag_labels:   
                     image_label = bag_label    
                     
-                elif self.warmup:
+                elif self.only_known:
                     if labels[0] is not None:
                         image_label = labels[0]
                     elif bag_label == 0:
                         image_label = 0
-                    elif selection_mask_labels is not None and selection_mask_labels[idx] != -1:
-                        image_label = selection_mask_labels[idx]
                         
                 else:
                     if labels[0] is not None:
                         image_label = labels[0]
                     elif bag_label == 0:
                         image_label = 0
-                    elif selection_mask_labels is not None and selection_mask_labels[idx] != -1:
-                        image_label = selection_mask_labels[idx]
                     else:
-                        image_label = -1
+                        image_label = -1 # unknown
                 
-                if image_label is not None:
-                    unique_id = f"{acc_number_key}_{idx}_{'vid' if is_video else 'img'}"
-
-                    if image_label == 1 and self.max_positive is not None and not is_video:
-                        # Store positive instances temporarily (only for images)
-                        temp_positive_data.append((img, image_label, unique_id))
-                    else:
-                        # Add instances directly
-                        self.images.append(img)
-                        self.output_image_labels.append(image_label)
-                        self.unique_ids.append(unique_id)
+                # pseudo labels
+                if selection_mask_labels is not None and selection_mask_labels[idx] != -1:
+                    pseudo_label = selection_mask_labels[idx] 
                         
-        # Handle positive instances with cap
-        if self.max_positive is not None and temp_positive_data:
-            random.shuffle(temp_positive_data)
-            selected_positive = temp_positive_data[:self.max_positive]
-            
-            for img, label, unique_id in selected_positive:
-                self.images.append(img)
-                self.output_image_labels.append(label)
-                self.unique_ids.append(unique_id)
-            
-            print(f"Selected {len(selected_positive)} positive instances out of {len(temp_positive_data)} total positive instances")
-
+                # if label exists
+                use_instance = False
+                if self.only_known:
+                    if image_label is not None:
+                        use_instance = True
+                elif self.only_pseudo:
+                    if pseudo_label is not None:
+                        use_instance = True
+                else:
+                    use_instance = True
+                        
+                if use_instance:
+                    self.images.append(img)
+                    self.output_image_labels.append(-1 if image_label is None else image_label)
+                    self.output_pseudo_labels.append(-1 if pseudo_label is None else pseudo_label)
+                    self.unique_ids.append(unique_id)
+                        
         print(f"Dataset created with {len(self.images)} instances")
         if self.only_negative:
             print("Dataset contains only negative (label 0) instances")
-        if self.max_positive is not None:
-            positive_count = sum(1 for label in self.output_image_labels if label == 1)
-            print(f"Dataset contains {positive_count} positive instances (capped at {self.max_positive})")
 
-        
+
     def __getitem__(self, index):
         img_path = self.images[index]
         instance_label = self.output_image_labels[index]
+        pseudo_label = self.output_pseudo_labels[index]
         unique_id = self.unique_ids[index]
         
         """img = read_image(img_path, local_override=True)
@@ -149,37 +141,40 @@ class Instance_Dataset(TUD.Dataset):
         if self.dual_output:
             image_data_q = self.transform(img)
             image_data_k = self.transform(img)
-            return (image_data_q, image_data_k), instance_label, unique_id
+            return (image_data_q, image_data_k), instance_label, pseudo_label, unique_id
         else:
             image_data = self.transform(img)
             
-            return image_data, instance_label, unique_id
+            return image_data, instance_label, pseudo_label, unique_id
 
 
     def __len__(self):
         return len(self.images)
     
     
-def get_instance_loaders(bags_train, bags_val, state, config, warmup=True, dual_output=False, only_negative=False, max_positive=None):
+def get_instance_loaders(bags_train, bags_val, state, config, only_known=False, only_pseudo = False, use_bag_labels=False, dual_output=False, only_negative=False):
+    
+    pseudo_labels = state['selection_mask'].copy()
     if not config['use_pseudo_labels']:
-        state['selection_mask'] = []
+        pseudo_labels = []
     
     # Used the instance predictions from bag training to update the Instance Dataloader
-    instance_dataset_train = Instance_Dataset(bags_train, state['selection_mask'], transform=train_transform, warmup=warmup, 
-                                              use_bag_labels=config['use_bag_labels'],
+    instance_dataset_train = Instance_Dataset(bags_train, pseudo_labels, transform=train_transform, only_known=only_known, 
+                                              only_pseudo = only_pseudo,
+                                              use_bag_labels=use_bag_labels,
                                               dual_output=dual_output,
                                               only_negative=only_negative,
-                                              max_positive=max_positive,
                                               subset=config["data_subset_ratio"])
-    instance_dataset_val = Instance_Dataset(bags_val, [], transform=val_transform, warmup=True,
-                                            use_bag_labels=config['use_bag_labels'],
+    instance_dataset_val = Instance_Dataset(bags_val, [], transform=val_transform, only_known=only_known,
+                                            only_pseudo = only_pseudo,
+                                            use_bag_labels=use_bag_labels,
                                             dual_output=dual_output,
                                             only_negative=only_negative,
-                                            max_positive=max_positive,
                                             subset=config["data_subset_ratio"])
     train_sampler = InstanceSampler(instance_dataset_train, config['instance_batch_size'], strategy=1)
     val_sampler = InstanceSampler(instance_dataset_val, config['instance_batch_size'], seed=1)
-    
+
+
     if platform.system() == 'Windows': #Windows works better on its own
         instance_dataloader_train = TUD.DataLoader(instance_dataset_train, batch_sampler=train_sampler, collate_fn = collate_instance)
     else:
@@ -194,34 +189,40 @@ def collate_instance(batch):
     if isinstance(batch[0][0], tuple):  # Check if it's dual output
         batch_data_q = []
         batch_data_k = []
-        batch_labels = []
+        batch_instance_labels = []
+        batch_pseudo_labels = []
         batch_ids = []
 
-        for (image_data_q, image_data_k), bag_label, unique_id in batch:
+        for (image_data_q, image_data_k), instance_label, pseudo_label, unique_id in batch:
             batch_data_q.append(image_data_q)
             batch_data_k.append(image_data_k)
-            batch_labels.append(bag_label)
+            batch_instance_labels.append(instance_label)
+            batch_pseudo_labels.append(pseudo_label)
             batch_ids.append(unique_id)
 
         batch_data_q = torch.stack(batch_data_q)
         batch_data_k = torch.stack(batch_data_k)
-        batch_labels = torch.tensor(batch_labels, dtype=torch.float)
+        batch_instance_labels = torch.tensor(batch_instance_labels, dtype=torch.float)
+        batch_pseudo_labels = torch.tensor(batch_pseudo_labels, dtype=torch.float)
 
-        return (batch_data_q, batch_data_k), batch_labels, batch_ids
+        return (batch_data_q, batch_data_k), batch_instance_labels, batch_pseudo_labels, batch_ids
     else:
         batch_data = []
-        batch_labels = []
+        batch_instance_labels = []
+        batch_pseudo_labels = []
         batch_ids = []
 
-        for image_data, bag_label, unique_id in batch:
+        for image_data, instance_label, pseudo_label, unique_id in batch:
             batch_data.append(image_data)
-            batch_labels.append(bag_label)
+            batch_instance_labels.append(instance_label)
+            batch_pseudo_labels.append(pseudo_label)
             batch_ids.append(unique_id)
 
         batch_data = torch.stack(batch_data)
-        batch_labels = torch.tensor(batch_labels, dtype=torch.float)
+        batch_instance_labels = torch.tensor(batch_instance_labels, dtype=torch.float)
+        batch_pseudo_labels = torch.tensor(batch_pseudo_labels, dtype=torch.float)
 
-        return batch_data, batch_labels, batch_ids
+        return batch_data, batch_instance_labels, batch_pseudo_labels, batch_ids
 
 
 class InstanceSampler(Sampler):
@@ -243,6 +244,9 @@ class InstanceSampler(Sampler):
         self.total_samples = self.samples_per_class * 2  # multiply by 2 for pos and neg
         self.total_batches = self.total_samples // self.batch_size
         
+        if len(self.indices_non_positive) < self.samples_per_class:
+            print(f"Warning: Not enough non-positive samples. Requested {self.samples_per_class} but only have {len(self.indices_non_positive)} available.")
+        
         """print("Sampler statistics:")
         print(f"Number of positive samples: {len(self.indices_positive)}")
         print(f"Number of negative samples: {len(self.indices_negative)}")
@@ -258,7 +262,6 @@ class InstanceSampler(Sampler):
         # Randomly sample from non-positive class to match the number of positive samples
         # Safely sample from non-positive class
         if len(self.indices_non_positive) < self.samples_per_class:
-            print(f"Warning: Not enough non-positive samples. Requested {self.samples_per_class} but only have {len(self.indices_non_positive)} available.")
             selected_non_positive = self.indices_non_positive
         else:
             selected_non_positive = random.sample(self.indices_non_positive, self.samples_per_class)
