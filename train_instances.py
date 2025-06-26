@@ -66,7 +66,7 @@ if __name__ == '__main__':
         
         instance_dataloader_train, instance_dataloader_val = get_instance_loaders(bags_train, bags_val, 
                                                                                       state, config, 
-                                                                                      warmup=True)
+                                                                                      only_known=True)
 
         
         if state['warmup']:
@@ -88,7 +88,7 @@ if __name__ == '__main__':
             train_pred = PredictionTracker()
             
             # Iterate over the training data
-            for idx, (images, instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
+            for idx, (images, instance_labels, pseudo_labels, unique_id) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
                 images = images.cuda(non_blocking=True)
                 instance_labels = instance_labels.cuda(non_blocking=True)
 
@@ -155,7 +155,7 @@ if __name__ == '__main__':
             val_pred = PredictionTracker()
 
             with torch.no_grad():
-                for idx, (images, instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_val, total=len(instance_dataloader_val))):
+                for idx, (images, instance_labels, pseudo_labels, unique_id) in enumerate(tqdm(instance_dataloader_val, total=len(instance_dataloader_val))):
                     images = images.cuda(non_blocking=True)
                     instance_labels = instance_labels.cuda(non_blocking=True)
 

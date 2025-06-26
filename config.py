@@ -13,15 +13,14 @@ class BaseConfig:
 
 class ITS2CLRConfig(BaseConfig):
     def __init__(self):
-        self.feature_extractor_train_count = 5
-        self.MIL_train_count = 8
-        self.initial_ratio = 0.2
+        self.feature_extractor_train_count = 25
+        self.MIL_train_count = 10
+        self.initial_ratio = 0.1
         self.final_ratio = .9
         self.total_epochs = 100
-        self.warmup_epochs = 1#15
+        self.warmup_epochs = 15 
         self.learning_rate = 0.001
-        self.use_pseudo_labels = False  # Whether or not the instance loader will incorperate instance sudo labels
-        self.use_bag_labels = False    # Instance labels = Bag label
+        self.use_pseudo_labels = True  # Whether or not the instance loader will incorperate instance sudo labels
         self.reset_aggregator = False
 
 
@@ -29,6 +28,7 @@ class ITS2CLRConfig(BaseConfig):
 
 ####### DATASETS #######
 """ Common models
+efficientnet_b0   - images 224
 efficientnet_b3   - images 300
 efficientnet_v2_s   - images 384
 convnextv2_tiny   - images 224
@@ -40,14 +40,14 @@ class LesionDataConfig(BaseConfig):
         self.dataset_name = 'export_oneLesions' #export_12_12_2024_17_35_49' 'export_oneLesions'
         self.label_columns = ['Has_Malignant']
         self.instance_columns = ['Malignant Lesion Present']
-        self.img_size = 300 #224
+        self.img_size = 224 #224
         self.bag_batch_size = 5
         self.min_bag_size = 2
         self.max_bag_size = 50
         self.instance_batch_size = 32 # Should be higher for contrasitive learning 
-        self.encoder = 'efficientnet_b3'
+        self.encoder = 'resnet18'
         self.arch = "model_MIL"
-        self.pretrained_arch = False
+        self.pretrained_arch = False 
         self.use_videos = False
 
 class FishDataConfig(BaseConfig):
@@ -85,13 +85,15 @@ class DogDataConfig(BaseConfig):
 
 ####### MODEL CONFIG #######
 
-head_name = "TEST_RESET_8"
-model_version = '1'
+head_name = "TEST_RESET_10"
+model_version = "1"
 data_subset_ratio = 1 # 1.0 uses 100% of the data
 data_config_class = FishDataConfig # FishDataConfig / LesionDataConfig / DogDataConfig
 bucket = "" # optional - enables GCP
 export_location = "D:/DATA/CASBUSI/exports/"
 
+encoder_head_name = "TEST_RESET_9"
+encoder_model_version = ""
         
 ####### Augmentations #######
         
@@ -130,6 +132,8 @@ def build_config():
         "head_name": head_name,
         "model_version": model_version,
         "data_subset_ratio": data_subset_ratio,
+        "encoder_head_name": encoder_head_name,
+        "encoder_model_version": encoder_model_version,
         **its2clr_config,
         **data_config,
         **path_config,

@@ -69,9 +69,78 @@ class Attention_Prediction_Aggregator(nn.Module):
         Y_prob = torch.mm(A, instance_pred)  # ATTENTION_BRANCHESxC
 
         return Y_prob
+
+"""
+class Attention_Prediction_Aggregator(nn.Module):
+    def __init__(self, nf, num_classes=1, L=256):
+        super(Attention_Prediction_Aggregator, self).__init__()
+
+        # Use LayerNorm instead of BatchNorm1d
+        self.input_norm = nn.LayerNorm(nf)
+
+        # Feature transformation before attention
+        self.feature_transform = nn.Sequential(
+            nn.Linear(nf, nf),
+            #nn.LayerNorm(nf),
+            nn.ReLU(),
+            #nn.Dropout(0.25),
+            #nn.Linear(nf, nf),  # New layer
+            #nn.LayerNorm(nf),
+            #nn.ReLU(),
+            #nn.Dropout(0.25)
+        )
+        
+        # Attention mechanism components
+        self.attention_V = nn.Sequential(
+            nn.Linear(nf, L),
+            #nn.LayerNorm(L),
+            nn.Tanh()
+        )
+        self.attention_U = nn.Sequential(
+            nn.Linear(nf, L),
+            #nn.LayerNorm(L),
+            nn.Sigmoid()
+        )
+        self.attention_W = nn.Sequential(
+            nn.Linear(L, 1)
+        )
+        
+        self.ins_classifier = nn.Sequential( # Called externally
+            nn.Linear(nf, 256),
+            #nn.LayerNorm(256),
+            nn.ReLU(inplace=True),
+            #nn.Dropout(0.25),
+            nn.Linear(256, num_classes),
+        )
+        
+    def reset_parameters(self):
+        # Reset the parameters of all the submodules in the Linear_Classifier
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                module.reset_parameters()
+            elif isinstance(module, nn.LayerNorm):
+                module.reset_parameters()
+        
+    def forward(self, x, instance_pred):
+        
+        # Normalize input features
+        x = self.input_norm(x)
+        
+        # Transform features
+        x = self.feature_transform(x)
+        
+        A_V = self.attention_V(x)  # KxL
+        A_U = self.attention_U(x)  # KxL
+        instance_scores = self.attention_W(A_V * A_U)  # element wise multiplication
+        A = torch.transpose(instance_scores, 1, 0)  # ATTENTION_BRANCHESxK
+        A = F.softmax(A, dim=1)  # softmax over K
+        # Aggregate instance-level predictions
+        Y_prob = torch.mm(A, instance_pred)  # ATTENTION_BRANCHESxC
+
+        return Y_prob
     
 
-
+"""
 
 class Attention_Feature_Classifier(nn.Module):
     def __init__(self, nf, num_classes=1, L=256):

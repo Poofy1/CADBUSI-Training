@@ -8,7 +8,8 @@ import torch.optim as optim
 from data.format_data import *
 from data.pseudo_labels import *
 from data.instance_loader import *
-from loss.palm import PALM
+from loss.SupCon import SupConLoss
+from loss.SimCLR import SimCLRLoss
 from util.eval_util import *
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -19,6 +20,7 @@ import torch.multiprocessing as mp
 mp.set_sharing_strategy('file_system')
 import gc
 
+
 if __name__ == '__main__':
     
     config = build_config()
@@ -26,6 +28,8 @@ if __name__ == '__main__':
     model = build_model(config)    
     
     # LOSS INIT
+    supCon_pos = SupConLoss(pair_mode = 1)
+    supCon_neg = SupConLoss(pair_mode = 2)
     BCE_loss = nn.BCEWithLogitsLoss()
     
     ops = {}
@@ -35,36 +39,44 @@ if __name__ == '__main__':
                         nesterov=True,
                         weight_decay=0.001)
     
-    ops['bag_optimizer'] = optim.SGD(model.parameters(),
+    ops['bag_optimizer'] = optim.Adam(model.parameters(),
                         lr=config['learning_rate'],
-                        momentum=0.9,
-                        nesterov=True,
+                        betas=(0.9, 0.999),
+                        eps=1e-8,
                         weight_decay=0.001)
 
     # MODEL INIT
     model, ops, state = setup_model(model, config, ops)
     scaler = GradScaler('cuda')
     
-    
     # Training loop
     while state['epoch'] < config['total_epochs']:
         
         
-        if not state['pickup_warmup']: # Are we resuming from a head model?
+        if True:#not state['pickup_warmup']: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
-            instance_dataloader_train, instance_dataloader_val = get_instance_loaders(bags_train, bags_val, 
-                                                                                      state, config, 
-                                                                                      warmup=True)
+            
             
             if state['warmup']:
                 target_count = config['warmup_epochs']
+                instance_dataloader_train, instance_dataloader_val = get_instance_loaders(bags_train, bags_val, 
+                                                                                      state, config, 
+                                                                                      use_bag_labels=True, dual_output = True)
             else:
                 target_count = config['feature_extractor_train_count']
+                instance_dataloader_train, _ = get_instance_loaders(bags_train, bags_val, 
+                                                                                      state, config, 
+                                                                                      only_pseudo=True, dual_output = True
+                                                                                      #only_known=True, dual_output = True
+                                                                                      )
+                _, instance_dataloader_val = get_instance_loaders(bags_train, bags_val, 
+                                                                                      state, config, 
+                                                                                      #only_pseudo=True, dual_output = True
+                                                                                      only_known=True, dual_output = True
+                                                                                      )
+                
             
-            
-            
-
             print('Training Feature Extractor')
             print(f'Warmup Mode: {state["warmup"]}')
             
@@ -77,40 +89,46 @@ if __name__ == '__main__':
                 model.train()
                 
                 # Iterate over the training data
-                for idx, (images, instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
-                    images = images.cuda(non_blocking=True)
+                for idx, (images, instance_labels, pseudo_labels, unique_id) in enumerate(tqdm(instance_dataloader_train, total=len(instance_dataloader_train))):
+                    bsz = instance_labels.shape[0]
+                    im_q, im_k = images
+                    im_q = im_q.cuda(non_blocking=True)
+                    im_k = im_k.cuda(non_blocking=True)
                     instance_labels = instance_labels.cuda(non_blocking=True)
-    
+                    images = [im_q, im_k]
+                    images = torch.cat(images, dim=0).cuda()
+                    
                     # forward
                     ops['inst_optimizer'].zero_grad()
-                    with autocast('cuda'):
-                        _, instance_predictions, features = model(images, projector=False)
 
-                    # Calculate BCE loss
-                    bce_loss_value = BCE_loss(instance_predictions, instance_labels.float())
+                    with autocast('cuda'):
+                        _, instance_predictions, features = model(images, projector=True)
+
+                    zk, zq = torch.split(features, [bsz, bsz], dim=0)
+                    features_for_supcon = torch.stack([zk, zq], dim=1)
+                    
+                    # Calculate loss
+                    if state["warmup"]: # in warmup train on bag labels
+                        loss_neg = supCon_neg(features_for_supcon, instance_labels.float(), instance_labels.float())
+                        total_loss = loss_neg
+                    else: # after warmup train on bag labels and pseudo labels
+                        loss_neg = supCon_neg(features_for_supcon, pseudo_labels, instance_labels.float())
+                        loss_pos = supCon_pos(features_for_supcon, pseudo_labels, instance_labels.float())
+                        total_loss = loss_neg + loss_pos
+                        
+                    #total_loss = contrastive_loss(features_for_supcon, instance_labels.float())
 
                     # Backward pass and optimization step
-                    total_loss = bce_loss_value
                     scaler.scale(total_loss).backward()
                     scaler.step(ops['inst_optimizer'])
                     scaler.update()
         
                     # Update the loss meter
-                    losses.update(total_loss.item(), images[0].size(0))
-                    
-                    # Get predictions from PALM
-                    with torch.no_grad():
-                        instance_predicted_classes = (instance_predictions) > 0
-
-                        # Calculate accuracy for instance predictions
-                        instance_correct = (instance_predicted_classes == instance_labels).sum().item()
-                        instance_total_correct += instance_correct
-                        
-                        total_samples += instance_labels.size(0)
+                    losses.update(total_loss.item(), bsz)
                         
                     # Store raw predictions and targets
-                    train_pred.update(instance_predictions, instance_labels, unique_id)
-                    
+                    #train_pred.update(instance_predictions, instance_labels, unique_id)
+                    total_samples += instance_labels.size(0)
                     
                     # Clean up
                     torch.cuda.empty_cache()
@@ -128,30 +146,37 @@ if __name__ == '__main__':
                 val_pred = PredictionTracker()
 
                 with torch.no_grad():
-                    for idx, (images, instance_labels, unique_id) in enumerate(tqdm(instance_dataloader_val, total=len(instance_dataloader_val))):
-                        images = images.cuda(non_blocking=True)
+                    for idx, (images, instance_labels, pseudo_labels, unique_id) in enumerate(tqdm(instance_dataloader_val, total=len(instance_dataloader_val))):
+                        bsz = instance_labels.shape[0]
+                        im_q, im_k = images
+                        im_q = im_q.cuda(non_blocking=True)
+                        im_k = im_k.cuda(non_blocking=True)
                         instance_labels = instance_labels.cuda(non_blocking=True)
+                        images = [im_q, im_k]
+                        images = torch.cat(images, dim=0).cuda()
 
                         # Forward pass
                         with autocast('cuda'):
-                            _, instance_predictions, features = model(images, projector=False)
+                            _, instance_predictions, features = model(images, projector=True)
                         
-                        # Get loss
-                        bce_loss_value = BCE_loss(instance_predictions, instance_labels.float())
-                        total_loss = bce_loss_value
-                        val_losses.update(total_loss.item(), images[0].size(0))
+                        zk, zq = torch.split(features, [bsz, bsz], dim=0)
+                        features_for_supcon = torch.stack([zk, zq], dim=1)
+                        
+                        # Calculate loss
+                        if state["warmup"]: # in warmup train on bag labels
+                            loss_neg = supCon_neg(features_for_supcon, instance_labels.float(), instance_labels.float())
+                            total_loss = loss_neg
+                        else: # after warmup train on bag labels and pseudo labels
+                            loss_neg = supCon_neg(features_for_supcon, pseudo_labels, instance_labels.float())
+                            loss_pos = supCon_pos(features_for_supcon, pseudo_labels, instance_labels.float())
+                            total_loss = loss_neg + loss_pos
+                            
+                        #total_loss = contrastive_loss(features_for_supcon, instance_labels.float())
 
-                        # Get predictions
-                        instance_predicted_classes = (instance_predictions) > 0
-                        
-                        # Calculate accuracy for instance predictions
-                        instance_correct = (instance_predicted_classes == instance_labels).sum().item()
-                        instance_total_correct += instance_correct
-                        
-                        total_samples += instance_labels.size(0)
-                        
                         # Store raw predictions and targets
-                        val_pred.update(instance_predictions, instance_labels, unique_id)
+                        #val_pred.update(instance_predictions, instance_labels, unique_id)
+                        val_losses.update(total_loss.item(), bsz)
+                        total_samples += instance_labels.size(0)
                         
                         # Clean up
                         torch.cuda.empty_cache()
@@ -159,8 +184,8 @@ if __name__ == '__main__':
                 # Calculate accuracies
                 instance_val_acc = instance_total_correct / total_samples
                 
-                print(f'[{iteration+1}/{target_count}] Train Loss: {losses.avg:.5f}, Train FC Acc: {instance_train_acc:.5f}')
-                print(f'[{iteration+1}/{target_count}] Val Loss:   {val_losses.avg:.5f}, Val FC Acc: {instance_val_acc:.5f}')
+                print(f'[{iteration+1}/{target_count}] Train Loss: {losses.avg:.5f}')
+                print(f'[{iteration+1}/{target_count}] Val Loss:   {val_losses.avg:.5f}')
                 
                 # Save the model
                 if val_losses.avg < state['val_loss_instance']:
@@ -172,7 +197,7 @@ if __name__ == '__main__':
                     else:
                         target_folder = state['model_folder']
                     
-                    save_metrics(config, state, train_pred, val_pred)
+                    #save_metrics(config, state, train_pred, val_pred)
                     
                     if state['warmup']:
                         save_state(state, config, instance_train_acc, val_losses.avg, instance_val_acc, model, ops)
@@ -192,9 +217,13 @@ if __name__ == '__main__':
         
             
         print('\nTraining Bag Aggregator')
+        
+        # RESET MIL PARAMS
+        model.reset_aggregator_parameters()
+        
         for iteration in range(config['MIL_train_count']):
             model.train()
-            train_bag_logits = {}
+            bag_logits = {}
             total_loss = 0.0
             total_acc = 0
             total = 0
@@ -232,7 +261,7 @@ if __name__ == '__main__':
                 #instance_pred = torch.cat(instance_pred, dim=0)
                 y_hat_per_bag = torch.split(torch.sigmoid(instance_pred), split_sizes, dim=0)
                 for i, y_h in enumerate(y_hat_per_bag):
-                    train_bag_logits[unique_id[i].item()] = y_h.detach().cpu().numpy()
+                    bag_logits[unique_id[i].item()] = y_h.detach().cpu().numpy()
                 
                 bag_loss = BCE_loss(bag_pred, yb)
                 scaler.scale(bag_loss).backward()
@@ -294,7 +323,7 @@ if __name__ == '__main__':
                         
                     # Forward pass
                     with autocast('cuda'):
-                        bag_pred, _, _ = model(images, pred_on=True)
+                        bag_pred, instance_pred, _ = model(images, pred_on=True)
                         bag_pred = bag_pred.cuda()
 
                     # Calculate bag-level loss
@@ -308,6 +337,18 @@ if __name__ == '__main__':
                     # Store raw predictions and targets
                     val_pred.update(bag_pred, yb, unique_id)
                     
+                    # Split the embeddings back into per-bag embeddings
+                    split_sizes = []
+                    for bag in images:
+                        # Remove padded images (assuming padding is represented as zero tensors)
+                        valid_images = bag[~(bag == 0).all(dim=1).all(dim=1).all(dim=1)] # Shape: [valid_images, 224, 224, 3]
+                        split_sizes.append(valid_images.size(0))
+
+                    #instance_pred = torch.cat(instance_pred, dim=0)
+                    y_hat_per_bag = torch.split(torch.sigmoid(instance_pred), split_sizes, dim=0)
+                    for i, y_h in enumerate(y_hat_per_bag):
+                        bag_logits[unique_id[i].item()] = y_h.detach().cpu().numpy()
+                    
                     # Clean up
                     torch.cuda.empty_cache()
                         
@@ -317,7 +358,9 @@ if __name__ == '__main__':
         
             state['train_losses'].append(train_loss)
             state['valid_losses'].append(val_loss)    
+            state['epoch'] += 1
             
+            print(f"Epoch {state['epoch'] + 1}")
             print(f"[{iteration+1}/{config['MIL_train_count']}] | Acc | Loss")
             print(f"Train | {train_acc:.4f} | {train_loss:.4f}")
             print(f"Val | {val_acc:.4f} | {val_loss:.4f}")
@@ -337,11 +380,11 @@ if __name__ == '__main__':
                 print("Saved checkpoint due to improved val_loss_bag")
 
                 
-                state['epoch'] += 1
+                
                 
                 # Create selection mask
                 predictions_ratio = prediction_anchor_scheduler(state['epoch'], config)
-                state['selection_mask'] = create_selection_mask(train_bag_logits, predictions_ratio)
+                state['selection_mask'] = create_selection_mask(bag_logits, predictions_ratio)
                 print("Created new sudo labels")
                 
                 # Save selection

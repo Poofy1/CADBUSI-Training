@@ -15,6 +15,16 @@ class UnifiedAttentionAggregator(nn.Module):
         #self.aggregator = Attention_Feature_Classifier(nf, num_classes)
         #self.aggregator = DSMIL(nf, num_classes)
         self.has_ins_classifier = hasattr(self.aggregator, 'ins_classifier')
+        
+    def reset_parameters(self):
+        """Reset parameters of the underlying aggregator"""
+        if hasattr(self.aggregator, 'reset_parameters'):
+            self.aggregator.reset_parameters()
+        else:
+            # Fallback for aggregators without reset_parameters method
+            for module in self.aggregator.modules():
+                if isinstance(module, nn.Linear):
+                    module.reset_parameters()
     
     def forward(self, feats, split_sizes, pred_on=True):
         num_bags = len(split_sizes)
@@ -70,6 +80,9 @@ class Embeddingmodel(nn.Module):
         self.adaptive_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         print(f'Feature Map Size: {nf}')
 
+    def reset_aggregator_parameters(self):
+        self.aggregator.reset_parameters()
+        
     def forward(self, bags, projector=False, pred_on = False):
         
         # Calculate the embeddings for all images in one go
