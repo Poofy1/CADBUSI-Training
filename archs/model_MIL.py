@@ -11,9 +11,9 @@ class UnifiedAttentionAggregator(nn.Module):
         self.num_classes = num_classes
         
         # Select Aggregator
-        self.aggregator = Attention_Prediction_Aggregator(nf, num_classes) # Includes seperate instance classifier 
+        #self.aggregator = Attention_Prediction_Aggregator(nf, num_classes) # Includes seperate instance classifier 
         #self.aggregator = Attention_Feature_Classifier(nf, num_classes)
-        #self.aggregator = DSMIL(nf, num_classes)
+        self.aggregator = DSMIL(nf, num_classes)
         self.has_ins_classifier = hasattr(self.aggregator, 'ins_classifier')
         
     def reset_parameters(self):
@@ -24,6 +24,14 @@ class UnifiedAttentionAggregator(nn.Module):
             # Fallback for aggregators without reset_parameters method
             for module in self.aggregator.modules():
                 if isinstance(module, nn.Linear):
+                    module.reset_parameters()
+                elif isinstance(module, nn.LayerNorm):
+                    module.reset_parameters()
+                elif isinstance(module, (nn.Conv1d, nn.Conv2d, nn.Conv3d)):
+                    module.reset_parameters()
+                elif isinstance(module, nn.BatchNorm1d):
+                    module.reset_parameters()
+                elif isinstance(module, nn.BatchNorm2d):
                     module.reset_parameters()
     
     def forward(self, feats, split_sizes, pred_on=True):
