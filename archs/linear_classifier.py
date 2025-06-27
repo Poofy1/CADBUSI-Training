@@ -46,12 +46,6 @@ class Attention_Prediction_Aggregator(nn.Module):
             nn.Linear(256, num_classes),
         )
         
-    def reset_parameters(self):
-        # Reset the parameters of all the submodules in the Linear_Classifier
-        for module in self.modules():
-            if isinstance(module, nn.Linear):
-                module.reset_parameters()
-        
     def forward(self, x, instance_pred):
         
         # Normalize input features
@@ -113,13 +107,6 @@ class Attention_Prediction_Aggregator(nn.Module):
             nn.Linear(256, num_classes),
         )
         
-    def reset_parameters(self):
-        # Reset the parameters of all the submodules in the Linear_Classifier
-        for module in self.modules():
-            if isinstance(module, nn.Linear):
-                module.reset_parameters()
-            elif isinstance(module, nn.LayerNorm):
-                module.reset_parameters()
         
     def forward(self, x, instance_pred):
         

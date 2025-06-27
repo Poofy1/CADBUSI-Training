@@ -103,6 +103,8 @@ class Instance_Dataset(TUD.Dataset):
                 # pseudo labels
                 if selection_mask_labels is not None and selection_mask_labels[idx] != -1:
                     pseudo_label = selection_mask_labels[idx] 
+                if image_label != -1:
+                    pseudo_label = image_label
                         
                 # if label exists
                 use_instance = False
