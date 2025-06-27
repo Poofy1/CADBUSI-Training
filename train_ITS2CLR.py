@@ -53,7 +53,7 @@ if __name__ == '__main__':
     while state['epoch'] < config['total_epochs']:
         
         
-        if True:#not state['pickup_warmup']: # Are we resuming from a head model?
+        if not state['pickup_warmup']: # Are we resuming from a head model?
         
             # Used the instance predictions from bag training to update the Instance Dataloader
             
