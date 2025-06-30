@@ -10,6 +10,7 @@ from data.pseudo_labels import *
 from data.instance_loader import *
 from loss.SupCon import SupConLoss
 from loss.SimCLR import SimCLRLoss
+from loss.max_pooling import *
 from util.eval_util import *
 torch.backends.cudnn.benchmark = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -233,22 +234,22 @@ if __name__ == '__main__':
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-            for batch_idx, (images, yb, instance_labels, unique_id) in enumerate(tqdm(bag_dataloader_train, total=len(bag_dataloader_train))):
+            for batch_idx, (images, bag_labels, instance_labels, unique_id) in enumerate(tqdm(bag_dataloader_train, total=len(bag_dataloader_train))):
                 num_bags = len(images)
                 ops['bag_optimizer'].zero_grad()
-                #images, yb = images.cuda(), yb.cuda()
+                #images, bag_labels = images.cuda(), bag_labels.cuda()
 
                 if not isinstance(images, list):
                     # If images is a padded tensor
-                    images, yb = images.cuda(), yb.cuda()
+                    images, bag_labels = images.cuda(), bag_labels.cuda()
                 else:
                     # If images is a list of tensors
                     images = [img.cuda() for img in images]
-                    yb = yb.cuda()
+                    bag_labels = bag_labels.cuda()
         
                 # Forward pass
                 with autocast('cuda'):
-                    bag_pred, instance_pred, _ = model(images, pred_on=True)
+                    bag_pred, instance_predictions, _ = model(images, pred_on=True)
                     bag_pred = bag_pred.cuda()
     
                 # Split the embeddings back into per-bag embeddings
@@ -259,22 +260,26 @@ if __name__ == '__main__':
                     split_sizes.append(valid_images.size(0))
 
                 #instance_pred = torch.cat(instance_pred, dim=0)
-                y_hat_per_bag = torch.split(torch.sigmoid(instance_pred), split_sizes, dim=0)
+                y_hat_per_bag = torch.split(torch.sigmoid(instance_predictions), split_sizes, dim=0)
                 for i, y_h in enumerate(y_hat_per_bag):
                     bag_logits[unique_id[i].item()] = y_h.detach().cpu().numpy()
                 
-                bag_loss = BCE_loss(bag_pred, yb)
-                scaler.scale(bag_loss).backward()
+
+                max_pool_loss = mil_max_loss(instance_predictions, bag_labels, split_sizes)
+                bag_loss = BCE_loss(bag_pred, bag_labels)
+                loss = bag_loss + max_pool_loss * .1
+            
+                scaler.scale(loss).backward()
                 scaler.step(ops['bag_optimizer'])
                 scaler.update()
                 
-                total_loss += bag_loss.item() * yb.size(0)
+                total_loss += loss.item() * bag_labels.size(0)
                 predicted = (bag_pred > 0).float()
-                total += yb.size(0)
-                correct += (predicted == yb).sum().item()
+                total += bag_labels.size(0)
+                correct += (predicted == bag_labels).sum().item()
                 
                 # Store raw predictions and targets
-                train_pred.update(bag_pred, yb, unique_id)
+                train_pred.update(bag_pred, bag_labels, unique_id)
                 
                 
                 ### It seems that GCP requires this cleanup?
@@ -288,7 +293,7 @@ if __name__ == '__main__':
                     images.detach()
                     del images
 
-                del instance_pred
+                del instance_predictions
                 del y_hat_per_bag
                 del bag_pred
 
@@ -311,31 +316,33 @@ if __name__ == '__main__':
             val_pred = PredictionTracker()
 
             with torch.no_grad():
-                for (images, yb, instance_labels, unique_id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
+                for (images, bag_labels, instance_labels, unique_id) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
                     if not isinstance(images, list):
                         # If images is a padded tensor
-                        images, yb = images.cuda(), yb.cuda()
+                        images, bag_labels = images.cuda(), bag_labels.cuda()
                     else:
                         # If images is a list of tensors
                         images = [img.cuda() for img in images]
-                        yb = yb.cuda()
+                        bag_labels = bag_labels.cuda()
                         
                         
                     # Forward pass
                     with autocast('cuda'):
-                        bag_pred, instance_pred, _ = model(images, pred_on=True)
+                        bag_pred, instance_predictions, _ = model(images, pred_on=True)
                         bag_pred = bag_pred.cuda()
 
                     # Calculate bag-level loss
-                    loss = BCE_loss(bag_pred, yb)
-                    total_val_loss += loss.item() * yb.size(0)
+                    max_pool_loss = mil_max_loss(instance_predictions, bag_labels, split_sizes)
+                    bag_loss = BCE_loss(bag_pred, bag_labels)
+                    loss = bag_loss + max_pool_loss * .1
+                    total_val_loss += loss.item() * bag_labels.size(0)
 
                     predicted = (bag_pred > 0).float()
-                    total += yb.size(0)
-                    correct += (predicted == yb).sum().item()
+                    total += bag_labels.size(0)
+                    correct += (predicted == bag_labels).sum().item()
 
                     # Store raw predictions and targets
-                    val_pred.update(bag_pred, yb, unique_id)
+                    val_pred.update(bag_pred, bag_labels, unique_id)
                     
                     # Split the embeddings back into per-bag embeddings
                     split_sizes = []
@@ -345,7 +352,7 @@ if __name__ == '__main__':
                         split_sizes.append(valid_images.size(0))
 
                     #instance_pred = torch.cat(instance_pred, dim=0)
-                    y_hat_per_bag = torch.split(torch.sigmoid(instance_pred), split_sizes, dim=0)
+                    y_hat_per_bag = torch.split(torch.sigmoid(instance_predictions), split_sizes, dim=0)
                     for i, y_h in enumerate(y_hat_per_bag):
                         bag_logits[unique_id[i].item()] = y_h.detach().cpu().numpy()
                     

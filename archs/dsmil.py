@@ -3,14 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-class FCLayer(nn.Module):
-    def __init__(self, in_size, out_size=1):
-        super(FCLayer, self).__init__()
-        self.fc = nn.Sequential(nn.Linear(in_size, out_size))
-    def forward(self, feats):
-        x = self.fc(feats)
-        return feats, x
-
 class IClassifier(nn.Module):
     def __init__(self, feature_size, output_class):
         super(IClassifier, self).__init__()    

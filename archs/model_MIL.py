@@ -11,9 +11,9 @@ class UnifiedAttentionAggregator(nn.Module):
         self.num_classes = num_classes
         
         # Select Aggregator
-        self.aggregator = Attention_Prediction_Aggregator(nf, num_classes) # Includes seperate instance classifier 
+        #self.aggregator = Attention_Prediction_Aggregator(nf, num_classes) # Includes seperate instance classifier 
         #self.aggregator = Attention_Feature_Classifier(nf, num_classes)
-        #self.aggregator = DSMIL(nf, num_classes)
+        self.aggregator = DSMIL(nf, num_classes)
         self.has_ins_classifier = hasattr(self.aggregator, 'ins_classifier')
         
     def reset_parameters(self):
@@ -98,7 +98,7 @@ class Embeddingmodel(nn.Module):
             split_sizes = [bags.size(0)]
             
         feat = self.encoder(all_images)
-        
+
         # Get bag pred
         bag_pred, instance_pred = self.aggregator(feat, split_sizes, pred_on=pred_on)
             
