@@ -14,7 +14,7 @@ class BaseConfig:
 class ITS2CLRConfig(BaseConfig):
     def __init__(self):
         self.feature_extractor_train_count = 25
-        self.MIL_train_count = 10
+        self.MIL_train_count = 100
         self.initial_ratio = 0.5
         self.final_ratio = .9
         self.total_epochs = 100
@@ -44,7 +44,7 @@ class LesionDataConfig(BaseConfig):
         self.bag_batch_size = 5
         self.min_bag_size = 2
         self.max_bag_size = 50
-        self.instance_batch_size = 32 # Should be higher for contrasitive learning 
+        self.instance_batch_size = 128
         self.encoder = 'resnet18'
         self.arch = "model_MIL"
         self.pretrained_arch = False 
@@ -59,7 +59,7 @@ class FishDataConfig(BaseConfig):
         self.bag_batch_size = 5
         self.min_bag_size = 2
         self.max_bag_size = 25
-        self.instance_batch_size = 32
+        self.instance_batch_size = 128
         self.encoder = 'resnet18'
         self.arch = "model_MIL"
         self.pretrained_arch = True
@@ -74,10 +74,10 @@ class DogDataConfig(BaseConfig):
         self.bag_batch_size = 5
         self.min_bag_size = 2
         self.max_bag_size = 25
-        self.instance_batch_size = 32
+        self.instance_batch_size = 128
         self.encoder = 'resnet18'
         self.arch = "model_MIL"
-        self.pretrained_arch = False
+        self.pretrained_arch = True
         self.use_videos = False
 
 
@@ -85,10 +85,10 @@ class DogDataConfig(BaseConfig):
 
 ####### MODEL CONFIG #######
 
-head_name = "TEST_RESET_11"
+head_name = "TEST_RESET_18"
 model_version = "1"
 data_subset_ratio = 1 # 1.0 uses 100% of the data
-data_config_class = FishDataConfig # FishDataConfig / LesionDataConfig / DogDataConfig
+data_config_class = DogDataConfig # FishDataConfig / LesionDataConfig / DogDataConfig
 bucket = "" # optional - enables GCP
 export_location = "D:/DATA/CASBUSI/exports/"
 

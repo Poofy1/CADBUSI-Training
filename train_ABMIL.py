@@ -11,7 +11,7 @@ from data.format_data import *
 from data.pseudo_labels import *
 from data.bag_loader import *
 from data.instance_loader import *
-from loss.FocalLoss import *
+from loss.max_pooling import *
 from util.eval_util import *
 from config import *
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
@@ -70,12 +70,15 @@ if __name__ == '__main__':
         for (all_images, bag_labels, instance_labels, bag_ids) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)): 
             bag_labels = bag_labels.cuda()
             all_images = [img.cuda() for img in all_images]
-
+            split_sizes = [bag.size(0) for bag in all_images]
+            
             ops['bag_optimizer'].zero_grad()
             
-            bag_pred, _, _ = model(all_images, pred_on=True)
-                
-            loss = loss_func(bag_pred, bag_labels)
+            bag_pred, instance_predictions, _ = model(all_images, pred_on=True)
+            
+            max_pool_loss = mil_max_loss(instance_predictions, bag_labels, split_sizes)
+            bag_loss = loss_func(bag_pred, bag_labels)
+            loss = bag_loss + max_pool_loss * .1
             
             loss.backward()
             ops['bag_optimizer'].step()
@@ -106,10 +109,13 @@ if __name__ == '__main__':
             for (all_images, bag_labels, instance_labels, bag_ids) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
                 bag_labels = bag_labels.cuda()
                 all_images = [img.cuda() for img in all_images]
+                split_sizes = [bag.size(0) for bag in all_images]
                 
-                bag_pred, _, _ = model(all_images, pred_on=True)
-
-                loss = loss_func(bag_pred, bag_labels)
+                bag_pred, instance_predictions, _ = model(all_images, pred_on=True)
+                
+                max_pool_loss = mil_max_loss(instance_predictions, bag_labels, split_sizes)
+                bag_loss = loss_func(bag_pred, bag_labels)
+                loss = bag_loss + max_pool_loss * .1
                 
                 total_val_loss += loss.item() * len(all_images)
                 predicted = (bag_pred > 0).float()
