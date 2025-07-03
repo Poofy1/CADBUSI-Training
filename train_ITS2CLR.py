@@ -238,6 +238,7 @@ if __name__ == '__main__':
                 num_bags = len(images)
                 ops['bag_optimizer'].zero_grad()
                 #images, bag_labels = images.cuda(), bag_labels.cuda()
+                split_sizes = [bag.size(0) for bag in images]
 
                 if not isinstance(images, list):
                     # If images is a padded tensor
@@ -252,17 +253,13 @@ if __name__ == '__main__':
                     bag_pred, instance_predictions, _ = model(images, pred_on=True)
                     bag_pred = bag_pred.cuda()
     
-                # Split the embeddings back into per-bag embeddings
-                split_sizes = []
-                for bag in images:
-                    # Remove padded images (assuming padding is represented as zero tensors)
-                    valid_images = bag[~(bag == 0).all(dim=1).all(dim=1).all(dim=1)] # Shape: [valid_images, 224, 224, 3]
-                    split_sizes.append(valid_images.size(0))
-
-                #instance_pred = torch.cat(instance_pred, dim=0)
+                # Store both instance predictions and bag labels
                 y_hat_per_bag = torch.split(torch.sigmoid(instance_predictions), split_sizes, dim=0)
                 for i, y_h in enumerate(y_hat_per_bag):
-                    bag_logits[unique_id[i].item()] = y_h.detach().cpu().numpy()
+                    bag_logits[unique_id[i].item()] = {
+                        'instance_predictions': y_h.detach().cpu().numpy(),
+                        'bag_label': bag_labels[i].detach().cpu().numpy()
+                    }
                 
 
                 max_pool_loss = mil_max_loss(instance_predictions, bag_labels, split_sizes)
@@ -324,18 +321,15 @@ if __name__ == '__main__':
                         # If images is a list of tensors
                         images = [img.cuda() for img in images]
                         bag_labels = bag_labels.cuda()
-                        
+                    
+                    split_sizes = [bag.size(0) for bag in images]
                         
                     # Forward pass
                     with autocast('cuda'):
                         bag_pred, instance_predictions, _ = model(images, pred_on=True)
                         bag_pred = bag_pred.cuda()
 
-                    # Calculate bag-level loss
-                    max_pool_loss = mil_max_loss(instance_predictions, bag_labels, split_sizes)
-                    bag_loss = BCE_loss(bag_pred, bag_labels)
-                    loss = bag_loss + max_pool_loss * .1
-                    total_val_loss += loss.item() * bag_labels.size(0)
+                    
 
                     predicted = (bag_pred > 0).float()
                     total += bag_labels.size(0)
@@ -344,17 +338,18 @@ if __name__ == '__main__':
                     # Store raw predictions and targets
                     val_pred.update(bag_pred, bag_labels, unique_id)
                     
-                    # Split the embeddings back into per-bag embeddings
-                    split_sizes = []
-                    for bag in images:
-                        # Remove padded images (assuming padding is represented as zero tensors)
-                        valid_images = bag[~(bag == 0).all(dim=1).all(dim=1).all(dim=1)] # Shape: [valid_images, 224, 224, 3]
-                        split_sizes.append(valid_images.size(0))
-
-                    #instance_pred = torch.cat(instance_pred, dim=0)
                     y_hat_per_bag = torch.split(torch.sigmoid(instance_predictions), split_sizes, dim=0)
                     for i, y_h in enumerate(y_hat_per_bag):
-                        bag_logits[unique_id[i].item()] = y_h.detach().cpu().numpy()
+                        bag_logits[unique_id[i].item()] = {
+                            'instance_predictions': y_h.detach().cpu().numpy(),
+                            'bag_label': bag_labels[i].detach().cpu().numpy()
+                        }
+                        
+                    # Calculate bag-level loss
+                    max_pool_loss = mil_max_loss(instance_predictions, bag_labels, split_sizes)
+                    bag_loss = BCE_loss(bag_pred, bag_labels)
+                    loss = bag_loss + max_pool_loss * .1
+                    total_val_loss += loss.item() * bag_labels.size(0)
                     
                     # Clean up
                     torch.cuda.empty_cache()

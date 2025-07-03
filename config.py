@@ -14,11 +14,11 @@ class BaseConfig:
 class ITS2CLRConfig(BaseConfig):
     def __init__(self):
         self.feature_extractor_train_count = 25
-        self.MIL_train_count = 100
-        self.initial_ratio = 0.5
-        self.final_ratio = .9
-        self.total_epochs = 100
-        self.warmup_epochs = 10 
+        self.MIL_train_count = 50
+        self.initial_ratio = 0.1
+        self.final_ratio = .5
+        self.total_epochs = 500
+        self.warmup_epochs = 0 
         self.learning_rate = 0.001
         self.use_pseudo_labels = True  # Whether or not the instance loader will incorperate instance sudo labels
         self.reset_aggregator = False
@@ -85,8 +85,8 @@ class DogDataConfig(BaseConfig):
 
 ####### MODEL CONFIG #######
 
-head_name = "TEST_RESET_18"
-model_version = "1"
+head_name = "TEST_Dog_1"
+model_version = ""
 data_subset_ratio = 1 # 1.0 uses 100% of the data
 data_config_class = DogDataConfig # FishDataConfig / LesionDataConfig / DogDataConfig
 bucket = "" # optional - enables GCP

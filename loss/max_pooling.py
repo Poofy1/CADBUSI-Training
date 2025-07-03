@@ -21,10 +21,13 @@ def mil_max_loss(instance_preds, bag_labels, split_sizes):
     bag_preds = torch.stack(bag_preds)
     
     # Handle shape mismatch for single bag case
-    bag_labels_flat = bag_labels.squeeze().float()
+    bag_labels_flat = bag_labels.squeeze()
     
     # Ensure both tensors have same number of dimensions
     if bag_labels_flat.dim() == 0:  # scalar
         bag_labels_flat = bag_labels_flat.unsqueeze(0)  # Make it [1]
+    
+    # FIX: Ensure both tensors have the same dtype
+    bag_labels_flat = bag_labels_flat.to(bag_preds.dtype)
     
     return F.binary_cross_entropy(bag_preds, bag_labels_flat)
