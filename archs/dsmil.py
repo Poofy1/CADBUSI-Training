@@ -3,6 +3,26 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
+
+"""class IClassifier(nn.Module):
+    def __init__(self, feature_size, output_class, dropout=0.3):
+        super(IClassifier, self).__init__()    
+        
+        self.classifier = nn.Sequential(
+            nn.Linear(feature_size, feature_size),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(feature_size, feature_size // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(feature_size // 2, output_class)
+        )
+        
+    def forward(self, feats):
+        c = self.classifier(feats.view(feats.shape[0], -1))
+        return c.squeeze(1) if c.shape[1] == 1 else c"""
+    
+    
 class IClassifier(nn.Module):
     def __init__(self, feature_size, output_class):
         super(IClassifier, self).__init__()    

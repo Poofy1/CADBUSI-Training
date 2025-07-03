@@ -64,6 +64,7 @@ if __name__ == '__main__':
         total_acc = 0
         total = 0
         correct = [0] * config['num_labels']
+        bag_logits = {}
         train_pred = PredictionTracker()
                 
                 
@@ -87,6 +88,15 @@ if __name__ == '__main__':
             predicted = (bag_pred > 0).float()
             total += len(bag_labels)
             
+
+            # Store both instance predictions and bag labels
+            y_hat_per_bag = torch.split(torch.sigmoid(instance_predictions), split_sizes, dim=0)
+            for i, y_h in enumerate(y_hat_per_bag):
+                bag_logits[bag_ids[i].item()] = {
+                    'instance_predictions': y_h.detach().cpu().numpy(),
+                    'bag_label': bag_labels[i].detach().cpu().numpy()
+                }
+                    
             for label_idx in range(config['num_labels']):
                 correct[label_idx] += (predicted[:, label_idx] == bag_labels[:, label_idx]).sum().item()
                 
@@ -121,6 +131,14 @@ if __name__ == '__main__':
                 predicted = (bag_pred > 0).float()
                 total += len(bag_labels)
                 
+                # Store both instance predictions and bag labels
+                y_hat_per_bag = torch.split(torch.sigmoid(instance_predictions), split_sizes, dim=0)
+                for i, y_h in enumerate(y_hat_per_bag):
+                    bag_logits[bag_ids[i].item()] = {
+                        'instance_predictions': y_h.detach().cpu().numpy(),
+                        'bag_label': bag_labels[i].detach().cpu().numpy()
+                    }
+                            
                 for label_idx in range(config['num_labels']):
                     correct[label_idx] += (predicted[:, label_idx] == bag_labels[:, label_idx]).sum().item()
                 
@@ -154,6 +172,14 @@ if __name__ == '__main__':
         if val_loss < state['val_loss_bag']:
             state['val_loss_bag'] = val_loss  # Update the best validation accuracy
             state['mode'] = 'bag'
+            
+            # Create selection mask
+            #predictions_ratio = prediction_anchor_scheduler(state['epoch'], config)
+            state['selection_mask'] = create_selection_mask(bag_logits, 1.0)
+            
+            # Save selection
+            with open(f'{target_folder}/selection_mask.pkl', 'wb') as file:
+                pickle.dump(state['selection_mask'], file)
 
             save_state(state, config, train_acc, val_loss, val_acc, model, ops,)
             save_metrics(config, state, train_pred, val_pred)
