@@ -19,7 +19,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 
 
-def create_bags(config, data, root_dir, instance_data=None):
+def create_bags(config, data, root_dir, image_size, instance_data=None, image_data=None):
     label_columns = config['label_columns']
     instance_columns = config['instance_columns']
     min_size = config['min_bag_size']
@@ -30,7 +30,54 @@ def create_bags(config, data, root_dir, instance_data=None):
     image_label_map = {}
     
     # Process instance data if provided
-    if instance_data is not None and instance_columns is not None:
+    if instance_data is not None and image_data is not None:
+        if isinstance(instance_data, pd.DataFrame):
+            
+            image_lookup = image_data.set_index('ImageName').to_dict('index')
+            
+            for i, (_, row) in enumerate(instance_data.iterrows()):
+                
+                image_name = row['ImageName']
+                
+                # Then in the loop:
+                if image_name not in image_lookup:
+                    continue
+                img_row = image_lookup[image_name]
+                crop_w = img_row['crop_w']
+                crop_h = img_row['crop_h']
+                
+                # Get PhysicalDeltaX
+                physical_delta_x = row['PhysicalDeltaX']
+                
+                # Calculate scaling factors
+                # 1. Crop scaling: how much the crop region represents relative to original
+                # crop_scale = min(crop_w / original_width, crop_h / original_height)
+                # We dont need crop region since the PhysicalDeltaX already represents the ultrasound image anyways - no streching accoring 
+
+                
+                # 2. Resize scaling: how the crop gets scaled to fit in the square training image
+                # The crop gets resized to fit within image_size x image_size while maintaining aspect ratio
+                resize_scale = image_size / max(crop_w, crop_h)
+                
+                # Final distance metric accounting for both transformations
+                final_distance = physical_delta_x * resize_scale
+                
+                #print(f'delta: {physical_delta_x} resize: {resize_scale} final: {final_distance}')
+                
+                # Process other labels
+                labels = []
+                for col in instance_columns:
+                    if col in instance_data.columns:
+                        label_value = row[col]
+                        labels.append(int(label_value) if isinstance(label_value, bool) else label_value)
+                
+                # Add the transformed distance metric to the labels
+                labels.append(final_distance)
+                
+                image_label_map[image_name] = labels
+    
+    # Process instance data without image_data (original code path)
+    elif instance_data is not None and instance_columns is not None:
         if isinstance(instance_data, pd.DataFrame):
             for _, row in instance_data.iterrows():
                 image_name = row['ImageName']
@@ -74,7 +121,7 @@ def create_bags(config, data, root_dir, instance_data=None):
         # Process regular images
         video_filenames = set(os.path.basename(f) for f in video_frames)
         for img_name in image_files:
-            labels = image_label_map.get(img_name, [None] * len(instance_columns)) if instance_columns else []
+            labels = image_label_map.get(img_name, [None] * (len(instance_columns) + (1 if image_data is not None else 0))) if instance_columns else []
             
             if not use_videos or os.path.basename(img_name) not in video_filenames:
                 full_path = os.path.join(root_dir, img_name)
@@ -106,8 +153,7 @@ def create_bags(config, data, root_dir, instance_data=None):
             'Accession_Number': row['Accession_Number']
         }
 
-    return bags_dict  # ID : {'bag_labels': [...], 'images': [...], 'image_labels': [...], 'videos': [...], 'Accession_Number': xxx}
-
+    return bags_dict
 
 
 
@@ -250,13 +296,18 @@ def prepare_all_data(config):
     
     print("Preprocessing Data...")
     data = read_csv(f'{export_location}/TrainData.csv')
-
-    instance_data_file = f'{export_location}/InstanceData.csv'
     
+    instance_data_file = f'{export_location}/InstanceData.csv'
     if file_exists(instance_data_file):
         instance_data = read_csv(instance_data_file)
     else:
         instance_data = None
+    
+    image_data_file = f'{export_location}/ImageData.csv'
+    if file_exists(image_data_file):
+        image_data = read_csv(image_data_file)
+    else:
+        image_data = None
        
     #Cropping images
     preprocess_and_save_images(config, data, export_location, cropped_images)
@@ -267,8 +318,8 @@ def prepare_all_data(config):
     train_data = data[data['Accession_Number'].isin(train_patient_ids)].reset_index(drop=True)
     val_data = data[data['Accession_Number'].isin(val_patient_ids)].reset_index(drop=True)
     
-    bags_train = create_bags(config, train_data, cropped_images, instance_data)
-    bags_val = create_bags(config, val_data, cropped_images, instance_data)
+    bags_train = create_bags(config, train_data, cropped_images, config['img_size'], instance_data, image_data)
+    bags_val = create_bags(config, val_data, cropped_images, config['img_size'], instance_data, image_data)
     
     #bags_train = upsample_minority_class(bags_train)  # Upsample the minority class in the training set
     
