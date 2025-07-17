@@ -51,11 +51,12 @@ class UnifiedAttentionAggregator(nn.Module):
             
 
 class Embeddingmodel(nn.Module):
-    def __init__(self, arch, pretrained_arch, num_classes=1, feat_dim=128):
+    def __init__(self, arch, pretrained_arch, num_classes=1, feat_dim=128, use_float_input=True):
         super(Embeddingmodel, self).__init__()
         
         # Get Head
         self.is_efficientnet = "efficientnet" in arch.lower()
+        self.use_float_input = use_float_input
         
         if self.is_efficientnet:
             base_encoder = get_efficientnet_model(arch, pretrained_arch) 
@@ -73,6 +74,10 @@ class Embeddingmodel(nn.Module):
                 nn.Flatten()
             )
             nf = num_features_model(nn.Sequential(*self.encoder.children()))
+        
+        # Add 1 to nf if using float input
+        if self.use_float_input:
+            nf += 1
             
         self.aggregator = UnifiedAttentionAggregator(nf=nf, num_classes=num_classes)
         
@@ -87,7 +92,7 @@ class Embeddingmodel(nn.Module):
     def reset_aggregator_parameters(self):
         self.aggregator.reset_parameters()
         
-    def forward(self, bags, projector=False, pred_on = False):
+    def forward(self, bags, float_input=None, projector=False, pred_on=False):
         
         # Calculate the embeddings for all images in one go
         if isinstance(bags, (list, tuple)):
@@ -98,6 +103,37 @@ class Embeddingmodel(nn.Module):
             split_sizes = [bags.size(0)]
             
         feat = self.encoder(all_images)
+        
+        # Add float input to features if provided
+        if self.use_float_input and float_input is not None:
+            batch_size = feat.size(0)
+            
+            if isinstance(float_input, list):
+                # Handle nested list structure (matching bags structure)
+                if isinstance(float_input[0], list):
+                    # Flatten the nested list and concatenate tensors
+                    all_float_tensors = []
+                    for bag_floats in float_input:
+                        for float_tensor in bag_floats:
+                            all_float_tensors.append(float_tensor)
+                    float_tensor = torch.cat(all_float_tensors, dim=0).cuda()
+                else:
+                    # Handle single-level list of tensors
+                    float_tensor = torch.cat(float_input, dim=0).cuda()
+                
+                # Reshape to match batch size
+                float_tensor = float_tensor.view(batch_size, -1)
+                
+            elif isinstance(float_input, torch.Tensor):
+                # Handle tensor input
+                float_tensor = float_input.view(-1, 1).expand(batch_size, -1)
+                
+            else:
+                # Handle single float/int value
+                float_tensor = torch.full((batch_size, 1), float_input, device=feat.device)
+            
+            # Concatenate float input to features
+            feat = torch.cat([feat, float_tensor], dim=1)
 
         # Get bag pred
         bag_pred, instance_pred = self.aggregator(feat, split_sizes, pred_on=pred_on)
@@ -112,5 +148,3 @@ class Embeddingmodel(nn.Module):
             del all_images
         
         return bag_pred.cuda(), instance_pred, feat
-
-
