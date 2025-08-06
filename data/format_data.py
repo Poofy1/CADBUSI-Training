@@ -18,6 +18,17 @@ import platform
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 
+def normalize_age(age, max_age=150.0):
+    """
+    Normalize age to [0, 1] range, with -1 for missing values
+    """
+    if pd.isna(age) or age is None:
+        return -1.0  # Clear "missing" signal
+    
+    # Scale to [0, 1] and clamp at 1.0
+    normalized = min(age / max_age, 1.0)
+    return normalized
+
 
 def create_bags(config, data, root_dir, image_size, instance_data=None, image_data=None):
     label_columns = config['label_columns']
@@ -32,22 +43,20 @@ def create_bags(config, data, root_dir, image_size, instance_data=None, image_da
     # Process instance data if provided
     if instance_data is not None and image_data is not None:
         if isinstance(instance_data, pd.DataFrame):
-            
-            image_lookup = image_data.set_index('ImageName').to_dict('index')
+        
             
             for i, (_, row) in enumerate(instance_data.iterrows()):
                 
                 image_name = row['ImageName']
-                
-                # Then in the loop:
-                if image_name not in image_lookup:
-                    continue
-                img_row = image_lookup[image_name]
-                crop_w = img_row['crop_w']
-                crop_h = img_row['crop_h']
-                
-                # Get PhysicalDeltaX
+                crop_w = row['image_w']
+                crop_h = row['image_h']
+                age = row['Age']
                 physical_delta_x = row['PhysicalDeltaX']
+                
+                # Safety check: ensure crop dimensions are valid
+                if crop_w <= 0 and crop_h <= 0:
+                    print(f"Warning: Invalid crop dimensions for {image_name}: w={crop_w}, h={crop_h}. Skipping.")
+                    continue
                 
                 # Calculate scaling factors
                 # 1. Crop scaling: how much the crop region represents relative to original
@@ -73,6 +82,7 @@ def create_bags(config, data, root_dir, image_size, instance_data=None, image_da
                 
                 # Add the transformed distance metric to the labels
                 labels.append(final_distance)
+                #labels.append(normalize_age(age))
                 
                 image_label_map[image_name] = labels
     
@@ -194,7 +204,7 @@ def process_single_image(img_path, root_dir, output_dir, resize_and_pad, video_n
     except Exception as e:
         print(f"Error processing image {img_path}: {e}")
 
-def preprocess_and_save_images(config, data, root_dir, output_dir, fill=0):
+def preprocess_and_save_images(config, data, root_dir, output_dir, fill=255):
     os.makedirs(output_dir, exist_ok=True)
 
     resize_and_pad = ResizeAndPad(config['img_size'], fill=fill)
