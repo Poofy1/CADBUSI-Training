@@ -100,7 +100,7 @@ encoder_model_version = ""
 train_transform = T.Compose([
             T.RandomHorizontalFlip(),
             T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0),
-            T.RandomAffine(degrees=(-90, 90), translate=(0.05, 0.05), scale=(1, 1.2),),
+            T.RandomAffine(degrees=(-45, 45), translate=(0.05, 0.05), fill=255.0), 
             CLAHETransform(),
             T.ToTensor(),
             T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])

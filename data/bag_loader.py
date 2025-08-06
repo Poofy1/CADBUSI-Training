@@ -1,5 +1,8 @@
 from fastai.vision.all import *
 import torch.utils.data as TUD
+import numpy as np
+import os
+import cv2
 from storage_adapter import * 
 
 class BagOfImagesDataset(TUD.Dataset):
@@ -47,6 +50,30 @@ class BagOfImagesDataset(TUD.Dataset):
             images = [self.transform(img) 
                      for img in images]
         
+        if self.save_processed:
+            for i, img in enumerate(images):
+                # Create directory if it doesn't exist
+                save_dir = f"processed_images/{actual_id}"
+                os.makedirs(save_dir, exist_ok=True)
+                
+                img_np = img.cpu().numpy()
+                if img_np.shape[0] == 3:  # RGB channels first [C, H, W]
+                    img_np = np.transpose(img_np, (1, 2, 0))  # Convert to [H, W, C]
+
+                # Denormalize 
+                img_np = img_np * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])
+
+                # Clip and convert to uint8
+                img_np = np.clip(img_np * 255, 0, 255).astype(np.uint8)
+
+                # Convert RGB to BGR for cv2
+                img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+
+                # Save using cv2
+                save_path = f"{save_dir}/processed_image_{i}.png"
+                cv2.imwrite(save_path, img_np)
+                print(f'Saved bag image to {save_path}')
+            
         # Stack all images at once
         image_data = torch.stack(images)
         
