@@ -60,7 +60,14 @@ class ResizeAndPad:
 
         # Apply padding
         padding = (padding[0], 0, padding[1], 0) if h > w else (0, padding[0], 0, padding[1])
-        img = ImageOps.expand(img, border=padding, fill=self.fill)
+        
+        # Adjust fill value based on image mode
+        if img.mode == 'RGB':
+            fill_value = (self.fill, self.fill, self.fill)
+        else:
+            fill_value = self.fill
+            
+        img = ImageOps.expand(img, border=padding, fill=fill_value)
 
         return img
     
