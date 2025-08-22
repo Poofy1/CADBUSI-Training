@@ -131,13 +131,14 @@ def collate_bag(batch, pad_bags=False, fixed_bag_size=25):
 
 
 def extract_float_input(instance_labels, key='PhysicalDeltaX', default=0.0):
-    """Extract a specific key from instance label dictionaries"""
+    """Extract a specific key from instance label dictionaries and return as tensors"""
     return [
-        [img_labels.get(key, default) if isinstance(img_labels, dict) else default 
-         for img_labels in bag_instance_labels]
+        torch.tensor([
+            img_labels.get(key, default) if isinstance(img_labels, dict) else default 
+            for img_labels in bag_instance_labels
+        ], dtype=torch.float32)
         for bag_instance_labels in instance_labels
     ]
-
 
 
 class BalancedBagSampler(torch.utils.data.Sampler):
