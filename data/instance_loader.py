@@ -226,10 +226,22 @@ class InstanceSampler(Sampler):
         self.batch_size = batch_size
         self.seed = seed
         
-        # Get indices for each class
-        self.indices_positive = [i for i, label in enumerate(self.dataset.output_image_labels) if label == 1]
-        self.indices_negative = [i for i, label in enumerate(self.dataset.output_image_labels) if label == 0]
-        self.indices_unknown = [i for i, label in enumerate(self.dataset.output_image_labels) if label != 0 and label != 1]
+        # Use pseudo labels when available, otherwise use image labels
+        effective_labels = []
+        for i in range(len(dataset.output_image_labels)):
+            pseudo_label = dataset.output_pseudo_labels[i]
+            image_label = dataset.output_image_labels[i]
+            
+            # Use pseudo label if it's not -1, otherwise use image label
+            if pseudo_label != -1:
+                effective_labels.append(pseudo_label)
+            else:
+                effective_labels.append(image_label)
+        
+        # Get indices for each class based on effective labels
+        self.indices_positive = [i for i, label in enumerate(effective_labels) if label == 1]
+        self.indices_negative = [i for i, label in enumerate(effective_labels) if label == 0]
+        self.indices_unknown = [i for i, label in enumerate(effective_labels) if label != 0 and label != 1]
         self.indices_non_positive = self.indices_negative + self.indices_unknown
         
         # Number of positive samples determines the number of samples per class
