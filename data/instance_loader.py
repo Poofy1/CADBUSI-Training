@@ -7,7 +7,7 @@ from storage_adapter import *
 from config import train_transform, val_transform
 
 class Instance_Dataset(TUD.Dataset):
-    def __init__(self, bags_dict, pseudo_dict, transform=None, only_known=True, only_pseudo = False, use_bag_labels=False,
+    def __init__(self, bags_dict, pseudo_dict, config, transform=None, only_known=True, only_pseudo = False, use_bag_labels=False,
                  dual_output=False, only_negative=False, subset=None):
         self.transform = transform
         self.only_known = only_known
@@ -15,7 +15,8 @@ class Instance_Dataset(TUD.Dataset):
         self.dual_output = dual_output
         self.only_negative = only_negative
         self.use_bag_labels = use_bag_labels
-
+        self.target_column = config['instance_columns'][0]
+        
         # Handle subset selection - filter bags_dict first
         if subset is None:
             filtered_bags_dict = bags_dict
@@ -43,31 +44,25 @@ class Instance_Dataset(TUD.Dataset):
             videos = bag_info['videos']
             bag_label = bag_info['bag_labels'][0]
             accession_number = bag_info['Accession_Number']
-            
-            #Debug prints
-            """print(f"\nBag {bag_id}:")
-            print(f"Number of images: {len(images)}")
-            print(f"Number of videos: {len(videos)}")
-            print(f"Total instances after combine: {len(images) + len(videos)}")
-            """
 
             # Extend images and labels with videos
             if not self.only_known: # do not include video data in warmup (more noise)
                 images.extend(videos)
-                image_labels.extend([[None]] * len(videos))  # Add empty labels for videos
+                image_labels.extend([{}] * len(videos))  # Changed from [[None]] to [{}]
             
             # ID
             acc_number_key = accession_number.item() if isinstance(accession_number, torch.Tensor) else accession_number
 
             if bag_id in pseudo_dict:
                 selection_mask_labels, _ = pseudo_dict[bag_id]
-                #print(f"Selection mask size for bag {bag_id}: {len(selection_mask_labels)}")
             else: 
                 selection_mask_labels = None
-                #print(f"No selection mask for bag {bag_id}")
                 
-            
-            
+            # Helper function to extract target label
+            def get_target_label(labels):
+                if isinstance(labels, dict) and self.target_column in labels:
+                    return labels[self.target_column]
+                return None
             
             # Process all instances (images + videos)
             for idx, (img, labels) in enumerate(zip(images, image_labels)):
@@ -76,9 +71,12 @@ class Instance_Dataset(TUD.Dataset):
                 is_video = idx >= len(bag_info['images'])  # Check if this is a video frame
                 unique_id = f"{acc_number_key}_{idx}_{'vid' if is_video else 'img'}"
                 
+                # Extract the target label
+                target_label = get_target_label(labels)
+                
                 # true labels
                 if self.only_negative:
-                    if labels[0] is not None and labels[0] == 0:
+                    if target_label is not None and target_label == 0:
                         image_label = 0
                     elif bag_label == 0:
                         image_label = 0
@@ -87,14 +85,14 @@ class Instance_Dataset(TUD.Dataset):
                     image_label = bag_label    
                     
                 elif self.only_known:
-                    if labels[0] is not None:
-                        image_label = labels[0]
+                    if target_label is not None:
+                        image_label = target_label
                     elif bag_label == 0:
                         image_label = 0
                         
                 else:
-                    if labels[0] is not None:
-                        image_label = labels[0]
+                    if target_label is not None:
+                        image_label = target_label
                     elif bag_label == 0:
                         image_label = 0
                     else:
@@ -124,19 +122,15 @@ class Instance_Dataset(TUD.Dataset):
                     self.unique_ids.append(unique_id)
                         
         print(f"Dataset created with {len(self.images)} instances")
+        print(f"Using target column: {self.target_column}")
         if self.only_negative:
             print("Dataset contains only negative (label 0) instances")
-
 
     def __getitem__(self, index):
         img_path = self.images[index]
         instance_label = self.output_image_labels[index]
         pseudo_label = self.output_pseudo_labels[index]
         unique_id = self.unique_ids[index]
-        
-        """img = read_image(img_path, local_override=True)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = Image.fromarray(img)"""
         
         img = Image.open(img_path).convert("RGB")
         
@@ -149,7 +143,6 @@ class Instance_Dataset(TUD.Dataset):
             
             return image_data, instance_label, pseudo_label, unique_id
 
-
     def __len__(self):
         return len(self.images)
     
@@ -161,13 +154,13 @@ def get_instance_loaders(bags_train, bags_val, state, config, only_known=False, 
         pseudo_labels = []
     
     # Used the instance predictions from bag training to update the Instance Dataloader
-    instance_dataset_train = Instance_Dataset(bags_train, pseudo_labels, transform=train_transform, only_known=only_known, 
+    instance_dataset_train = Instance_Dataset(bags_train, pseudo_labels, config, transform=train_transform, only_known=only_known, 
                                               only_pseudo = only_pseudo,
                                               use_bag_labels=use_bag_labels,
                                               dual_output=dual_output,
                                               only_negative=only_negative,
                                               subset=config["data_subset_ratio"])
-    instance_dataset_val = Instance_Dataset(bags_val, [], transform=val_transform, only_known=only_known,
+    instance_dataset_val = Instance_Dataset(bags_val, [], config, transform=val_transform, only_known=only_known,
                                             only_pseudo = only_pseudo,
                                             use_bag_labels=use_bag_labels,
                                             dual_output=dual_output,

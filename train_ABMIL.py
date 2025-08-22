@@ -75,7 +75,8 @@ if __name__ == '__main__':
             
             ops['bag_optimizer'].zero_grad()
             
-            bag_pred, instance_predictions, _ = model(all_images, float_input=instance_labels, pred_on=True)
+            physical_delta_x = extract_float_input(instance_labels, 'PhysicalDeltaX')
+            bag_pred, instance_predictions, _ = model(all_images, float_input=physical_delta_x, pred_on=True)
             
             max_pool_loss = mil_max_loss(instance_predictions, bag_labels, split_sizes)
             bag_loss = loss_func(bag_pred, bag_labels)
@@ -121,7 +122,8 @@ if __name__ == '__main__':
                 all_images = [img.cuda() for img in all_images]
                 split_sizes = [bag.size(0) for bag in all_images]
                 
-                bag_pred, instance_predictions, _ = model(all_images, float_input=instance_labels, pred_on=True)
+                physical_delta_x = extract_float_input(instance_labels, 'PhysicalDeltaX')
+                bag_pred, instance_predictions, _ = model(all_images, float_input=physical_delta_x, pred_on=True)
                 
                 max_pool_loss = mil_max_loss(instance_predictions, bag_labels, split_sizes)
                 bag_loss = loss_func(bag_pred, bag_labels)

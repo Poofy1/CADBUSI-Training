@@ -16,22 +16,15 @@ class Attention_Prediction_Aggregator(nn.Module):
             nn.Linear(nf, nf),
             nn.LayerNorm(nf),
             nn.ReLU(),
-            #nn.Dropout(0.25),
-            nn.Linear(nf, nf),  # New layer
-            nn.LayerNorm(nf),
-            nn.ReLU(),
-            #nn.Dropout(0.25)
         )
         
         # Attention mechanism components
         self.attention_V = nn.Sequential(
             nn.Linear(nf, L),
-            nn.LayerNorm(L),
             nn.Tanh()
         )
         self.attention_U = nn.Sequential(
             nn.Linear(nf, L),
-            nn.LayerNorm(L),
             nn.Sigmoid()
         )
         self.attention_W = nn.Sequential(

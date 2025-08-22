@@ -77,20 +77,15 @@ class BagOfImagesDataset(TUD.Dataset):
         # Stack all images at once
         image_data = torch.stack(images)
         
-        # Process instance labels more efficiently
+        # Process instance labels as dictionaries
         instance_labels = (bag_info['image_labels'] + 
                          [[None]] * len(bag_info['videos']))
         
-        # Use list comprehension for instance labels
-        instance_labels_tensors = [
-            torch.tensor([-1] if labels == [None] else labels, dtype=torch.float32)
-            for labels in instance_labels
-        ]
         
         return (
             image_data,
             self.bag_labels[actual_id],
-            instance_labels_tensors,
+            instance_labels,
             actual_id
         )
     
@@ -134,6 +129,14 @@ def collate_bag(batch, pad_bags=False, fixed_bag_size=25):
         out_ids = torch.tensor(batch_ids, dtype=torch.long)
         return batch_images, out_bag_labels, batch_instance_labels, out_ids
 
+
+def extract_float_input(instance_labels, key='PhysicalDeltaX', default=0.0):
+    """Extract a specific key from instance label dictionaries"""
+    return [
+        [img_labels.get(key, default) if isinstance(img_labels, dict) else default 
+         for img_labels in bag_instance_labels]
+        for bag_instance_labels in instance_labels
+    ]
 
 
 
