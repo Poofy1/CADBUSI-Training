@@ -43,10 +43,7 @@ def create_bags(config, data, root_dir, image_size, instance_data=None, image_da
     # Process instance data if provided
     if instance_data is not None and image_data is not None:
         if isinstance(instance_data, pd.DataFrame):
-        
-            
             for i, (_, row) in enumerate(instance_data.iterrows()):
-                
                 image_name = row['ImageName']
                 crop_w = row['image_w']
                 crop_h = row['image_h']
@@ -59,44 +56,40 @@ def create_bags(config, data, root_dir, image_size, instance_data=None, image_da
                     continue
                 
                 # Calculate scaling factors
-                # 1. Crop scaling: how much the crop region represents relative to original
-                # crop_scale = min(crop_w / original_width, crop_h / original_height)
-                # We dont need crop region since the PhysicalDeltaX already represents the ultrasound image anyways - no streching accoring 
-
-                
-                # 2. Resize scaling: how the crop gets scaled to fit in the square training image
-                # The crop gets resized to fit within image_size x image_size while maintaining aspect ratio
                 resize_scale = image_size / max(crop_w, crop_h)
                 
                 # Final distance metric accounting for both transformations
                 final_distance = physical_delta_x * resize_scale
                 
-                #print(f'delta: {physical_delta_x} resize: {resize_scale} final: {final_distance}')
+                # Create labels dictionary
+                labels_dict = {}
                 
-                # Process other labels
-                labels = []
+                # Process instance columns
                 for col in instance_columns:
                     if col in instance_data.columns:
                         label_value = row[col]
-                        labels.append(int(label_value) if isinstance(label_value, bool) else label_value)
+                        labels_dict[col] = int(label_value) if isinstance(label_value, bool) else label_value
                 
-                # Add the transformed distance metric to the labels
-                labels.append(final_distance)
-                #labels.append(normalize_age(age))
+                # Add the transformed distance metric and age
+                labels_dict['PhysicalDeltaX'] = final_distance
+                labels_dict['Age'] = age
                 
-                image_label_map[image_name] = labels
+                image_label_map[image_name] = labels_dict
     
     # Process instance data without image_data (original code path)
     elif instance_data is not None and instance_columns is not None:
         if isinstance(instance_data, pd.DataFrame):
             for _, row in instance_data.iterrows():
                 image_name = row['ImageName']
-                labels = []
+                labels_dict = {}
+                
+                # Process instance columns
                 for col in instance_columns:
                     if col in instance_data.columns:
                         label_value = row[col]
-                        labels.append(int(label_value) if isinstance(label_value, bool) else label_value)
-                image_label_map[image_name] = labels
+                        labels_dict[col] = int(label_value) if isinstance(label_value, bool) else label_value
+                
+                image_label_map[image_name] = labels_dict
     
     total_rows = len(data)
     all_files = list_files(root_dir)
@@ -131,12 +124,22 @@ def create_bags(config, data, root_dir, image_size, instance_data=None, image_da
         # Process regular images
         video_filenames = set(os.path.basename(f) for f in video_frames)
         for img_name in image_files:
-            labels = image_label_map.get(img_name, [None] * (len(instance_columns) + (1 if image_data is not None else 0))) if instance_columns else []
+            # Get labels dictionary or create empty one with None values
+            if instance_columns:
+                labels_dict = image_label_map.get(img_name, {})
+                # Ensure all expected keys exist
+                if not labels_dict:
+                    labels_dict = {col: None for col in instance_columns}
+                    if image_data is not None:
+                        labels_dict['PhysicalDeltaX'] = None
+                        labels_dict['Age'] = None
+            else:
+                labels_dict = {}
             
             if not use_videos or os.path.basename(img_name) not in video_filenames:
                 full_path = os.path.join(root_dir, img_name)
                 bag_files.append(full_path)
-                image_labels.append(labels if any(label is not None for label in labels) else [None])
+                image_labels.append(labels_dict)
         
         # If we have too many images, skip this bag
         if len(bag_files) > max_size:
