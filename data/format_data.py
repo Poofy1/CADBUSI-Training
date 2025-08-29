@@ -41,25 +41,40 @@ def create_bags(config, data, root_dir, image_size, instance_data=None, image_da
     image_label_map = {}
     
     # Process instance data if provided
-    if instance_data is not None and image_data is not None:
+    if instance_data is not None:
         if isinstance(instance_data, pd.DataFrame):
             for i, (_, row) in enumerate(instance_data.iterrows()):
                 image_name = row['ImageName']
-                crop_w = row['image_w']
-                crop_h = row['image_h']
-                age = row['Age']
-                physical_delta_x = row['PhysicalDeltaX']
                 
-                # Safety check: ensure crop dimensions are valid
-                if crop_w <= 0 and crop_h <= 0:
-                    print(f"Warning: Invalid crop dimensions for {image_name}: w={crop_w}, h={crop_h}. Skipping.")
-                    continue
+                # Initialize variables with default values
+                crop_w = None
+                crop_h = None
+                age = None
+                physical_delta_x = None
+                final_distance = None
                 
-                # Calculate scaling factors
-                resize_scale = image_size / max(crop_w, crop_h)
+                # Check for image dimensions columns
+                if 'image_w' in instance_data.columns and 'image_h' in instance_data.columns:
+                    crop_w = row['image_w']
+                    crop_h = row['image_h']
+                    
+                    # Safety check: ensure crop dimensions are valid
+                    if crop_w <= 0 and crop_h <= 0:
+                        print(f"Warning: Invalid crop dimensions for {image_name}: w={crop_w}, h={crop_h}. Skipping.")
+                        continue
                 
-                # Final distance metric accounting for both transformations
-                final_distance = physical_delta_x * resize_scale
+                # Check for PhysicalDeltaX column
+                if 'PhysicalDeltaX' in instance_data.columns:
+                    physical_delta_x = row['PhysicalDeltaX']
+                    
+                    # Calculate final distance only if we have both dimensions and delta
+                    if crop_w is not None and crop_h is not None and physical_delta_x is not None:
+                        resize_scale = image_size / max(crop_w, crop_h)
+                        final_distance = physical_delta_x * resize_scale
+                
+                # Check for Age column
+                if 'Age' in instance_data.columns:
+                    age = row['Age']
                 
                 # Create labels dictionary
                 labels_dict = {}
@@ -70,27 +85,14 @@ def create_bags(config, data, root_dir, image_size, instance_data=None, image_da
                         label_value = row[col]
                         labels_dict[col] = int(label_value) if isinstance(label_value, bool) else label_value
                 
-                # Add the transformed distance metric and age
-                labels_dict['PhysicalDeltaX'] = final_distance
-                labels_dict['Age'] = age
+                # Add the transformed distance metric and age only if they exist
+                if final_distance is not None:
+                    labels_dict['PhysicalDeltaX'] = final_distance
+                if age is not None:
+                    labels_dict['Age'] = age
                 
                 image_label_map[image_name] = labels_dict
-    
-    # Process instance data without image_data (original code path)
-    elif instance_data is not None and instance_columns is not None:
-        if isinstance(instance_data, pd.DataFrame):
-            for _, row in instance_data.iterrows():
-                image_name = row['ImageName']
-                labels_dict = {}
-                
-                # Process instance columns
-                for col in instance_columns:
-                    if col in instance_data.columns:
-                        label_value = row[col]
-                        labels_dict[col] = int(label_value) if isinstance(label_value, bool) else label_value
-                
-                image_label_map[image_name] = labels_dict
-    
+        
     total_rows = len(data)
     all_files = list_files(root_dir)
     

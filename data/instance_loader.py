@@ -122,7 +122,7 @@ class Instance_Dataset(TUD.Dataset):
                     self.unique_ids.append(unique_id)
                         
         print(f"Dataset created with {len(self.images)} instances")
-        print(f"Using target column: {self.target_column}")
+        #print(f"Using target column: {self.target_column}")
         if self.only_negative:
             print("Dataset contains only negative (label 0) instances")
 

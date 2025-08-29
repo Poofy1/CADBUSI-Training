@@ -3,9 +3,18 @@ import torch.nn.functional as F
 
 def mil_max_loss(instance_preds, bag_labels, split_sizes):
     """
-    instance_preds: [N, 1] raw logits or probabilities
+    instance_preds: [N, 1] raw logits
     bag_labels: [B] bag labels (0 or 1)
     """
+    
+    if torch.isnan(instance_preds).any():
+        print("WARNING: NaN found in instance_preds")
+        print(f"NaN locations: {torch.isnan(instance_preds).sum()}")
+    
+    if torch.isinf(instance_preds).any():
+        print("WARNING: Inf found in instance_preds")
+        print(f"Inf locations: {torch.isinf(instance_preds).sum()}")
+        
     instance_probs = torch.sigmoid(instance_preds)
 
     # Split instances by bag
