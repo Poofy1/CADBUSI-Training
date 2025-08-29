@@ -2,18 +2,95 @@ from timm import create_model
 from fastai.vision.learner import _update_first_layer
 from torch import nn
 from fastai.vision.all import *
+import subprocess
+import os
+from pathlib import Path
 
-# this function is used to cut off the head of a pretrained timm model and return the body
-def create_timm_body(arch:str, pretrained=False, cut=None, n_in=3):
-    "Creates a body from any model in the `timm` library."
-    model = create_model(arch, pretrained=pretrained, num_classes=0, global_pool='')
+def download_huggingface_model(repo_id, filename, output_dir="./models"):
+    """Download model using wget/curl to bypass Python SSL issues"""
+    
+    # Create output directory
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = Path(output_dir) / filename
+    
+    # Skip if already exists
+    if output_path.exists():
+        print(f"File {filename} already exists, skipping download")
+        return str(output_path)
+    
+    # HuggingFace download URL format
+    url = f"https://huggingface.co/{repo_id}/resolve/main/{filename}"
+    
+    try:
+        # Try wget first (bypasses SSL verification)
+        result = subprocess.run([
+            "wget", "--no-check-certificate", "--quiet", 
+            "--output-document", str(output_path), url
+        ], capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            print(f"Downloaded {filename} successfully with wget")
+            return str(output_path)
+            
+    except FileNotFoundError:
+        pass
+    
+    try:
+        # Try curl as fallback
+        result = subprocess.run([
+            "curl", "-k", "-L", "--silent", 
+            "--output", str(output_path), url
+        ], capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            print(f"Downloaded {filename} successfully with curl")
+            return str(output_path)
+            
+    except FileNotFoundError:
+        pass
+    
+    print(f"Failed to download {filename} - no wget or curl available")
+    return None
+
+def create_timm_body(arch: str, pretrained=False, cut=None, n_in=3):
+    """Creates a body from any model in the `timm` library."""
+    
+    if pretrained and arch == "resnet18":
+        # Download the model file if needed
+        model_path = download_huggingface_model("timm/resnet18.a1_in1k", "model.safetensors")
+        
+        # Create model without pretrained weights
+        model = create_model(arch, pretrained=False, num_classes=0, global_pool='')
+        
+        # Load the downloaded weights manually
+        if model_path and os.path.exists(model_path):
+            try:
+                # Install safetensors if not available: pip install safetensors
+                from safetensors.torch import load_file
+                state_dict = load_file(model_path)
+                
+                # Remove any keys that don't match (like classifier layers)
+                model_dict = model.state_dict()
+                filtered_dict = {k: v for k, v in state_dict.items() if k in model_dict and model_dict[k].shape == v.shape}
+                
+                model.load_state_dict(filtered_dict, strict=False)
+                print("Successfully loaded pretrained weights from local file")
+            except Exception as e:
+                print(f"Failed to load weights: {e}, using random initialization")
+    else:
+        model = create_model(arch, pretrained=False, num_classes=0, global_pool='')
+    
     _update_first_layer(model, n_in, pretrained)
+    
     if cut is None:
         ll = list(enumerate(model.children()))
         cut = next(i for i,o in reversed(ll) if has_pool_type(o))
-    if isinstance(cut, int): return nn.Sequential(*list(model.children())[:cut])
-    elif callable(cut): return cut(model)
-    else: raise NameError("cut must be either integer or function")
+    if isinstance(cut, int): 
+        return nn.Sequential(*list(model.children())[:cut])
+    elif callable(cut): 
+        return cut(model)
+    else: 
+        raise NameError("cut must be either integer or function")
 
 class _Hook:
     def __init__(self, module):

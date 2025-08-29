@@ -51,7 +51,7 @@ class UnifiedAttentionAggregator(nn.Module):
             
 
 class Embeddingmodel(nn.Module):
-    def __init__(self, arch, pretrained_arch, num_classes=1, feat_dim=128, use_float_input=True):
+    def __init__(self, arch, pretrained_arch, num_classes=1, feat_dim=128, use_float_input=False):
         super(Embeddingmodel, self).__init__()
         
         # Get Head
