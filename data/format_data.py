@@ -72,10 +72,6 @@ def create_bags(config, data, root_dir, image_size, instance_data=None, image_da
                         resize_scale = image_size / max(crop_w, crop_h)
                         final_distance = physical_delta_x * resize_scale
                 
-                # Check for Age column
-                if 'Age' in instance_data.columns:
-                    age = row['Age']
-                
                 # Create labels dictionary
                 labels_dict = {}
                 
@@ -88,8 +84,12 @@ def create_bags(config, data, root_dir, image_size, instance_data=None, image_da
                 # Add the transformed distance metric and age only if they exist
                 if final_distance is not None:
                     labels_dict['PhysicalDeltaX'] = final_distance
-                if age is not None:
-                    labels_dict['Age'] = age
+                if 'Age' in instance_data.columns:
+                    labels_dict['Age'] = row['Age']
+                if 'SYNOPTIC_REPORT' in instance_data.columns:
+                    labels_dict['SYNOPTIC_REPORT'] = row['SYNOPTIC_REPORT']
+                if 'FINDINGS' in instance_data.columns:
+                    labels_dict['FINDINGS'] = row['FINDINGS']
                 
                 image_label_map[image_name] = labels_dict
         
@@ -304,7 +304,7 @@ def prepare_all_data(config):
 
     cropped_images_root = f"{parent_dir}/temp"
     os.makedirs(cropped_images_root, exist_ok=True)
-        
+    
     # Path to the config file
     export_location = f"{config['export_location']}/{config['dataset_name']}"
     cropped_images = f"{cropped_images_root}/{config['dataset_name']}_{config['img_size']}_images"
