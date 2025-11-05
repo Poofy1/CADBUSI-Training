@@ -142,15 +142,15 @@ train_df = pd.read_csv(f'{export_location}/TrainData.csv')
 
 
 # Filter data
-image_df['Accession_Number'] = image_df['Accession_Number'].astype(int)
-case_df['Accession_Number'] = case_df['Accession_Number'].astype(int)
-breast_df['Accession_Number'] = breast_df['Accession_Number'].astype(int)
+image_df['accession_number'] = image_df['accession_number'].astype(int)
+case_df['accession_number'] = case_df['accession_number'].astype(int)
+breast_df['accession_number'] = breast_df['accession_number'].astype(int)
 
-case_df = case_df.drop_duplicates(subset='Accession_Number')
-case_df = case_df[case_df['Accession_Number'].isin(set(image_df['Accession_Number']))]
+case_df = case_df.drop_duplicates(subset='accession_number')
+case_df = case_df[case_df['accession_number'].isin(set(image_df['accession_number']))]
 case_df = case_df[~case_df['Biopsy'].str.contains('unknown', na=False)]
 
-breast_df = breast_df[breast_df['Accession_Number'].isin(set(image_df['Accession_Number']))]
+breast_df = breast_df[breast_df['accession_number'].isin(set(image_df['accession_number']))]
 breast_df = breast_df[breast_df['LesionCount'].astype(int) != 0]
 breast_df = breast_df[breast_df['Has_Unknown'] == False]
 
@@ -187,17 +187,17 @@ print(f"Mean Number of 'Good' Images per Accession: {average_length:.2f}")
 total_breasts = len(breast_df)
 print(f"Number of Biopsied Breasts: {total_breasts}")
 
-total_breasts = len(breast_df[(breast_df['Has_Malignant'] == False) & (breast_df['Has_Benign'] == True)])
+total_breasts = len(breast_df[(breast_df['has_malignant'] == False) & (breast_df['has_benign'] == True)])
 print(f"Number of Benign Breasts: {total_breasts}")
 
-total_breasts = len(breast_df[(breast_df['Has_Malignant'] == True) & (breast_df['Has_Benign'] == False)])
+total_breasts = len(breast_df[(breast_df['has_malignant'] == True) & (breast_df['has_benign'] == False)])
 print(f"Number of Malignant Breasts: {total_breasts}")
 
-total_breasts = len(breast_df[(breast_df['Has_Malignant'] == True) & (breast_df['Has_Benign'] == True)])
+total_breasts = len(breast_df[(breast_df['has_malignant'] == True) & (breast_df['has_benign'] == True)])
 print(f"Number of Benign AND Malignant Breasts: {total_breasts}")
 
-# Count the occurrences of each category in 'Study_Laterality'
-laterality_counts = case_df['Study_Laterality'].value_counts()
+# Count the occurrences of each category in 'study_laterality'
+laterality_counts = case_df['study_laterality'].value_counts()
 total_cases = laterality_counts.sum()
 laterality_percentage = (laterality_counts / total_cases) * 100
 print("\nExam Laterality Distribution:")

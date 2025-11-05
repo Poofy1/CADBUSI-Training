@@ -30,7 +30,7 @@ def normalize_age(age, max_age=150.0):
     return normalized
 
 
-def create_bags(config, data, root_dir, image_size, instance_data=None, image_data=None):
+def create_bags(config, data, root_dir, image_size, instance_data=None):
     label_columns = config['label_columns']
     instance_columns = config['instance_columns']
     min_size = config['min_bag_size']
@@ -64,8 +64,8 @@ def create_bags(config, data, root_dir, image_size, instance_data=None, image_da
                         continue
                 
                 # Check for PhysicalDeltaX column
-                if 'PhysicalDeltaX' in instance_data.columns:
-                    physical_delta_x = row['PhysicalDeltaX']
+                if 'physical_delta_x' in instance_data.columns:
+                    physical_delta_x = row['physical_delta_x']
                     
                     # Calculate final distance only if we have both dimensions and delta
                     if crop_w is not None and crop_h is not None and physical_delta_x is not None:
@@ -83,13 +83,13 @@ def create_bags(config, data, root_dir, image_size, instance_data=None, image_da
                 
                 # Add the transformed distance metric and age only if they exist
                 if final_distance is not None:
-                    labels_dict['PhysicalDeltaX'] = final_distance
+                    labels_dict['physical_delta_x'] = final_distance
                 if 'Age' in instance_data.columns:
                     labels_dict['Age'] = row['Age']
-                if 'SYNOPTIC_REPORT' in instance_data.columns:
-                    labels_dict['SYNOPTIC_REPORT'] = row['SYNOPTIC_REPORT']
-                if 'FINDINGS' in instance_data.columns:
-                    labels_dict['FINDINGS'] = row['FINDINGS']
+                if 'synoptic_report' in instance_data.columns:
+                    labels_dict['synoptic_report'] = row['synoptic_report']
+                if 'findings' in instance_data.columns:
+                    labels_dict['findings'] = row['findings']
                 
                 image_label_map[image_name] = labels_dict
         
@@ -98,7 +98,7 @@ def create_bags(config, data, root_dir, image_size, instance_data=None, image_da
     
     # Create video prefix mapping
     video_prefix_map = {}
-    if use_videos and 'VideoPaths' in data.columns:
+    if use_videos and 'video_paths' in data.columns:
         for f in all_files:
             basename = os.path.basename(f)
             prefix = '_'.join(basename.split('_')[:-1])
@@ -110,15 +110,15 @@ def create_bags(config, data, root_dir, image_size, instance_data=None, image_da
             video_prefix_map[prefix].sort(key=lambda x: int(x.split('_')[-1].split('.')[0]))
     
     for _, row in tqdm(data.iterrows(), total=total_rows):
-        image_files = ast.literal_eval(row['Images'])
+        image_files = ast.literal_eval(row['images'])
         
         bag_files = []
         image_labels = []
         video_frames = []
         
         # First, collect all available video frames
-        if use_videos and 'VideoPaths' in data.columns:
-            video_prefixes = ast.literal_eval(row['VideoPaths'])
+        if use_videos and 'video_paths' in data.columns:
+            video_prefixes = ast.literal_eval(row['video_paths'])
             for video_prefix in video_prefixes:
                 if video_prefix in video_prefix_map:
                     video_frames.extend(video_prefix_map[video_prefix])
@@ -132,9 +132,6 @@ def create_bags(config, data, root_dir, image_size, instance_data=None, image_da
                 # Ensure all expected keys exist
                 if not labels_dict:
                     labels_dict = {col: None for col in instance_columns}
-                    if image_data is not None:
-                        labels_dict['PhysicalDeltaX'] = None
-                        labels_dict['Age'] = None
             else:
                 labels_dict = {}
             
@@ -165,7 +162,8 @@ def create_bags(config, data, root_dir, image_size, instance_data=None, image_da
             'images': bag_files,
             'image_labels': image_labels,
             'videos': video_frames,
-            'Accession_Number': row['Accession_Number']
+            'accession_number': row['accession_number'],
+            'description': row['description']
         }
 
     return bags_dict
@@ -216,7 +214,7 @@ def preprocess_and_save_images(config, data, root_dir, output_dir, fill=255):
 
     # Process regular images
     regular_images = [(img_name, False) for _, row in data.iterrows() 
-                     for img_name in ast.literal_eval(row['Images'])]
+                     for img_name in ast.literal_eval(row['images'])]
     
     # Process video images using CSV
     video_images = []
@@ -317,24 +315,18 @@ def prepare_all_data(config):
         instance_data = read_csv(instance_data_file)
     else:
         instance_data = None
-    
-    image_data_file = f'{export_location}/ImageData.csv'
-    if file_exists(image_data_file):
-        image_data = read_csv(image_data_file)
-    else:
-        image_data = None
        
     #Cropping images
     preprocess_and_save_images(config, data, export_location, cropped_images)
     
     # Split the data into training and validation sets
-    train_patient_ids = data[data['Valid'] == 0]['Accession_Number']
-    val_patient_ids = data[data['Valid'] == 1]['Accession_Number']
-    train_data = data[data['Accession_Number'].isin(train_patient_ids)].reset_index(drop=True)
-    val_data = data[data['Accession_Number'].isin(val_patient_ids)].reset_index(drop=True)
+    train_patient_ids = data[data['valid'] == 0]['accession_number']
+    val_patient_ids = data[data['valid'] == 1]['accession_number']
+    train_data = data[data['accession_number'].isin(train_patient_ids)].reset_index(drop=True)
+    val_data = data[data['accession_number'].isin(val_patient_ids)].reset_index(drop=True)
     
-    bags_train = create_bags(config, train_data, cropped_images, config['img_size'], instance_data, image_data)
-    bags_val = create_bags(config, val_data, cropped_images, config['img_size'], instance_data, image_data)
+    bags_train = create_bags(config, train_data, cropped_images, config['img_size'], instance_data)
+    bags_val = create_bags(config, val_data, cropped_images, config['img_size'], instance_data)
     
     #bags_train = upsample_minority_class(bags_train)  # Upsample the minority class in the training set
     

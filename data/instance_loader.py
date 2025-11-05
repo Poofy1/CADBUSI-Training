@@ -43,7 +43,7 @@ class Instance_Dataset(TUD.Dataset):
             image_labels = bag_info['image_labels'].copy()
             videos = bag_info['videos']
             bag_label = bag_info['bag_labels'][0]
-            accession_number = bag_info['Accession_Number']
+            accession_number = bag_info['accession_number']
 
             # Extend images and labels with videos
             if not self.only_known: # do not include video data in warmup (more noise)

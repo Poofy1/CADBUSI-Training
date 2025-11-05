@@ -7,10 +7,10 @@ from storage_adapter import *
 
 class BagOfImagesDataset(TUD.Dataset):
     def __init__(self, bags_dict, transform=None, save_processed=False, subset=None):
-        """# Create a new dictionary using Accession_Number as keys
+        """# Create a new dictionary using accession_number as keys
         self.original_ids = list(bags_dict.keys())
         self.bags_dict = {
-            bags_dict[id]['Accession_Number']: bags_dict[id]
+            bags_dict[id]['accession_number']: bags_dict[id]
             for id in self.original_ids}""" # this will break pseudo-labels
         
         self.bags_dict = bags_dict

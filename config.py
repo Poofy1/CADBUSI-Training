@@ -38,7 +38,7 @@ resnet18
 class LesionDataConfig(BaseConfig):
     def __init__(self):
         self.dataset_name = 'export_oneLesions' #export_12_12_2024_17_35_49' 'export_oneLesions'
-        self.label_columns = ['Has_Malignant']
+        self.label_columns = ['has_malignant']
         self.instance_columns = ['Malignant Lesion Present']
         self.img_size = 224 #224
         self.bag_batch_size = 5

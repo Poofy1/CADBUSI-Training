@@ -104,8 +104,8 @@ def create_mil_dataset(output_dir, export_name, target_label, label_name,
             instance_data.append([bag_id, int(has_target), image_name])
 
     # Create DataFrames
-    train_df = pd.DataFrame(train_data, columns=['Valid', 'Images', 'ID', label_name, 'Accession_Number'])
-    instance_df = pd.DataFrame(instance_data, columns=['Accession_Number', label_name, 'ImageName'])
+    train_df = pd.DataFrame(train_data, columns=['Valid', 'Images', 'ID', label_name, 'accession_number'])
+    instance_df = pd.DataFrame(instance_data, columns=['accession_number', label_name, 'ImageName'])
 
     # Write DataFrames to CSV files
     train_df.to_csv(f'{output_dir}/{export_name}/TrainData.csv', index=False)

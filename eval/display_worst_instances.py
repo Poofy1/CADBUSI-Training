@@ -41,8 +41,8 @@ merged_step1 = pd.merge(
 final_merged = pd.merge(
     merged_step1, 
     breast_df, 
-    left_on='Accession_Number', 
-    right_on='Accession_Number', 
+    left_on='accession_number', 
+    right_on='accession_number', 
     how='inner'
 )
 
@@ -91,8 +91,8 @@ def add_text_to_image(image_path, output_path, text_info):
 
 # Process each row in the merged dataframe
 for idx, row in final_merged.iterrows():
-    # Create folder for this Accession_Number
-    accession_folder = os.path.join(output_path, str(row['Accession_Number']))
+    # Create folder for this accession_number
+    accession_folder = os.path.join(output_path, str(row['accession_number']))
     os.makedirs(accession_folder, exist_ok=True)
     
     # Parse the Images column (convert string representation of list to actual list)
@@ -134,7 +134,7 @@ for idx, row in final_merged.iterrows():
         
         success = add_text_to_image(input_image_path, output_image_path, text_info)
         if success:
-            print(f"Processed: {row['Accession_Number']}/{image_name}")
+            print(f"Processed: {row['accession_number']}/{image_name}")
         else:
             print(f"Failed to process: {row['Accession_Number']}/{image_name}")
 

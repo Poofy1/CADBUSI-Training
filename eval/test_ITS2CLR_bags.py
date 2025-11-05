@@ -75,7 +75,7 @@ if __name__ == '__main__':
     # Config
     model_name = 'export_03_18_2024_resnet50_03'
     dataset_name = 'export_03_18_2024'
-    label_columns = ['Has_Malignant']
+    label_columns = ['has_malignant']
     instance_columns = ['Malignant Lesion Present']   #['Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present']
     img_size = 300
     min_bag_size = 2
@@ -179,11 +179,11 @@ if __name__ == '__main__':
     case_study_data = pd.read_csv(f'{export_location}/CaseStudyData.csv')
     train_data = pd.read_csv(f'{export_location}/TrainData.csv')
 
-    # Remove rows from train_data where 'Accession_Number' does not exist in case_study_data
-    train_data = train_data[train_data['Accession_Number'].isin(case_study_data['Accession_Number'])]
+    # Remove rows from train_data where 'accession_number' does not exist in case_study_data
+    train_data = train_data[train_data['accession_number'].isin(case_study_data['accession_number'])]
 
-    # Merge train_data and case_study_data based on 'Accession_Number'
-    merged_data = pd.merge(train_data, case_study_data, on='Accession_Number')
+    # Merge train_data and case_study_data based on 'accession_number'
+    merged_data = pd.merge(train_data, case_study_data, on='accession_number')
 
     # Create a dictionary to store the errors for each BI-RADS type
     birads_errors = {}
@@ -237,8 +237,8 @@ if __name__ == '__main__':
     worst_bags = []
     for bag_id, bag_info in bag_data.items():
         matching_rows = merged_data[merged_data['ID'] == bag_id]
-        if not matching_rows.empty and 'Accession_Number' in matching_rows.columns and 'BI-RADS' in matching_rows.columns:
-            accession_number = matching_rows['Accession_Number'].values[0]
+        if not matching_rows.empty and 'accession_number' in matching_rows.columns and 'BI-RADS' in matching_rows.columns:
+            accession_number = matching_rows['accession_number'].values[0]
             birads = matching_rows['BI-RADS'].values[0]
             loss = bag_info['losses'][0]
             worst_bags.append((accession_number, loss, birads))

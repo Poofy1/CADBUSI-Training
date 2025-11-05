@@ -11,11 +11,11 @@ poor_performing['accession_number'] = poor_performing['id'].apply(lambda x: int(
 positive_cases = poor_performing[poor_performing['targets'] == 1]
 
 # Merge with train data using accession number
-merged_data = positive_cases.merge(train_data, left_on='accession_number', right_on='Accession_Number')
+merged_data = positive_cases.merge(train_data, left_on='accession_number', right_on='accession_number')
 
 # Calculate statistics
 total_positive_cases = len(positive_cases)
-correct_malignant_labels = len(merged_data[merged_data['Has_Malignant'] == True])
+correct_malignant_labels = len(merged_data[merged_data['has_malignant'] == True])
 
 ratio = correct_malignant_labels / total_positive_cases if total_positive_cases > 0 else 0
 
@@ -24,16 +24,16 @@ print(f"Cases with correct malignant label: {correct_malignant_labels}")
 print(f"Ratio of correct labels: {ratio:.2f}")
 
 # Optional: Display detailed mismatches
-mismatches = merged_data[merged_data['Has_Malignant'] == False]
+mismatches = merged_data[merged_data['has_malignant'] == False]
 if len(mismatches) > 0:
-    print("\nMismatched cases (where target=1 but Has_Malignant=False):")
-    print(mismatches[['id', 'predictions', 'Has_Malignant', 'Has_Benign']])
+    print("\nMismatched cases (where target=1 but has_malignant=False):")
+    print(mismatches[['id', 'predictions', 'has_malignant', 'has_benign']])
     
 # Extract all positive cases accession numbers from poor_performing
 positive_cases_accession_numbers = set(positive_cases['accession_number'])
 
 # Extract all accession numbers from train_data
-train_data_accession_numbers = set(train_data['Accession_Number'])
+train_data_accession_numbers = set(train_data['accession_number'])
 
 # Find accession numbers that are in positive_cases but not in train_data
 missing_accession_numbers = positive_cases_accession_numbers - train_data_accession_numbers

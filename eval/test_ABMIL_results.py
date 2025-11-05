@@ -84,16 +84,16 @@ def test_dataset(output_path, label_columns, instance_columns):
 
     # Combine the labels DataFrame with the other data
     results_df = pd.concat([
-        pd.DataFrame({"Accession_Number": bag_ids, "Prediction": predictions, "Loss": losses}),
+        pd.DataFrame({"accession_number": bag_ids, "Prediction": predictions, "Loss": losses}),
         labels_df
     ], axis=1)
     
     # Sort the DataFrame by Loss column in descending order
     results_df = results_df.sort_values(by="Loss", ascending=False)
 
-    #Replace Accession_Number in results_df using map
-    id_to_acc_number = pd.Series(train_data.Accession_Number.values,index=train_data.ID).to_dict()
-    results_df['Accession_Number'] = results_df['Accession_Number'].map(id_to_acc_number)
+    #Replace accession_number in results_df using map
+    id_to_acc_number = pd.Series(train_data.accession_number.values,index=train_data.ID).to_dict()
+    results_df['accession_number'] = results_df['accession_number'].map(id_to_acc_number)
     
     # Save the DataFrame to a CSV file
     results_df.to_csv(f'{output_path}/bag_predictions.csv', index=False)
@@ -122,7 +122,7 @@ if __name__ == '__main__':
     model_name = 'ABMIL_12_26_1'
     encoder_arch = 'resnet18'
     dataset_name = 'export_03_18_2024'
-    label_columns = ['Has_Malignant', 'Has_Benign']
+    label_columns = ['has_malignant', 'has_benign']
     instance_columns = []#['Reject Image', 'Only Normal Tissue', 'Cyst Lesion Present', 'Benign Lesion Present', 'Malignant Lesion Present'] # 'Reject Image' is used to remove images and is not trained on
     img_size = 350
     batch_size = 1
@@ -163,7 +163,7 @@ if __name__ == '__main__':
 
 
     """# Merge df_failed_cases with case_study_data to get the BI-RADS scores
-    merged_data = pd.merge(df_failed_cases, case_study_data[['Accession_Number', 'BI-RADS']], on='Accession_Number', how='left')
+    merged_data = pd.merge(df_failed_cases, case_study_data[['accession_number', 'BI-RADS']], on='accession_number', how='left')
 
     # Group by BI-RADS scores and calculate average error for each group
     average_errors = merged_data.groupby('BI-RADS')['Loss'].mean()
@@ -179,11 +179,11 @@ if __name__ == '__main__':
 
 
 
-    # Count number of rows/images for each Accession_Number in image_data
-    image_counts = image_data.groupby('Accession_Number').size().reset_index(name='Image_Count')
+    # Count number of rows/images for each accession_number in image_data
+    image_counts = image_data.groupby('accession_number').size().reset_index(name='Image_Count')
 
-    # Merge with df_failed_cases to get errors for each Accession_Number
-    merged_data_images = pd.merge(df_failed_cases, image_counts, on='Accession_Number', how='left')
+    # Merge with df_failed_cases to get errors for each accession_number
+    merged_data_images = pd.merge(df_failed_cases, image_counts, on='accession_number', how='left')
 
     # Group by Image_Count and calculate average error for each group
     average_errors_images = merged_data_images.groupby('Image_Count')['Loss'].mean()
@@ -191,5 +191,5 @@ if __name__ == '__main__':
     # Sort by Image_Count (which is the index after grouping)
     average_errors_images = average_errors_images.sort_index()
 
-    plot_and_save_average_errors(average_errors_images, 'Average Loss by Number of Images per Accession_Number', 'Number of Images', 'Average Loss', f"{output_path}/Average_Loss_by_Image_Count.png")
+    plot_and_save_average_errors(average_errors_images, 'Average Loss by Number of Images per accession_number', 'Number of Images', 'Average Loss', f"{output_path}/Average_Loss_by_Image_Count.png")
 """

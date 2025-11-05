@@ -137,7 +137,7 @@ This synthetic dataset provides a controlled environment for testing MIL archite
 The file `/Export/Train_Data.csv` must exist with the following columns: `ID, Images, {User Labels}, Valid`. This describes each bag, what images and labels they have.
 Example: 
 ```
-ID,Images,Has_Malignant,Has_Benign,Valid
+ID,Images,has_malignant,has_benign,Valid
 1,"['1_1_left_0.png', '1_1_left_6.png', '1_1_left_9.png']",True,False,0
 ```
 
@@ -147,12 +147,12 @@ ID,Images,Has_Malignant,Has_Benign,Valid
 #### 'Images'
 - Type: String (formatted as a list of image file names)
 - Description: Contains all the image file names associated with the bag. Each file name is a string within a list, formatted as 'image_name.png'. Multiple images are included for each ID.
-#### User Labels (e.g., 'Has_Malignant', 'Has_Benign')
+#### User Labels (e.g., 'has_malignant', 'has_benign')
 - Type: Boolean (True or False)
 - Description: These columns represent various labels or annotations associated with each record. They are optional and can vary depending on the specific requirements of the study or analysis.
-    - Example: Has_Malignant indicates whether malignant features are present in the images.
+    - Example: has_malignant indicates whether malignant features are present in the images.
     - Users can include as many label columns as necessary for their analysis.
-    - Users must include which labels they want to train on in each training script. Example: `label_columns = ['Has_Malignant', 'Has_Benign']`
+    - Users must include which labels they want to train on in each training script. Example: `label_columns = ['has_malignant', 'has_benign']`
 #### 'Valid'
 - Type: Integer (0, 1, or 2)
 - Description: Indicates the usage of the record in the dataset.
@@ -174,7 +174,7 @@ Benign Lesion Present, Malignant Lesion Present, ImageName
 False, True, 2900_3081_left_0.png
 ```
 
-#### User Labels (e.g., 'Has_Malignant', 'Has_Benign')
+#### User Labels (e.g., 'has_malignant', 'has_benign')
 - Type: Boolean (True or False)
 - Description: These columns represent various labels or annotations associated with each record. They are optional and can vary depending on the specific requirements of the study or analysis.
 - Functions the same as the previous User Labels in `Train_Data.csv`
