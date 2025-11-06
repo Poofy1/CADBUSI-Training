@@ -44,7 +44,7 @@ def create_bags(config, data, root_dir, image_size, instance_data=None):
     if instance_data is not None:
         if isinstance(instance_data, pd.DataFrame):
             for i, (_, row) in enumerate(instance_data.iterrows()):
-                image_name = row['ImageName']
+                image_name = row['image_name']
                 
                 # Initialize variables with default values
                 crop_w = None
@@ -157,7 +157,7 @@ def create_bags(config, data, root_dir, image_size, instance_data=None):
         
         bag_labels = [int(row[label]) for label in label_columns if label in data.columns]
     
-        bags_dict[row['ID']] = {
+        bags_dict[row['id']] = {
             'bag_labels': bag_labels, 
             'images': bag_files,
             'image_labels': image_labels,

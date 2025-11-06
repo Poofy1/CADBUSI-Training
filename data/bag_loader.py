@@ -86,7 +86,8 @@ class BagOfImagesDataset(TUD.Dataset):
             image_data,
             self.bag_labels[actual_id],
             instance_labels,
-            actual_id
+            actual_id,
+            bag_info['description']
         )
     
     def __len__(self):
@@ -101,22 +102,24 @@ def collate_bag(batch, pad_bags=False, fixed_bag_size=25):
     batch_bag_labels = []
     batch_instance_labels = []
     batch_ids = []
+    batch_descriptions = []
 
     if pad_bags:
         # Use fixed padding size instead of dynamic max size
         _, C, H, W = batch[0][0].shape
         padded_images = torch.zeros((len(batch), fixed_bag_size, C, H, W), dtype=torch.float32)
 
-        for i, (image_data, bag_labels, instance_labels, bag_id) in enumerate(batch):
+        for i, (image_data, bag_labels, instance_labels, bag_id, description) in enumerate(batch):
             num_images = min(image_data.shape[0], fixed_bag_size)  # Limit to fixed size
             padded_images[i, :num_images] = image_data[:num_images]  # Truncate if needed
             batch_bag_labels.append(bag_labels)
             batch_instance_labels.append(instance_labels[:num_images] if num_images < len(instance_labels) else instance_labels)
             batch_ids.append(bag_id)
+            batch_descriptions.append(description)
 
         out_bag_labels = torch.stack(batch_bag_labels)
         out_ids = torch.tensor(batch_ids, dtype=torch.long)
-        return padded_images, out_bag_labels, batch_instance_labels, out_ids
+        return padded_images, out_bag_labels, batch_instance_labels, out_ids, batch_descriptions 
 
     else:
         # No padding mode - return original bags without padding
@@ -124,10 +127,11 @@ def collate_bag(batch, pad_bags=False, fixed_bag_size=25):
         batch_bag_labels = [sample[1] for sample in batch]
         batch_instance_labels = [sample[2] for sample in batch]
         batch_ids = [sample[3] for sample in batch]
+        batch_descriptions = [sample[4] for sample in batch]
         
         out_bag_labels = torch.stack(batch_bag_labels)
         out_ids = torch.tensor(batch_ids, dtype=torch.long)
-        return batch_images, out_bag_labels, batch_instance_labels, out_ids
+        return batch_images, out_bag_labels, batch_instance_labels, out_ids, batch_descriptions 
 
 
 def extract_float_input(instance_labels, key='PhysicalDeltaX', default=0.0):

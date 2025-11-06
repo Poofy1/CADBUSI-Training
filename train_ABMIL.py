@@ -68,7 +68,7 @@ if __name__ == '__main__':
         train_pred = PredictionTracker()
                 
                 
-        for (all_images, bag_labels, instance_labels, bag_ids) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)): 
+        for (all_images, bag_labels, instance_labels, bag_ids, bag_descriptions) in tqdm(bag_dataloader_train, total=len(bag_dataloader_train)): 
             bag_labels = bag_labels.cuda()
             all_images = [img.cuda() for img in all_images]
             split_sizes = [bag.size(0) for bag in all_images]
@@ -117,7 +117,7 @@ if __name__ == '__main__':
         val_pred = PredictionTracker()
             
         with torch.no_grad():
-            for (all_images, bag_labels, instance_labels, bag_ids) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
+            for (all_images, bag_labels, instance_labels, bag_ids, bag_descriptions) in tqdm(bag_dataloader_val, total=len(bag_dataloader_val)): 
                 bag_labels = bag_labels.cuda()
                 all_images = [img.cuda() for img in all_images]
                 split_sizes = [bag.size(0) for bag in all_images]
