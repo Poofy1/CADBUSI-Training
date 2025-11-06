@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from archs.backbone import *
 from archs.linear_classifier import *
 from archs.dsmil import *
+from archs.birads_classifier import BIRADSDescriptionClassifier
 
 class UnifiedAttentionAggregator(nn.Module):
     def __init__(self, nf, num_classes=1):
@@ -51,7 +52,7 @@ class UnifiedAttentionAggregator(nn.Module):
             
 
 class Embeddingmodel(nn.Module):
-    def __init__(self, arch, pretrained_arch, num_classes=1, feat_dim=128, use_float_input=False):
+    def __init__(self, arch, pretrained_arch, num_classes=1, feat_dim=128, use_float_input=True):
         super(Embeddingmodel, self).__init__()
         
         # Get Head
@@ -81,6 +82,9 @@ class Embeddingmodel(nn.Module):
             
         self.aggregator = UnifiedAttentionAggregator(nf=nf, num_classes=num_classes)
         
+        # Add BI-RADS classifier
+        self.birads_classifier = BIRADSDescriptionClassifier(nf)
+        
         self.projector = nn.Sequential(
             nn.Linear(nf, 512),
             nn.ReLU(inplace=True),
@@ -91,6 +95,8 @@ class Embeddingmodel(nn.Module):
 
     def reset_aggregator_parameters(self):
         self.aggregator.reset_parameters()
+        if self.use_birads_classifier:
+            self.birads_classifier.reset_parameters()
         
     def forward(self, bags, float_input=None, projector=False, pred_on=False):
         
@@ -135,11 +141,14 @@ class Embeddingmodel(nn.Module):
             # Concatenate float input to features
             feat = torch.cat([feat, float_tensor], dim=1)
 
+        
+        # Get BI-RADS predictions
+        birad_feat, birads_pred = self.birads_classifier(feat, split_sizes)
+        
         # Get bag pred
-        bag_pred, instance_pred = self.aggregator(feat, split_sizes, pred_on=pred_on)
+        bag_pred, instance_pred = self.aggregator(birad_feat, split_sizes, pred_on=pred_on)
             
         if projector:
-            #feat = self.adaptive_avg_pool(feat).squeeze()
             feat = self.projector(feat)
             feat = F.normalize(feat, dim=1)
             
@@ -147,4 +156,4 @@ class Embeddingmodel(nn.Module):
         if pred_on:
             del all_images
         
-        return bag_pred.cuda(), instance_pred, feat
+        return bag_pred.cuda(), instance_pred, feat, birads_pred

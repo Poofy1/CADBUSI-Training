@@ -12,6 +12,7 @@ from data.pseudo_labels import *
 from data.bag_loader import *
 from data.instance_loader import *
 from loss.max_pooling import *
+from loss.birad_loss import *
 from util.eval_util import *
 from config import *
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
@@ -76,11 +77,12 @@ if __name__ == '__main__':
             ops['bag_optimizer'].zero_grad()
             
             physical_delta_x = extract_float_input(instance_labels, 'PhysicalDeltaX')
-            bag_pred, instance_predictions, _ = model(all_images, float_input=physical_delta_x, pred_on=True)
+            bag_pred, instance_predictions, _, birads_pred = model(all_images, float_input=physical_delta_x, pred_on=True)
             
+            birads_loss = birads_multilabel_loss(birads_pred, bag_descriptions)
             max_pool_loss = mil_max_loss(instance_predictions, bag_labels, split_sizes)
             bag_loss = loss_func(bag_pred, bag_labels)
-            loss = bag_loss + max_pool_loss * .1
+            loss = bag_loss + max_pool_loss * .1 + birads_loss * 0.5
             
             loss.backward()
             ops['bag_optimizer'].step()
@@ -123,11 +125,12 @@ if __name__ == '__main__':
                 split_sizes = [bag.size(0) for bag in all_images]
                 
                 physical_delta_x = extract_float_input(instance_labels, 'PhysicalDeltaX')
-                bag_pred, instance_predictions, _ = model(all_images, float_input=physical_delta_x, pred_on=True)
+                bag_pred, instance_predictions, _, birads_pred = model(all_images, float_input=physical_delta_x, pred_on=True)
                 
+                birads_loss = birads_multilabel_loss(birads_pred, bag_descriptions)
                 max_pool_loss = mil_max_loss(instance_predictions, bag_labels, split_sizes)
                 bag_loss = loss_func(bag_pred, bag_labels)
-                loss = bag_loss + max_pool_loss * .1
+                loss = bag_loss + max_pool_loss * .1 + birads_loss * 0.5
                 
                 total_val_loss += loss.item() * len(all_images)
                 predicted = (bag_pred > 0).float()
