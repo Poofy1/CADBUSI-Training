@@ -14,6 +14,10 @@ def birads_multilabel_loss(birads_pred, bag_descriptions):
     Returns:
         loss: Average BCE loss across all non-(-1) labels
     """
+    # Skip if inputs are None
+    if birads_pred is None or bag_descriptions is None:
+        return torch.tensor(0.0, requires_grad=True)
+    
     total_loss = 0.0
     total_valid_labels = 0
     

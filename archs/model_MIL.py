@@ -52,12 +52,13 @@ class UnifiedAttentionAggregator(nn.Module):
             
 
 class Embeddingmodel(nn.Module):
-    def __init__(self, arch, pretrained_arch, num_classes=1, feat_dim=128, use_float_input=True):
+    def __init__(self, arch, pretrained_arch, num_classes=1, feat_dim=128, use_float_input=True, use_birads = True):
         super(Embeddingmodel, self).__init__()
         
         # Get Head
         self.is_efficientnet = "efficientnet" in arch.lower()
         self.use_float_input = use_float_input
+        self.use_birads = use_birads
         
         if self.is_efficientnet:
             base_encoder = get_efficientnet_model(arch, pretrained_arch) 
@@ -79,8 +80,6 @@ class Embeddingmodel(nn.Module):
         # Add 1 to nf if using float input
         if self.use_float_input:
             nf += 1
-            
-        self.aggregator = UnifiedAttentionAggregator(nf=nf, num_classes=num_classes)
         
         # Add BI-RADS classifier
         self.birads_classifier = BIRADSDescriptionClassifier(nf)
@@ -90,6 +89,13 @@ class Embeddingmodel(nn.Module):
             nn.ReLU(inplace=True),
             nn.Linear(512, feat_dim)
         )
+         
+        # Add BI-RADS features to nf for aggregator
+        if self.use_birads:
+            nf += 24
+        
+        self.aggregator = UnifiedAttentionAggregator(nf=nf, num_classes=num_classes)
+        
         self.adaptive_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         print(f'Feature Map Size: {nf}')
 
@@ -141,19 +147,21 @@ class Embeddingmodel(nn.Module):
             # Concatenate float input to features
             feat = torch.cat([feat, float_tensor], dim=1)
 
-        
+        feat_out = None
+        if projector:
+            feat_out = self.projector(feat)
+            feat_out = F.normalize(feat_out, dim=1)
+            
         # Get BI-RADS predictions
-        birad_feat, birads_pred = self.birads_classifier(feat, split_sizes)
+        birads_pred = None
+        if self.use_birads:
+            feat, birads_pred = self.birads_classifier(feat, split_sizes)
         
         # Get bag pred
-        bag_pred, instance_pred = self.aggregator(birad_feat, split_sizes, pred_on=pred_on)
-            
-        if projector:
-            feat = self.projector(feat)
-            feat = F.normalize(feat, dim=1)
+        bag_pred, instance_pred = self.aggregator(feat, split_sizes, pred_on=pred_on)
             
         # Clean up large intermediate tensors
         if pred_on:
             del all_images
         
-        return bag_pred.cuda(), instance_pred, feat, birads_pred
+        return bag_pred.cuda(), instance_pred, feat_out, birads_pred
